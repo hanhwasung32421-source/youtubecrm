@@ -6,6 +6,8 @@ import { useRouter } from 'next/navigation'
 import { createSupabaseBrowserClient } from '@/lib/supabase/browser-client'
 import { fetchMe } from '@/lib/session/me-client'
 import { getHomeHref } from '@/lib/v3/menu'
+import { PasswordField } from '@/components/v3/password-field'
+import { LAST_LOGIN_ID_KEY, writeSafe } from '@/components/v3/safe-storage'
 
 type FieldKey = 'email' | 'loginId' | 'password' | 'name' | 'birthDate' | 'phone' | 'antiBotCode'
 type FieldErrors = Partial<Record<FieldKey, string>>
@@ -34,6 +36,7 @@ export default function SignupPage() {
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
+  const busy = useRef(false) // Enter와 클릭이 겹쳐도 한 번만 요청
 
   const refs = useRef<Partial<Record<FieldKey | 'phoneLast', HTMLInputElement | null>>>({})
   const setRef = (key: FieldKey | 'phoneLast') => (el: HTMLInputElement | null) => {
@@ -88,6 +91,8 @@ export default function SignupPage() {
       return
     }
 
+    if (busy.current) return
+    busy.current = true
     setLoading(true)
     try {
       const res = await fetch('/api/auth/check-email', {
@@ -115,6 +120,7 @@ export default function SignupPage() {
     } catch {
       setFieldError('email', '인터넷 연결을 확인해 주세요.')
     } finally {
+      busy.current = false
       setLoading(false)
     }
   }
@@ -142,7 +148,7 @@ export default function SignupPage() {
 
   const onSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault()
-    if (loading) return
+    if (loading || busy.current) return
     setError('')
     setMessage('')
 
@@ -160,7 +166,9 @@ export default function SignupPage() {
       return
     }
 
+    busy.current = true
     setLoading(true)
+    let leaving = false // 가입이 끝나 화면이 넘어가는 중이면 버튼을 다시 열지 않는다(중복 가입 방지)
     try {
       const res = await fetch('/api/auth/signup', {
         method: 'POST',
@@ -184,6 +192,9 @@ export default function SignupPage() {
         return
       }
 
+      // 다음에 로그인할 때 아이디가 미리 채워지도록 기억해 둔다(비밀번호는 저장하지 않는다).
+      writeSafe(LAST_LOGIN_ID_KEY, loginId.trim())
+
       const supabase = createSupabaseBrowserClient()
       const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
         email: email.trim(),
@@ -192,6 +203,7 @@ export default function SignupPage() {
 
       if (signInError || !signInData.session?.access_token) {
         setMessage('회원가입이 완료되었습니다. 로그인 화면으로 이동해 주세요.')
+        leaving = true
         setTimeout(() => {
           router.push('/v3/login')
         }, 1000)
@@ -213,17 +225,21 @@ export default function SignupPage() {
       }
 
       setMessage('회원가입이 완료되어 자동 로그인됩니다.')
+      leaving = true
       router.push(getHomeHref(me.roleType))
     } catch {
       setError('인터넷 연결을 확인하고 다시 시도해 주세요.')
       await refresh()
     } finally {
-      setLoading(false)
+      if (!leaving) {
+        busy.current = false
+        setLoading(false)
+      }
     }
   }
 
   return (
-    <div className="auth-wrap">
+    <div className="auth-wrap v3-auth">
       <div className="auth-shell">
         <div className="panel soft">
           <img className="auth-logo" src="/logo-ant.png" alt="" width={56} height={56} />
@@ -263,7 +279,7 @@ export default function SignupPage() {
             </div>
             <div id="v3-su-email-msg" aria-live="polite">
               {fieldErrors.email ? (
-                <div className="v3-field-error">{fieldErrors.email}</div>
+                <div className="v3-field-error" role="alert">{fieldErrors.email}</div>
               ) : emailVerified ? (
                 <div className="v3-field-ok">사용할 수 있는 이메일이에요.</div>
               ) : (
@@ -283,39 +299,43 @@ export default function SignupPage() {
                   value={loginId}
                   autoComplete="username"
                   autoCapitalize="none"
+                  autoCorrect="off"
                   spellCheck={false}
                   aria-invalid={!!fieldErrors.loginId}
+                  aria-describedby="v3-su-id-msg"
                   readOnly={loading}
                   onChange={(e) => {
                     setLoginId(e.target.value)
                     clearFieldError('loginId')
                   }}
                 />
-                {fieldErrors.loginId ? (
-                  <div className="v3-field-error">{fieldErrors.loginId}</div>
-                ) : (
-                  <div className="v3-field-help">로그인할 때 이메일 대신 쓸 수 있어요. 2~30자.</div>
-                )}
+                <div id="v3-su-id-msg">
+                  {fieldErrors.loginId ? (
+                    <div className="v3-field-error" role="alert">{fieldErrors.loginId}</div>
+                  ) : (
+                    <div className="v3-field-help">로그인할 때 이메일 대신 쓸 수 있어요. 2~30자.</div>
+                  )}
+                </div>
               </div>
 
-              <div className="field">
-                <label className="label" htmlFor="v3-su-pw">비밀번호</label>
-                <input
-                  id="v3-su-pw"
-                  ref={setRef('password')}
-                  className={`input ${fieldErrors.password ? 'invalid' : ''}`}
-                  type="password"
-                  value={password}
-                  autoComplete="new-password"
-                  aria-invalid={!!fieldErrors.password}
-                  readOnly={loading}
-                  onChange={(e) => {
-                    setPassword(e.target.value)
-                    clearFieldError('password')
-                  }}
-                />
-                {fieldErrors.password ? <div className="v3-field-error">{fieldErrors.password}</div> : <div className="v3-field-help">6자 이상으로 정해 주세요.</div>}
-              </div>
+              <PasswordField
+                id="v3-su-pw"
+                label="비밀번호"
+                value={password}
+                autoComplete="new-password"
+                readOnly={loading}
+                invalid={!!fieldErrors.password}
+                describedBy="v3-su-pw-msg"
+                inputRef={setRef('password')}
+                onChange={(next) => {
+                  setPassword(next)
+                  clearFieldError('password')
+                }}
+              >
+                <div id="v3-su-pw-msg">
+                  {fieldErrors.password ? <div className="v3-field-error" role="alert">{fieldErrors.password}</div> : <div className="v3-field-help">6자 이상으로 정해 주세요.</div>}
+                </div>
+              </PasswordField>
 
               <div className="field">
                 <label className="label" htmlFor="v3-su-name">이름</label>
@@ -332,7 +352,7 @@ export default function SignupPage() {
                     clearFieldError('name')
                   }}
                 />
-                {fieldErrors.name ? <div className="v3-field-error">{fieldErrors.name}</div> : null}
+                {fieldErrors.name ? <div className="v3-field-error" role="alert">{fieldErrors.name}</div> : null}
               </div>
 
               <div className="field">
@@ -354,7 +374,7 @@ export default function SignupPage() {
                     if (next.length === 8) focusField('phone')
                   }}
                 />
-                {fieldErrors.birthDate ? <div className="v3-field-error">{fieldErrors.birthDate}</div> : <div className="v3-field-help">숫자 8자리로 붙여서 적어 주세요.</div>}
+                {fieldErrors.birthDate ? <div className="v3-field-error" role="alert">{fieldErrors.birthDate}</div> : <div className="v3-field-help">숫자 8자리로 붙여서 적어 주세요.</div>}
               </div>
 
               <div className="field">
@@ -401,7 +421,7 @@ export default function SignupPage() {
                     }}
                   />
                 </div>
-                {fieldErrors.phone ? <div className="v3-field-error">{fieldErrors.phone}</div> : <div className="v3-field-help">010은 이미 들어 있어요. 뒤 8자리만 적어 주세요.</div>}
+                {fieldErrors.phone ? <div className="v3-field-error" role="alert">{fieldErrors.phone}</div> : <div className="v3-field-help">010은 이미 들어 있어요. 뒤 8자리만 적어 주세요.</div>}
               </div>
 
               <div className="panel soft">
@@ -432,20 +452,26 @@ export default function SignupPage() {
                   />
                 </div>
                 {fieldErrors.antiBotCode ? (
-                  <div className="v3-field-error" style={{ marginTop: 8 }}>{fieldErrors.antiBotCode}</div>
+                  <div className="v3-field-error" role="alert" style={{ marginTop: 8 }}>{fieldErrors.antiBotCode}</div>
                 ) : (
                   <div className="v3-field-help" style={{ marginTop: 8 }}>왼쪽에 보이는 숫자 4개를 오른쪽 칸에 그대로 입력해 주세요.</div>
                 )}
               </div>
 
-              <button className="button" type="submit" disabled={loading}>
-                {loading ? '처리 중...' : '가입하기'}
+              <button className="button v3-submit" type="submit" disabled={loading}>
+                {loading ? (
+                  <>
+                    <span className="v3-spinner" aria-hidden /> 처리 중…
+                  </>
+                ) : (
+                  '가입하기'
+                )}
               </button>
             </>
           ) : null}
 
+          <div role="alert">{error ? <div className="message-error small">{error}</div> : null}</div>
           <div role="status" aria-live="polite">
-            {error ? <div className="message-error small">{error}</div> : null}
             {message && !error ? <div className="message-success small">{message}</div> : null}
           </div>
           <div className="small muted">

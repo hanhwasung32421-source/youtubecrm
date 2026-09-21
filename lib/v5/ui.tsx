@@ -38,6 +38,38 @@ export function useEscape(active: boolean, handler: () => void) {
 }
 
 // ---------------------------------------------------------------------------
+// 쓰던 내용이 있을 때(dirty)만, 탭을 닫거나 새로 고치기 전에 브라우저가 한 번 묻게 한다.
+// ---------------------------------------------------------------------------
+export function useBeforeUnload(dirty: boolean) {
+  useEffect(() => {
+    if (!dirty) return
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [dirty])
+}
+
+// ---------------------------------------------------------------------------
+// 한 번에 하나만: 더블클릭/연타로 같은 저장이 두 번 나가지 않게 한다(state 가 아니라 ref 라서 같은 순간의 두 번째 클릭도 막는다).
+// key 를 주면 그 항목만 잠근다(카드별 저장 등).
+// ---------------------------------------------------------------------------
+export function useSingleFlight() {
+  const running = useRef(new Set<string>())
+  return useCallback(async <T,>(fn: () => Promise<T>, key = '*'): Promise<T | undefined> => {
+    if (running.current.has(key)) return undefined
+    running.current.add(key)
+    try {
+      return await fn()
+    } finally {
+      running.current.delete(key)
+    }
+  }, [])
+}
+
+// ---------------------------------------------------------------------------
 // 마지막에 쓴 필터를 브라우저에 기억한다(localStorage 가 막혀 있어도 화면은 정상 동작).
 // ready 가 true 가 된 뒤에 첫 조회를 하면 필터가 바뀌며 화면이 두 번 그려지는 일이 없다.
 // ---------------------------------------------------------------------------
@@ -140,6 +172,7 @@ export function FormDrawer({
   const [asking, setAsking] = useState(false)
   const savingRef = useRef(saving)
   savingRef.current = saving
+  useBeforeUnload(dirty)
 
   const requestClose = useCallback(() => {
     if (savingRef.current) return

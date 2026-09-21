@@ -1,14 +1,16 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { PageHeader, useV5Me } from '@/components/v5/app-shell'
 import { Badge, Segment } from '@/components/v5/widget'
 import { Toast, useToast } from '@/components/toast'
-import { authedDeleteJson, authedPatchJson, errorText, v5Get, v5Post } from '@/lib/v5/client'
-import { diffDays, formatDate, todayYmd } from '@/lib/v5/format'
-import { AnswerBanner, EmptyBlock, FormField, LoadError, LoadingLine, SampleNote, fmtNum } from '@/lib/v5/page-parts'
-import { ConfirmDelete, FormDrawer, useEscape, usePref } from '@/lib/v5/ui'
+import { authedDeleteJson, authedPatchJson, errorText, v5Post } from '@/lib/v5/client'
+import { daysRunningFrom, formatDate, formatDayShort, formatSignedPercent, todayYmd } from '@/lib/v5/format'
+import { AnswerBanner, EmptyBlock, ErrorText, FormField, LoadError, RelTime, SampleNote, fmtNum } from '@/lib/v5/page-parts'
+import { BoardSkeleton } from '@/lib/v5/skeleton'
+import { useV5Query } from '@/lib/v5/swr'
+import { ConfirmDelete, FormDrawer, useEscape, usePref, useSingleFlight } from '@/lib/v5/ui'
 import { VideoPicker, type PickedVideo } from '@/lib/v5/video-picker'
 import {
   EXPERIMENT_DIMENSIONS,
@@ -54,7 +56,7 @@ const OVERDUE_DAYS = 14
 const MAX_TARGETS = 30
 
 // 진행 일수(D+N): 시작일 당일이 D+0.
-const daysRunning = (startedOn: string) => Math.max(diffDays(startedOn, todayYmd()), 0)
+const daysRunning = (startedOn: string) => daysRunningFrom(startedOn, todayYmd())
 const isOverdue = (exp: GrowthExperiment) => exp.status === 'running' && daysRunning(exp.started_on) > OVERDUE_DAYS
 
 const videoName = (v: { title: string | null; stock_name: string }) => v.title || v.stock_name
@@ -101,7 +103,7 @@ function parseEffect(text: string): number | null | undefined {
 }
 
 const effectText = (n: number | null) => (n === null ? '' : String(n))
-const effectLabel = (n: number | null) => (n === null ? '' : `${n >= 0 ? '+' : ''}${n}%`)
+const effectLabel = (n: number | null) => (n === null ? '' : formatSignedPercent(n))
 
 type CardMode = 'view' | 'edit' | 'record'
 
@@ -215,14 +217,14 @@ function ExperimentCard({
       <button type="button" className="v5p-card-head" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         {exp.status === 'running' ? (
           <span className="v5p-card-flags">
-            <span className="v5p-dday">D+{fmtNum(daysRunning(exp.started_on))}</span>
+            <span className="v5p-dday" title={`시작일 ${formatDate(exp.started_on)} 부터 ${fmtNum(daysRunning(exp.started_on))}일째`}>D+{fmtNum(daysRunning(exp.started_on))}</span>
             {overdue ? <span className="v5p-due">결과 확인할 때예요</span> : null}
           </span>
         ) : null}
         <span className="v5p-card-hypo">{exp.hypothesis}</span>
         <span className="v5p-card-line">
           <span className="v5p-card-key">대상 영상</span>
-          <span className="v5p-card-val">{targetSummary(exp)}</span>
+          <span className="v5p-card-val" title={targetSummary(exp)}>{targetSummary(exp)}</span>
         </span>
         {exp.status === 'won' || exp.status === 'lost' ? (
           <span className="v5p-card-line">
@@ -232,7 +234,7 @@ function ExperimentCard({
         ) : null}
         <span className="v5p-card-line">
           <span className="v5p-card-key">다음 할 일</span>
-          <span className={`v5p-card-val ${exp.next_action ? '' : 'faint'}`}>{exp.next_action || (exp.status === 'running' && canEdit ? '아직 없어요 · 눌러서 적기' : '없음')}</span>
+          <span className={`v5p-card-val ${exp.next_action ? '' : 'faint'}`} title={exp.next_action || undefined}>{exp.next_action || (exp.status === 'running' && canEdit ? '아직 없어요 · 눌러서 적기' : '없음')}</span>
         </span>
         <span className="v5p-card-more" aria-hidden>
           {open ? '접기 ▲' : '자세히 ▼'}
@@ -292,7 +294,7 @@ function ExperimentCard({
               </FormField>
               {error ? (
                 <div className="v5p-field-error" role="alert">
-                  {error}
+                  <ErrorText message={error} />
                 </div>
               ) : null}
               <div className="row" style={{ gap: 8 }}>
@@ -318,13 +320,13 @@ function ExperimentCard({
                 <dt>판단 기준</dt>
                 <dd>{exp.metric_definition}</dd>
                 <dt>기간</dt>
-                <dd>
-                  {formatDate(exp.started_on)} ~ {exp.ended_on ? formatDate(exp.ended_on) : '진행 중'}
+                <dd className="v5p-num" title={`${formatDate(exp.started_on)} ~ ${exp.ended_on ? formatDate(exp.ended_on) : '진행 중'}`}>
+                  {formatDayShort(exp.started_on)} ~ {exp.ended_on ? formatDayShort(exp.ended_on) : '진행 중'}
                 </dd>
                 {exp.videos && exp.videos.length > 1 ? (
                   <>
                     <dt>전체 대상</dt>
-                    <dd>{exp.videos.map(videoName).join(', ')}</dd>
+                    <dd title={exp.videos.map(videoName).join(', ')}>{exp.videos.map(videoName).join(', ')}</dd>
                   </>
                 ) : null}
                 {exp.missing_videos ? (
@@ -334,7 +336,9 @@ function ExperimentCard({
                   </>
                 ) : null}
                 <dt>만든 사람</dt>
-                <dd>{exp.author_name || '알 수 없음'}</dd>
+                <dd>
+                  {exp.author_name || '알 수 없음'} · <RelTime value={exp.created_at} absolute /> 에 만듦
+                </dd>
               </dl>
 
               {mode === 'edit' ? (
@@ -361,7 +365,7 @@ function ExperimentCard({
                   </FormField>
                   {error ? (
                     <div className="v5p-field-error" role="alert">
-                      {error}
+                      <ErrorText message={error} />
                     </div>
                   ) : null}
                   <div className="row" style={{ gap: 8 }}>
@@ -397,7 +401,7 @@ function ExperimentCard({
               ) : null}
               {mode === 'view' && error ? (
                 <div className="v5p-field-error" role="alert">
-                  {error}
+                  <ErrorText message={error} />
                 </div>
               ) : null}
               {!canEdit ? <div className="small muted">다른 사람이 만든 실험이라 볼 수만 있어요.</div> : null}
@@ -412,13 +416,13 @@ function ExperimentCard({
 export default function CanvasPage() {
   const me = useV5Me()
   const { toast, showSuccess } = useToast()
-  const [items, setItems] = useState<GrowthExperiment[]>([])
-  const [sample, setSample] = useState(false)
-  const [loaded, setLoaded] = useState(false)
-  const [refreshing, setRefreshing] = useState(false)
-  const [loadError, setLoadError] = useState('')
+  const q = useV5Query<{ sample?: boolean; items: GrowthExperiment[]; truncated?: boolean }>('/api/v5/growth-experiments', { errorFallback: '실험 목록을 불러오지 못했어요.' })
+  const { update: updateData, reload } = q
+  const items = useMemo(() => q.data?.items || [], [q.data])
+  const sample = Boolean(q.data?.sample)
   const [view, setView, viewReady] = usePref<'kanban' | 'list'>('v5.canvas.view', 'kanban', (v): v is 'kanban' | 'list' => v === 'kanban' || v === 'list')
   const [authorFilter, setAuthorFilter, authorReady] = usePref<string>('v5.canvas.author', '', (v): v is string => typeof v === 'string')
+  const [mobileStatus, setMobileStatus] = useState<ExperimentStatus | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [form, setForm] = useState<FormState>(makeEmptyForm)
   const [submitted, setSubmitted] = useState(false)
@@ -426,24 +430,10 @@ export default function CanvasPage() {
   const [moreOpen, setMoreOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [busyId, setBusyId] = useState<string | null>(null)
+  const once = useSingleFlight()
 
-  const load = useCallback(async () => {
-    setRefreshing(true)
-    setLoadError('')
-    const res = await v5Get<{ sample: boolean; items: GrowthExperiment[] }>('/api/v5/growth-experiments')
-    if (res.ok) {
-      setItems(res.data.items || [])
-      setSample(Boolean(res.data.sample))
-      setLoaded(true)
-    } else {
-      setLoadError(errorText(res, '실험 목록을 불러오지 못했어요.'))
-    }
-    setRefreshing(false)
-  }, [])
-
-  useEffect(() => {
-    void load()
-  }, [load])
+  // 저장 결과를 화면과 캐시에 함께 반영한다(다른 화면을 다녀와도 옛 값으로 돌아가지 않게).
+  const setItems = useCallback((fn: (prev: GrowthExperiment[]) => GrowthExperiment[]) => updateData((d) => ({ ...d, items: fn(d.items || []) })), [updateData])
 
   const authors = useMemo(() => {
     const map = new Map<string, string>()
@@ -467,6 +457,10 @@ export default function CanvasPage() {
     return { count: running.length, oldest: running[0] || null, overdue: running.filter(isOverdue) }
   }, [grouped])
 
+  // 좁은 화면에서 보여 줄 칸: 직접 고른 칸, 없으면 진행 중 → 처음으로 카드가 있는 칸.
+  const activeStatus: ExperimentStatus =
+    mobileStatus ?? ((grouped.get('running') || []).length > 0 ? 'running' : EXPERIMENT_STATUS_ORDER.find((s) => (grouped.get(s) || []).length > 0) || 'running')
+
   const errors = useMemo(() => validate(form), [form])
   const showErr = <K extends keyof FormErrors>(key: K) => (submitted ? errors[key] : undefined)
   const formDirty = form.dimensions.length > 0 || form.videos.length > 0 || form.hypothesis.trim() !== '' || form.nextAction.trim() !== '' || form.metricDefinition.trim() !== '' || form.endedOn !== ''
@@ -485,71 +479,80 @@ export default function CanvasPage() {
     setForm((f) => ({ ...f, dimensions: f.dimensions.includes(dim) ? f.dimensions.filter((d) => d !== dim) : [...f.dimensions, dim] }))
   }
 
-  const onCreate = async () => {
-    setSubmitted(true)
-    setFormError('')
-    const errs = validate(form)
-    if (Object.keys(errs).length > 0) {
-      if (errs.endedOn) setMoreOpen(true)
-      return
-    }
-
-    setSaving(true)
-    try {
-      const res = await v5Post<{ item: GrowthExperiment }>('/api/v5/growth-experiments', {
-        dimensions: form.dimensions,
-        videoIds: form.videos.map((v) => v.id),
-        hypothesis: form.hypothesis.trim(),
-        metricDefinition: form.metricDefinition.trim() || undefined,
-        startedOn: form.startedOn,
-        endedOn: form.endedOn || undefined,
-        nextAction: form.nextAction.trim() || undefined
-      })
-      if (!res.ok) {
-        setFormError(errorText(res, '실험을 저장하지 못했어요. 잠시 뒤 다시 해 주세요.'))
+  const onCreate = () =>
+    once(async () => {
+      setSubmitted(true)
+      setFormError('')
+      const errs = validate(form)
+      if (Object.keys(errs).length > 0) {
+        if (errs.endedOn) setMoreOpen(true)
         return
       }
-      setDrawerOpen(false)
-      showSuccess('새 실험을 “진행중” 칸에 추가했어요.')
-      setItems((prev) => [res.data.item, ...prev])
-    } finally {
-      setSaving(false)
-    }
-  }
 
+      setSaving(true)
+      try {
+        const res = await v5Post<{ item: GrowthExperiment }>('/api/v5/growth-experiments', {
+          dimensions: form.dimensions,
+          videoIds: form.videos.map((v) => v.id),
+          hypothesis: form.hypothesis.trim(),
+          metricDefinition: form.metricDefinition.trim() || undefined,
+          startedOn: form.startedOn,
+          endedOn: form.endedOn || undefined,
+          nextAction: form.nextAction.trim() || undefined
+        })
+        if (!res.ok) {
+          setFormError(errorText(res, '실험을 저장하지 못했어요. 잠시 뒤 다시 해 주세요.'))
+          return
+        }
+        setDrawerOpen(false)
+        showSuccess('새 실험을 “진행중” 칸에 추가했어요.')
+        setMobileStatus('running')
+        setItems((prev) => [res.data.item, ...prev])
+      } finally {
+        setSaving(false)
+      }
+    }, 'create')
+
+  // 카드 하나당 한 번에 하나만(더블클릭/연타로 같은 저장이 두 번 나가지 않게). 이미 처리 중이면 조용히 무시한다.
   const onPatch = async (id: string, body: Record<string, unknown>): Promise<string | null> => {
-    setBusyId(id)
-    try {
-      const res = await authedPatchJson<{ item: GrowthExperiment }>(`/api/v5/growth-experiments/${id}`, body)
-      if (!res.ok) {
-        if (res.status === 404) setItems((prev) => prev.filter((it) => it.id !== id)) // 이미 지워진 카드
-        return errorText(res, '저장하지 못했어요. 잠시 뒤 다시 해 주세요.')
+    const result = await once(async () => {
+      setBusyId(id)
+      try {
+        const res = await authedPatchJson<{ item: GrowthExperiment }>(`/api/v5/growth-experiments/${id}`, body)
+        if (!res.ok) {
+          if (res.status === 404) setItems((prev) => prev.filter((it) => it.id !== id)) // 이미 지워진 카드
+          return errorText(res, '저장하지 못했어요. 잠시 뒤 다시 해 주세요.')
+        }
+        const updated = res.data.item
+        setItems((prev) => prev.map((it) => (it.id === id ? updated : it)))
+        if (typeof body.status === 'string' && body.status !== 'running') {
+          showSuccess(`실험을 “${EXPERIMENT_STATUS_LABEL[body.status as ExperimentStatus]}” 칸으로 옮겼어요.`)
+        }
+        return null
+      } finally {
+        setBusyId(null)
       }
-      const updated = res.data.item
-      setItems((prev) => prev.map((it) => (it.id === id ? updated : it)))
-      if (typeof body.status === 'string' && body.status !== 'running') {
-        showSuccess(`실험을 “${EXPERIMENT_STATUS_LABEL[body.status as ExperimentStatus]}” 칸으로 옮겼어요.`)
-      }
-      return null
-    } finally {
-      setBusyId(null)
-    }
+    }, id)
+    return result ?? null
   }
 
   const onDelete = async (id: string): Promise<string | null> => {
-    setBusyId(id)
-    try {
-      const res = await authedDeleteJson(`/api/v5/growth-experiments/${id}`)
-      if (!res.ok) return errorText(res, '지우지 못했어요. 잠시 뒤 다시 해 주세요.')
-      setItems((prev) => prev.filter((it) => it.id !== id))
-      return null
-    } finally {
-      setBusyId(null)
-    }
+    const result = await once(async () => {
+      setBusyId(id)
+      try {
+        const res = await authedDeleteJson(`/api/v5/growth-experiments/${id}`)
+        if (!res.ok) return errorText(res, '지우지 못했어요. 잠시 뒤 다시 해 주세요.')
+        setItems((prev) => prev.filter((it) => it.id !== id))
+        return null
+      } finally {
+        setBusyId(null)
+      }
+    }, id)
+    return result ?? null
   }
 
-  const ready = loaded && viewReady && authorReady
-  const showLoadError = Boolean(loadError)
+  const ready = Boolean(q.data) && viewReady && authorReady
+  const showSkeleton = !ready && !q.error
 
   return (
     <>
@@ -565,17 +568,17 @@ export default function CanvasPage() {
 
       <SampleNote show={sample} />
 
-      {showLoadError ? <LoadError message={loadError} onRetry={() => void load()} /> : null}
-      {!ready && !showLoadError ? <LoadingLine /> : null}
+      {q.error ? <LoadError message={q.error} status={q.status} onRetry={reload} /> : null}
+      {showSkeleton ? <BoardSkeleton /> : null}
 
       {ready ? (
-        <div className={refreshing ? 'v5p-refreshing' : undefined}>
+        <div className={q.validating ? 'v5p-refreshing' : undefined} aria-busy={q.validating}>
           <AnswerBanner
             label="오늘의 한 줄"
             tone={focus.overdue.length > 0 ? 'bad' : 'neutral'}
             aside={
               focus.oldest ? (
-                <span className="small muted">
+                <span className="small muted" title={focus.oldest.hypothesis}>
                   가장 오래된 실험 · D+{fmtNum(daysRunning(focus.oldest.started_on))} · “{focus.oldest.hypothesis.slice(0, 40)}
                   {focus.oldest.hypothesis.length > 40 ? '…' : ''}”
                 </span>
@@ -641,36 +644,47 @@ export default function CanvasPage() {
               </div>
 
               {view === 'kanban' ? (
-                <div className="v5p-board">
-                  {EXPERIMENT_STATUS_ORDER.map((status) => {
-                    const list = grouped.get(status) || []
-                    return (
-                      <div className="v5p-col" key={status}>
-                        <div className="v5p-col-head">
-                          <div className="v5p-col-title">
-                            {EXPERIMENT_STATUS_LABEL[status]}
-                            <span>{fmtNum(list.length)}</span>
+                <>
+                  {/* 좁은 화면에서는 네 칸을 가로로 늘어놓는 대신, 상태 탭으로 한 칸씩 본다 */}
+                  <div className="v5p-tabs" role="group" aria-label="상태별로 보기">
+                    {EXPERIMENT_STATUS_ORDER.map((status) => (
+                      <button key={status} type="button" className="v5p-tab" aria-pressed={activeStatus === status} onClick={() => setMobileStatus(status)}>
+                        {EXPERIMENT_STATUS_LABEL[status]}
+                        <span>{fmtNum((grouped.get(status) || []).length)}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="v5p-board">
+                    {EXPERIMENT_STATUS_ORDER.map((status) => {
+                      const list = grouped.get(status) || []
+                      return (
+                        <div className={`v5p-col ${activeStatus === status ? 'is-active' : ''}`} key={status}>
+                          <div className="v5p-col-head">
+                            <div className="v5p-col-title">
+                              {EXPERIMENT_STATUS_LABEL[status]}
+                              <span>{fmtNum(list.length)}</span>
+                            </div>
+                            <div className="v5p-col-hint">{COLUMN_HINT[status]}</div>
                           </div>
-                          <div className="v5p-col-hint">{COLUMN_HINT[status]}</div>
+                          {list.length === 0 ? <div className="v5p-col-empty">{COLUMN_EMPTY[status]}</div> : null}
+                          {list.map((exp) => (
+                            <ExperimentCard
+                              key={exp.id}
+                              exp={exp}
+                              canEdit={canEditItem(exp)}
+                              busy={busyId === exp.id}
+                              onPatch={(body) => onPatch(exp.id, body)}
+                              onDelete={() => onDelete(exp.id)}
+                            />
+                          ))}
                         </div>
-                        {list.length === 0 ? <div className="v5p-col-empty">{COLUMN_EMPTY[status]}</div> : null}
-                        {list.map((exp) => (
-                          <ExperimentCard
-                            key={exp.id}
-                            exp={exp}
-                            canEdit={canEditItem(exp)}
-                            busy={busyId === exp.id}
-                            onPatch={(body) => onPatch(exp.id, body)}
-                            onDelete={() => onDelete(exp.id)}
-                          />
-                        ))}
-                      </div>
-                    )
-                  })}
-                </div>
+                      )
+                    })}
+                  </div>
+                </>
               ) : (
-                <div className="v5-table-wrap panel" style={{ padding: 0 }}>
-                  <table className="v5-table">
+                <div className="v5-table-wrap v5p-cardwrap panel" style={{ padding: 0 }}>
+                  <table className="v5-table v5p-cardtable">
                     <thead>
                       <tr>
                         <th>가설</th>
@@ -685,19 +699,29 @@ export default function CanvasPage() {
                     <tbody>
                       {visibleItems.map((exp) => (
                         <tr key={exp.id}>
-                          <td style={{ maxWidth: 260 }}>{exp.hypothesis}</td>
-                          <td>{exp.dimensions.map((d) => EXPERIMENT_DIMENSION_LABEL[d]).join(', ')}</td>
-                          <td className="small muted">{targetSummary(exp)}</td>
-                          <td className="small">
-                            {formatDate(exp.started_on)} ~ {exp.ended_on ? formatDate(exp.ended_on) : '진행 중'}
+                          <td className="v5p-td-clip" data-label="가설" title={exp.hypothesis}>
+                            {exp.hypothesis}
                           </td>
-                          <td>
-                            <Badge tone={STATUS_TONE[exp.status]}>{EXPERIMENT_STATUS_LABEL[exp.status]}</Badge>
-                            {exp.status === 'running' ? <span className="v5p-dday inline">D+{fmtNum(daysRunning(exp.started_on))}</span> : null}
-                            {isOverdue(exp) ? <span className="v5p-due inline">결과 확인할 때예요</span> : null}
+                          <td data-label="바꿔 본 것">{exp.dimensions.map((d) => EXPERIMENT_DIMENSION_LABEL[d]).join(', ')}</td>
+                          <td className="small muted v5p-td-clip" data-label="대상 영상" title={targetSummary(exp)}>
+                            {targetSummary(exp)}
                           </td>
-                          <td className="num">{exp.effect_size !== null ? effectLabel(exp.effect_size) : '-'}</td>
-                          <td className="small muted">{exp.next_action || '-'}</td>
+                          <td className="small v5p-num" data-label="기간" title={`${formatDate(exp.started_on)} ~ ${exp.ended_on ? formatDate(exp.ended_on) : '진행 중'}`}>
+                            {formatDayShort(exp.started_on)} ~ {exp.ended_on ? formatDayShort(exp.ended_on) : '진행 중'}
+                          </td>
+                          <td data-label="상태">
+                            <span>
+                              <Badge tone={STATUS_TONE[exp.status]}>{EXPERIMENT_STATUS_LABEL[exp.status]}</Badge>
+                              {exp.status === 'running' ? <span className="v5p-dday inline">D+{fmtNum(daysRunning(exp.started_on))}</span> : null}
+                              {isOverdue(exp) ? <span className="v5p-due inline">결과 확인할 때예요</span> : null}
+                            </span>
+                          </td>
+                          <td className="num" data-label="결과">
+                            {exp.effect_size !== null ? effectLabel(exp.effect_size) : '-'}
+                          </td>
+                          <td className="small muted v5p-td-clip" data-label="다음 할 일" title={exp.next_action || undefined}>
+                            {exp.next_action || '-'}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -705,6 +729,11 @@ export default function CanvasPage() {
                   <div className="v5p-list-note small muted">고치거나 지우려면 “보드”에서 카드를 눌러 주세요.</div>
                 </div>
               )}
+              {q.data?.truncated ? (
+                <div className="v5p-note" style={{ marginTop: 12 }} role="note">
+                  실험이 너무 많아 최근 것만 보여요.
+                </div>
+              ) : null}
             </>
           )}
         </div>
@@ -722,7 +751,7 @@ export default function CanvasPage() {
         >
           {formError ? (
             <div className="v5p-error" role="alert" style={{ marginTop: 0 }}>
-              {formError}
+              <ErrorText message={formError} />
             </div>
           ) : null}
 

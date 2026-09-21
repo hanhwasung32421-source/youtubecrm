@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { mapPlaybook, PLAYBOOK_SELECT, type PlaybookRow } from '@/lib/v5/playbook'
 import { V5_TABLES } from '@/lib/v5/tables'
-import { getSession, handleRouteError, isMissingTableError, missingTableResponse, notFound, uuidSchema } from '@/lib/v5/api'
+import { getSession, handleRouteError, isMissingTableError, jsonNoStore, missingTableResponse, notFound, uuidSchema } from '@/lib/v5/api'
 
 const MAX_ATTEMPTS = 5
 
@@ -35,7 +35,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
       if (updated && updated.length > 0) {
         const [item] = await mapPlaybook(supabaseAdmin, [updated[0] as PlaybookRow], session)
-        return NextResponse.json({ item })
+        return jsonNoStore({ item })
       }
       // 누군가 먼저 올렸다: 아주 짧게 쉬고 다시 읽는다.
       await new Promise((resolve) => setTimeout(resolve, 40 + Math.floor(Math.random() * 60)))

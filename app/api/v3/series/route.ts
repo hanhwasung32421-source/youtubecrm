@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { ApiFail, apiError, authenticate, chunk, cleanText, isMissingTableError, isUuid, loadVideosByIds, readJson } from '@/lib/v3/server'
+import { ApiFail, apiError, authenticate, chunk, cleanText, isMissingTableError, isUuid, loadVideosByIds, noStoreJson, readJson } from '@/lib/v3/server'
 import { assertCanMove, assertNameFree, assertOwnVideos, loadMemberships } from '@/lib/v3/series-access'
 import { V3_TABLES } from '@/lib/v3/tables'
 
@@ -89,7 +89,7 @@ export async function POST(request: Request) {
       }
     }
 
-    return NextResponse.json({ ok: true, series: { id: series.id, name: series.name, stockName: series.stock_name }, moved: movedCount })
+    return noStoreJson({ ok: true, series: { id: series.id, name: series.name, stockName: series.stock_name }, moved: movedCount })
   } catch (e) {
     return apiError(e, '시리즈를 만들지 못했어요.', { duplicate: '같은 이름의 시리즈가 이미 있어요.' })
   }

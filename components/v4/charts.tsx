@@ -1,6 +1,6 @@
 'use client'
 
-import { useId, useMemo } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { fmtCompact, fmtNumber, shortYmd } from '@/lib/v4/format'
 import type { DailyPoint } from '@/lib/v4/analytics'
 
@@ -60,11 +60,31 @@ export function ProgressRing({
 
 // ------------------------------------------------------------------ 일별 타임라인 (업로드 막대 + 조회수 영역 + 목표선)
 
+// 차트 상자의 실제 너비를 따라 viewBox 폭을 맞춘다 → 좁은 화면(360px)에서도 글자가 1:1 크기로 읽힌다.
+function useChartWidth(max = 760, min = 300) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [width, setWidth] = useState(max)
+  useEffect(() => {
+    const el = ref.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const apply = () => {
+      const w = Math.round(el.getBoundingClientRect().width)
+      if (w > 0) setWidth(Math.max(min, Math.min(max, w)))
+    }
+    apply()
+    const ro = new ResizeObserver(apply)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [max, min])
+  return { ref, width }
+}
+
 export function TimelineChart({ points, target }: { points: DailyPoint[]; target: number }) {
   const gradientId = useId()
-  const width = 760
-  const height = 260
-  const pad = { top: 18, right: 52, bottom: 34, left: 40 }
+  const { ref, width } = useChartWidth()
+  const narrow = width < 520
+  const height = narrow ? 240 : 260
+  const pad = narrow ? { top: 16, right: 40, bottom: 30, left: 30 } : { top: 18, right: 52, bottom: 34, left: 40 }
   const innerW = width - pad.left - pad.right
   const innerH = height - pad.top - pad.bottom
   const n = points.length
@@ -82,19 +102,23 @@ export function TimelineChart({ points, target }: { points: DailyPoint[]; target
       n > 0
         ? `${linePath} L ${xOf(n - 1).toFixed(1)} ${(pad.top + innerH).toFixed(1)} L ${xOf(0).toFixed(1)} ${(pad.top + innerH).toFixed(1)} Z`
         : ''
-    const labelEvery = n > 45 ? 10 : n > 20 ? 5 : n > 10 ? 2 : 1
+    const labelEvery = narrow ? (n > 45 ? 15 : n > 20 ? 7 : n > 10 ? 3 : 1) : n > 45 ? 10 : n > 20 ? 5 : n > 10 ? 2 : 1
     return { maxUploads, maxViews, slot, barW, xOf, yUploads, yViews, linePath, areaPath, labelEvery }
-  }, [points, target, n, innerW, innerH, pad.left, pad.top])
+  }, [points, target, n, innerW, innerH, pad.left, pad.top, narrow])
 
   if (n === 0) {
-    return <div className="empty-state">표시할 기간 데이터가 없습니다.</div>
+    return (
+      <div className="v4-chart-wrap" ref={ref}>
+        <div className="empty-state">표시할 기간 데이터가 없습니다.</div>
+      </div>
+    )
   }
 
   const targetY = model.yUploads(target)
   const gridLines = [0, 0.25, 0.5, 0.75, 1]
 
   return (
-    <div className="v4-chart-wrap">
+    <div className="v4-chart-wrap" ref={ref}>
       <svg viewBox={`0 0 ${width} ${height}`} className="v4-chart" role="img" aria-label="일별 업로드 수와 조회수 추이">
         <defs>
           <linearGradient id={gradientId} x1="0" x2="0" y1="0" y2="1">

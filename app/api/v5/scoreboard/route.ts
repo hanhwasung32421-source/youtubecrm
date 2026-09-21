@@ -1,16 +1,19 @@
-import { NextResponse } from 'next/server'
 import { addDaysToYmd, getKstDayStartIso, getKstYmd } from '@/lib/attendance/time'
-import { computeScoreboard, type SnapshotRow } from '@/lib/v5/scoring'
+import { computeScoreboard, EARLY_WINDOW_HOURS, isEarlyGrowthCandidate, type SnapshotRow } from '@/lib/v5/scoring'
 import { V5_TABLES } from '@/lib/v5/tables'
 import { SCORE_TIERS, type VideoRef } from '@/lib/v5/types'
-import { badRequest, fetchAllPages, getSession, handleRouteError, loadUserMap } from '@/lib/v5/api'
+import { badRequest, chunk, fetchAllPages, getSession, handleRouteError, IN_CHUNK, jsonCached, loadUserMap } from '@/lib/v5/api'
 
 // 기간(7/30/90일). created_at(등록 시각) 기준으로 서버에서 거른다.
 const PERIODS = [7, 30, 90] as const
 const DEFAULT_DAYS = 30
 // 하루 60~90편 × 90일 ≈ 8,000편. 1,000행씩 나눠 읽되 안전 상한을 둔다(넘으면 truncated 로 알림).
 const VIDEO_MAX_PAGES = 12
-const SNAPSHOT_MAX_PAGES = 15
+// 초기 성장용 스냅샷: 100개 영상씩 묶어 동시에 5묶음, 최대 80묶음(8,000편), 묶음당 1,000행.
+const SNAPSHOT_PARALLEL = 5
+const SNAPSHOT_MAX_GROUPS = 80
+const SNAPSHOT_GROUP_ROWS = 1000
+const HOUR_MS = 3_600_000
 // 응답으로 내려주는 순위 행 수. 합계/평균/분포는 항상 전체 기준으로 계산한다.
 const MAX_ROWS = 200
 
@@ -51,36 +54,50 @@ export async function GET(request: Request) {
     )
 
     const videoRows = videosResult.rows
-    const videoIdSet = new Set(videoRows.map((v) => v.id))
 
-    // 초반 성장 점수용 스냅샷: 기간 안에 찍힌 것만(등록 이후에 생기므로 충분), 오래된 것부터.
-    // 상한에 걸리면 뒤쪽(최근) 스냅샷이 빠지는데, 초반 48시간 판단에는 오래된 쪽이 더 중요하다.
+    // 초기 성장 점수용 스냅샷. 필요한 것만 싸게 읽는다:
+    //  - 올린 지 48시간이 훨씬 지나서 등록한 영상은 48시간 안 스냅샷이 있을 수 없으니 조회하지 않는다(결과 동일, 항상 중립 10점).
+    //  - 나머지는 올린 시각 순으로 묶어 100개씩, 그 묶음의 (올린 시각 ~ +48시간) 구간 스냅샷만 읽는다.
+    //  - 묶음은 동시에 몇 개씩만, 전체 묶음 수에도 상한을 둔다(넘거나 실패하면 snapshotsTruncated 로 알림).
     const snapshotsByVideoId = new Map<string, SnapshotRow[]>()
     let snapshotsTruncated = false
-    if (videoRows.length > 0) {
+    const candidates = videoRows
+      .filter((v) => isEarlyGrowthCandidate(v.published_at, v.created_at))
+      .sort((x, y) => Date.parse(y.published_at as string) - Date.parse(x.published_at as string))
+    const groups = chunk(candidates, IN_CHUNK)
+    if (groups.length > SNAPSHOT_MAX_GROUPS) snapshotsTruncated = true
+    const sinceMs = Date.parse(sinceIso)
+    const readGroup = async (group: VideoDbRow[]) => {
+      const times = group.map((v) => Date.parse(v.published_at as string)).filter((n) => Number.isFinite(n))
+      if (times.length === 0) return
+      const from = new Date(Math.max(Math.min(...times) - EARLY_WINDOW_HOURS * HOUR_MS, sinceMs)).toISOString()
+      const to = new Date(Math.max(...times) + EARLY_WINDOW_HOURS * HOUR_MS).toISOString()
       try {
-        const snaps = await fetchAllPages<SnapshotRow>(
-          (from, to, withCount) =>
-            supabaseAdmin
-              .from(V5_TABLES.videoSnapshots)
-              .select('video_id, snapshot_at, view_count, like_count, comment_count', withCount ? { count: 'exact' } : undefined)
-              .gte('snapshot_at', sinceIso)
-              .order('snapshot_at', { ascending: true })
-              .order('id', { ascending: true })
-              .range(from, to) as any,
-          { maxPages: SNAPSHOT_MAX_PAGES }
-        )
-        snapshotsTruncated = snaps.truncated
-        for (const row of snaps.rows) {
-          if (!videoIdSet.has(row.video_id)) continue
+        const { data, error } = await supabaseAdmin
+          .from(V5_TABLES.videoSnapshots)
+          .select('video_id, snapshot_at, view_count')
+          .in('video_id', group.map((v) => v.id))
+          .gte('snapshot_at', from)
+          .lte('snapshot_at', to)
+          .order('snapshot_at', { ascending: true })
+          .range(0, SNAPSHOT_GROUP_ROWS - 1)
+        if (error) throw error
+        const rows = (data || []) as SnapshotRow[]
+        if (rows.length >= SNAPSHOT_GROUP_ROWS) snapshotsTruncated = true
+        for (const row of rows) {
           const list = snapshotsByVideoId.get(row.video_id) || []
           list.push(row)
           snapshotsByVideoId.set(row.video_id, list)
         }
       } catch (e) {
-        // 스냅샷을 못 읽어도 조회 속도·반응 점수는 계산할 수 있다(초반 반응은 중간값 처리).
+        // 스냅샷을 못 읽어도 조회 속도·참여율 점수는 계산할 수 있다(초기 성장은 중간값 처리).
+        snapshotsTruncated = true
         console.error('V5 스코어보드 스냅샷 조회 실패', e)
       }
+    }
+    const limitedGroups = groups.slice(0, SNAPSHOT_MAX_GROUPS)
+    for (let i = 0; i < limitedGroups.length; i += SNAPSHOT_PARALLEL) {
+      await Promise.all(limitedGroups.slice(i, i + SNAPSHOT_PARALLEL).map(readGroup))
     }
 
     const videoRefs: VideoRef[] = videoRows.map((v) => ({
@@ -134,7 +151,7 @@ export async function GET(request: Request) {
     let lastSyncedAt: string | null = null
     for (const v of videoRows) if (v.last_synced_at && (!lastSyncedAt || v.last_synced_at > lastSyncedAt)) lastSyncedAt = v.last_synced_at
 
-    return NextResponse.json({
+    return jsonCached({
       items: visible.slice(0, MAX_ROWS),
       shown: Math.min(total, MAX_ROWS),
       days,
@@ -144,6 +161,8 @@ export async function GET(request: Request) {
       owners,
       unsynced,
       lastSyncedAt,
+      earlyKnown: visible.filter((r) => r.hasSnapshotData).length,
+      generatedAt: new Date().toISOString(),
       truncated: videosResult.truncated,
       snapshotsTruncated
     })

@@ -1,14 +1,18 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { PageHeader, useV5Me } from '@/components/v5/app-shell'
-import { Badge, Kpi, Segment } from '@/components/v5/widget'
+import { Kpi, Segment } from '@/components/v5/widget'
 import { Toast, useToast } from '@/components/toast'
-import { errorText, v5Get, v5Post } from '@/lib/v5/client'
-import { formatDateTime } from '@/lib/v5/format'
-import { AnswerBanner, EmptyBlock, LoadError, LoadingLine, fmtNum } from '@/lib/v5/page-parts'
-import { usePref } from '@/lib/v5/ui'
+import { errorText, v5Post } from '@/lib/v5/client'
+import { formatCount, formatDayShort, formatKstFull } from '@/lib/v5/format'
+import { AnswerBanner, EmptyBlock, LoadError, RelTime, fmtNum } from '@/lib/v5/page-parts'
+import { ScoreboardSkeleton } from '@/lib/v5/skeleton'
+import { ScoreBar, TierChip, TierDonut } from '@/lib/v5/score-viz'
+import { SCORE_FACTORS, scoreParts, strongestWeakest, totalOf } from '@/lib/v5/score-view'
+import { useSingleFlight, usePref } from '@/lib/v5/ui'
+import { useV5Query } from '@/lib/v5/swr'
 import { SCORE_TIER_LABEL, type ScoreTier, type ScoreboardRow } from '@/lib/v5/types'
 
 type Period = 7 | 30 | 90
@@ -26,134 +30,119 @@ type ScoreboardData = {
   days: Period
   since: string
   summary: { total: number; avg: number; strong: number; weak: number }
+  distribution?: Array<{ tier: ScoreTier; count: number }>
   owners: OwnerOption[]
   unsynced: number
   lastSyncedAt: string | null
+  earlyKnown?: number
   truncated: boolean
   snapshotsTruncated: boolean
 }
 
 const PAGE_STEP = 20
 
-const TIER_TONE: Record<ScoreTier, 'green' | 'indigo' | 'amber' | 'red'> = {
-  excellent: 'green',
-  good: 'indigo',
-  fair: 'amber',
-  poor: 'red'
-}
-
-// 점수 구성 요소: 사람이 읽는 이름 + 한 줄 뜻.
-const FACTORS = [
-  { key: 'velocity', label: '조회 속도', max: 45, meaning: '올라온 뒤 하루 평균 조회수가 다른 영상보다 얼마나 높은지' },
-  { key: 'engagement', label: '반응', max: 35, meaning: '본 사람 중 좋아요·댓글을 남긴 비율이 다른 영상보다 얼마나 높은지' },
-  { key: 'early', label: '초반 반응', max: 20, meaning: '올린 뒤 48시간 안에 조회수가 얼마나 빨리 늘었는지' }
-] as const
-
-function factorValue(row: ScoreboardRow, key: (typeof FACTORS)[number]['key']) {
-  return key === 'velocity' ? row.viewVelocityScore : key === 'engagement' ? row.engagementScore : row.earlyGrowthScore
-}
-
 // 가장 강한/약한 요소를 한 줄로.
 function reasonText(row: ScoreboardRow) {
-  const usable = FACTORS.filter((f) => f.key !== 'early' || row.hasSnapshotData)
-  const ranked = usable.map((f) => ({ f, ratio: factorValue(row, f.key) / f.max })).sort((a, b) => b.ratio - a.ratio)
-  if (ranked.length === 0) return ''
-  const best = ranked[0]
-  const worst = ranked[ranked.length - 1]
-  if (row.tier === 'excellent' || row.tier === 'good') return `강점: ${best.f.label}`
-  return `보완할 점: ${worst.f.label}`
+  const { best, worst } = strongestWeakest(row)
+  if (!best || !worst) return ''
+  return row.tier === 'excellent' || row.tier === 'good' ? `강점: ${best.label}` : `보완할 점: ${worst.label}`
 }
 
-function ScoreRow({ rank, row }: { rank: number; row: ScoreboardRow }) {
+const ScoreRow = memo(function ScoreRow({ rank, row }: { rank: number; row: ScoreboardRow }) {
   const reason = reasonText(row)
   const title = row.video.title || '(제목 없음)'
+  const views = row.video.view_count
+  const parts = scoreParts(row)
   return (
     <li className="v5p-score-row">
-      <div className="v5p-score-top">
-        <span className={`v5-rank-badge ${rank <= 3 ? 'top' : ''}`}>{fmtNum(rank)}</span>
+      <div className="v5p-score-grid">
+        <span className={`v5-rank-badge v5p-score-rank ${rank <= 3 ? 'top' : ''}`} aria-label={`${rank}위`}>
+          {fmtNum(rank)}
+        </span>
         <div className="v5p-score-main">
           <div className="v5p-score-title" title={row.video.title || ''}>
             {row.video.youtube_url ? (
-              <a href={row.video.youtube_url} target="_blank" rel="noopener noreferrer" className="v5p-score-link" title="유튜브에서 영상 열기">
+              <a href={row.video.youtube_url} target="_blank" rel="noopener noreferrer" className="v5p-score-link" title={`유튜브에서 열기 · ${title}`}>
                 {title}
               </a>
             ) : (
               title
             )}
           </div>
-          <div className="small muted">
-            {row.video.stock_name} · {row.video.owner_name || '담당자 없음'} · 조회수 {fmtNum(row.video.view_count ?? 0)}
-            {reason ? ` · ${reason}` : ''}
+          <div className="small muted v5p-score-meta">
+            <span className="v5p-ell">{row.video.stock_name}</span>
+            <span aria-hidden>·</span>
+            <span className="v5p-ell">{row.video.owner_name || '담당자 없음'}</span>
+            <span aria-hidden>·</span>
+            <span className="v5p-num" title={typeof views === 'number' && Number.isFinite(views) ? `조회수 ${fmtNum(views)}회` : undefined}>
+              조회수 {formatCount(views ?? 0)}
+            </span>
+            {row.video.published_at ? (
+              <>
+                <span aria-hidden>·</span>
+                <span title={`올린 시각 ${formatKstFull(row.video.published_at)}`}>{formatDayShort(row.video.published_at)} 올림</span>
+              </>
+            ) : null}
+            {reason ? (
+              <>
+                <span aria-hidden>·</span>
+                <span>{reason}</span>
+              </>
+            ) : null}
           </div>
         </div>
+        <div className="v5p-score-viz">
+          <ScoreBar row={row} />
+        </div>
         <div className="v5p-score-total">
-          <div className="v5p-score-num">{fmtNum(row.totalScore)}</div>
-          <Badge tone={TIER_TONE[row.tier]}>{SCORE_TIER_LABEL[row.tier]}</Badge>
+          <div className="v5p-score-num" title="0~100점">
+            {fmtNum(totalOf(row))}
+            <small>점</small>
+          </div>
+          <TierChip tier={row.tier} />
         </div>
       </div>
       <details className="v5p-score-detail">
         <summary>점수 이유 보기</summary>
-        <div className="v5p-bars">
-          {FACTORS.map((f) => {
-            const value = factorValue(row, f.key)
-            const pending = f.key === 'early' && !row.hasSnapshotData
-            return (
-              <div className="v5p-bar-row" key={f.key}>
-                <div className="v5p-bar-label">
-                  <strong>{f.label}</strong>
-                  <span className="small muted">{f.meaning}</span>
-                </div>
-                <div className="v5p-bar-track">
-                  <div className={`v5p-bar-fill ${row.tier}`} style={{ width: `${(value / f.max) * 100}%` }} />
-                </div>
-                <div className="v5p-bar-value">
-                  {value} / {f.max}
-                  {pending ? <span className="small muted"> · 아직 기록이 없어 중간값</span> : null}
-                </div>
-              </div>
-            )
-          })}
-        </div>
+        <ul className="v5p-why">
+          {parts.map((p) => (
+            <li key={p.key}>
+              <strong>{p.label}</strong>
+              <span className="v5p-num">
+                {' '}
+                {p.value} / {p.max}점
+              </span>
+              {p.pending ? <span className="small muted"> · 기록 부족 (기본 {p.value}점)</span> : null}
+              <div className="small muted">{p.meaning}</div>
+            </li>
+          ))}
+        </ul>
       </details>
     </li>
   )
-}
+})
 
 export default function ScoreboardPage() {
   const me = useV5Me()
   const { toast, showSuccess, showError } = useToast()
+  // showError 는 렌더마다 바뀔 수 있으므로 effect/콜백 의존성에 넣지 않고 ref 로만 쓴다.
+  const showErrorRef = useRef(showError)
+  showErrorRef.current = showError
   const [days, setDays, daysReady] = usePref<Period>('v5.scoreboard.days', 30, isPeriod)
   const [owner, setOwner, ownerReady] = usePref<string>('v5.scoreboard.owner', '', (v): v is string => typeof v === 'string')
-  const [data, setData] = useState<ScoreboardData | null>(null)
-  const [refreshing, setRefreshing] = useState(false)
-  const [loadError, setLoadError] = useState('')
   const [syncing, setSyncing] = useState(false)
   const [limit, setLimit] = useState(PAGE_STEP)
-  const seq = useRef(0)
+  const once = useSingleFlight()
 
   const prefsReady = daysReady && ownerReady
+  const url = prefsReady ? `/api/v5/scoreboard?days=${days}${owner ? `&owner=${encodeURIComponent(owner)}` : ''}` : null
+  const q = useV5Query<ScoreboardData>(url, { errorFallback: '점수판을 불러오지 못했어요.' })
+  const data = q.data
 
-  const load = useCallback(async () => {
-    const mine = ++seq.current
-    setRefreshing(true)
-    setLoadError('')
-    const query = `days=${days}${owner ? `&owner=${encodeURIComponent(owner)}` : ''}`
-    const res = await v5Get<ScoreboardData>(`/api/v5/scoreboard?${query}`)
-    if (mine !== seq.current) return // 그 사이 필터를 또 바꿨다면 이전 응답은 버린다
-    if (res.ok) {
-      setData(res.data)
-      // 저장돼 있던 담당자가 이 기간에 없으면(퇴사 등) 전체로 되돌린다.
-      if (owner && !res.data.owners.some((o) => o.id === owner)) setOwner('')
-    } else {
-      setLoadError(errorText(res, '점수판을 불러오지 못했어요.'))
-    }
-    setRefreshing(false)
-  }, [days, owner, setOwner])
-
+  // 저장돼 있던 담당자가 이 기간에 없으면(퇴사 등) 전체로 되돌린다.
   useEffect(() => {
-    if (!prefsReady) return
-    void load()
-  }, [prefsReady, load])
+    if (owner && data && !q.validating && !data.owners.some((o) => o.id === owner)) setOwner('')
+  }, [owner, data, q.validating, setOwner])
 
   const changeDays = (value: `${Period}`) => {
     setLimit(PAGE_STEP)
@@ -164,29 +153,30 @@ export default function ScoreboardPage() {
     setOwner(id)
   }
 
-  const onSync = async () => {
-    setSyncing(true)
-    try {
-      const res = await v5Post<{ updated: number; failed: number; total: number; remaining: number; nothingToDo?: boolean; stopped?: string | null }>('/api/v5/sync-stats', {})
-      if (!res.ok) {
-        showError(errorText(res, '조회수를 새로 가져오지 못했어요. 잠시 뒤 다시 해 주세요.'))
-        return
+  const onSync = () =>
+    once(async () => {
+      setSyncing(true)
+      try {
+        const res = await v5Post<{ updated: number; failed: number; total: number; remaining: number; nothingToDo?: boolean; stopped?: string | null }>('/api/v5/sync-stats', {})
+        if (!res.ok) {
+          showErrorRef.current(errorText(res, '조회수를 새로 가져오지 못했어요. 잠시 뒤 다시 해 주세요.'))
+          return
+        }
+        const d = res.data
+        if (d.nothingToDo) {
+          showSuccess('방금 모두 새로 가져와서 더 가져올 영상이 없어요.')
+        } else {
+          const parts = [`${fmtNum(d.updated)}개 영상의 조회수를 새로 가져왔어요.`]
+          if (d.failed) parts.push(`${fmtNum(d.failed)}개는 유튜브에서 찾지 못했어요.`)
+          if (d.stopped === 'quota') parts.push('유튜브 한도 때문에 일부만 가져왔어요.')
+          else if (d.remaining > 0) parts.push(`${fmtNum(d.remaining)}개가 남았어요. 한 번 더 누르면 이어서 가져와요.`)
+          showSuccess(parts.join(' '))
+        }
+        q.reload()
+      } finally {
+        setSyncing(false)
       }
-      const d = res.data
-      if (d.nothingToDo) {
-        showSuccess('방금 모두 새로 가져와서 더 가져올 영상이 없어요.')
-      } else {
-        const parts = [`${fmtNum(d.updated)}개 영상의 조회수를 새로 가져왔어요.`]
-        if (d.failed) parts.push(`${fmtNum(d.failed)}개는 유튜브에서 찾지 못했어요.`)
-        if (d.stopped === 'quota') parts.push('유튜브 한도 때문에 일부만 가져왔어요.')
-        else if (d.remaining > 0) parts.push(`${fmtNum(d.remaining)}개가 남았어요. 한 번 더 누르면 이어서 가져와요.`)
-        showSuccess(parts.join(' '))
-      }
-      await load()
-    } finally {
-      setSyncing(false)
-    }
-  }
+    })
 
   const rows = data?.items || []
   const summary = data?.summary
@@ -201,7 +191,7 @@ export default function ScoreboardPage() {
         subtitle="영상마다 유튜브가 얼마나 잘 밀어주고 있는지 0~100점으로 비교해요."
         actions={
           me?.isAdmin ? (
-            <button className="button secondary" disabled={syncing} onClick={onSync} title="유튜브에서 최신 조회수·좋아요·댓글을 다시 가져와요">
+            <button className="button secondary" disabled={syncing} onClick={() => void onSync()} title="유튜브에서 최신 조회수·좋아요·댓글을 다시 가져와요">
               {syncing ? '가져오는 중…' : '조회수 새로 가져오기'}
             </button>
           ) : undefined
@@ -228,11 +218,11 @@ export default function ScoreboardPage() {
         </span>
       </div>
 
-      {loadError ? <LoadError message={loadError} onRetry={() => void load()} /> : null}
-      {!data && !loadError ? <LoadingLine /> : null}
+      {q.error ? <LoadError message={q.error} status={q.status} onRetry={q.reload} /> : null}
+      {q.loading && !q.error ? <ScoreboardSkeleton /> : null}
 
       {data ? (
-        <div className={refreshing ? 'v5p-refreshing' : undefined}>
+        <div className={q.validating ? 'v5p-refreshing' : undefined} aria-busy={q.validating}>
           {summary && summary.total === 0 && !owner ? (
             <EmptyBlock
               title={`최근 ${data.days}일 안에 등록한 영상이 없어요`}
@@ -256,7 +246,10 @@ export default function ScoreboardPage() {
               <AnswerBanner label={`최근 ${data.days}일, 지금 점수가 가장 높은 영상`} tone="good">
                 {top ? (
                   <>
-                    <strong>{top.video.title || top.video.stock_name}</strong> · {fmtNum(top.totalScore)}점
+                    <strong className="v5p-ell-inline" title={top.video.title || top.video.stock_name}>
+                      {top.video.title || top.video.stock_name}
+                    </strong>{' '}
+                    · {fmtNum(totalOf(top))}점
                     <span className="v5p-answer-sub">
                       {top.video.stock_name} · {top.video.owner_name || '담당자 없음'} · 최근 {data.days}일간 {ownerName ? `${ownerName}님이 ` : ''}등록한 영상 {fmtNum(summary?.total ?? 0)}개 중 1등
                     </span>
@@ -309,12 +302,21 @@ export default function ScoreboardPage() {
                 />
               </div>
 
+              {data.distribution && (summary?.total ?? 0) > 0 ? (
+                <section className="v5p-board-card v5p-dist-card" aria-label="점수 구간 분포">
+                  <TierDonut distribution={data.distribution} avg={summary?.avg} />
+                </section>
+              ) : null}
+
               <section className="v5p-board-card" aria-label="영상 순위">
                 <div className="v5p-section-head">
                   <h2>영상 순위</h2>
                   <span className="small muted">
                     점수 높은 순 · {fmtNum(Math.min(limit, rows.length))} / {fmtNum(summary?.total ?? 0)}개 표시
                   </span>
+                </div>
+                <div className="v5p-score-legend small muted" aria-hidden>
+                  막대는 {SCORE_FACTORS.map((f) => `${f.label} ${f.max}점`).join(' + ')} = 100점 만점이에요. 색이 칠해진 만큼이 받은 점수예요.
                 </div>
                 {rows.length === 0 ? (
                   <div className="v5p-pick-empty">표시할 영상이 없어요.</div>
@@ -343,8 +345,15 @@ export default function ScoreboardPage() {
               </section>
 
               <div className="small muted v5p-foot-note">
-                {data.since} 이후에 등록한 영상 기준{data.lastSyncedAt ? ` · 조회수 마지막 갱신 ${formatDateTime(data.lastSyncedAt)}` : ''}
-                {data.snapshotsTruncated ? ' · 초반 반응 기록이 많아 일부만 반영했어요' : ''}
+                {data.since} 이후에 등록한 영상 기준
+                {data.lastSyncedAt ? (
+                  <>
+                    {' '}
+                    · 조회수 마지막 갱신 <RelTime value={data.lastSyncedAt} />
+                  </>
+                ) : null}
+                {typeof data.earlyKnown === 'number' && summary && summary.total > 0 ? ` · 초기 성장 기록이 있는 영상 ${fmtNum(data.earlyKnown)}개 (나머지는 기본 10점)` : ''}
+                {data.snapshotsTruncated ? ' · 초기 성장 기록이 많아 일부만 반영했어요' : ''}
               </div>
 
               <details className="v5p-formula">
@@ -354,7 +363,7 @@ export default function ScoreboardPage() {
                     점수는 <strong>같은 기간(최근 {data.days}일)에 등록한 다른 영상들과 비교한 순위</strong>예요. 세 가지를 더해서 100점 만점으로 계산해요.
                   </p>
                   <ul>
-                    {FACTORS.map((f) => (
+                    {SCORE_FACTORS.map((f) => (
                       <li key={f.key}>
                         <strong>
                           {f.label} ({f.max}점)
@@ -363,7 +372,7 @@ export default function ScoreboardPage() {
                       </li>
                     ))}
                   </ul>
-                  <p className="small muted">초반 반응은 올린 뒤 48시간 안의 조회수 기록이 있어야 계산돼요. 기록이 없으면 절반(10점)을 줘요.</p>
+                  <p className="small muted">초기 성장은 올린 뒤 48시간 안의 조회수 기록이 2번 이상 있어야 계산돼요. 기록이 부족하면 절반(10점)을 기본으로 줘요.</p>
                   <p className="small muted">
                     {SCORE_TIER_LABEL.excellent} 80점 이상 · {SCORE_TIER_LABEL.good} 60점 이상 · {SCORE_TIER_LABEL.fair} 40점 이상 · {SCORE_TIER_LABEL.poor} 40점 미만
                   </p>

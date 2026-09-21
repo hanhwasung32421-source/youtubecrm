@@ -2,15 +2,33 @@
 
 import '../analysis.css'
 import Link from 'next/link'
-import { useCallback, useEffect, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { PageHeader } from '@/components/v3/app-shell'
-import { Toast, useToast } from '@/components/toast'
 import { Section, Tag } from '@/components/v3/ui'
 import { useV3Me } from '@/components/v3/auth-guard'
 import { v3Request } from '@/lib/v3/api-client'
-import { ConfirmButton, FieldError, InlineEditor, useLatest } from '@/lib/v3/interact'
-import { formatCompactNumber, formatDateTime, formatNumber } from '@/lib/v3/format'
-import { AnswerCard, EmptyBlock, ErrorBlock, HowTo, LoadingBlock, MoreButton, SetupNote, StatCard, StatGrid, useShowMore } from '../analysis-parts'
+import { ConfirmButton, FieldError, InlineEditor } from '@/lib/v3/interact'
+import { markDirtyV3, useV3Data } from '@/lib/v3/use-v3-data'
+import { formatCompactNumber, formatNumber } from '@/lib/v3/format'
+import {
+  AnswerCard,
+  AnswerSkeleton,
+  CardsSkeleton,
+  EmptyBlock,
+  ErrorBlock,
+  HowTo,
+  MoreButton,
+  RefreshFailed,
+  RelTime,
+  SectionSkeleton,
+  SetupNote,
+  SkeletonShell,
+  StatCard,
+  StatGrid,
+  StatsSkeleton,
+  useShowMore,
+  withLoginLink
+} from '../analysis-parts'
 
 type ViralItem = {
   id: string
@@ -19,6 +37,7 @@ type ViralItem = {
   contentType: 'longform' | 'shortform'
   youtubeUrl: string | null
   viewCount: number | null
+  publishedAt?: string | null
   velocity: number
   ratio: number
   note: string
@@ -39,13 +58,16 @@ type ViralResponse = {
   items: ViralItem[]
 }
 
+// 배수 표기: NaN/Infinity 가 들어와도 화면이 깨지지 않게
+const fx = (n: number) => (Number.isFinite(n) ? n.toFixed(1) : '—')
+
 export default function ViralPage() {
   const me = useV3Me()
-  const { toast, showError } = useToast()
-  const showErrorRef = useLatest(showError)
-  const [data, setData] = useState<ViralResponse | null>(null)
-  const [loadError, setLoadError] = useState<string | null>(null)
+  const res = useV3Data<ViralResponse>('/api/v3/viral', { scope: me?.crmUserId, fallback: '급상승 영상을 불러오지 못했어요.' })
+  const { data, reload, mutate } = res
   const [ackingId, setAckingId] = useState<string | null>(null)
+  // 같은 카드를 빠르게 두 번 눌러도 저장이 한 번만 나가게 하는 즉시 잠금(상태는 다음 화면 갱신 뒤에야 바뀌기 때문)
+  const ackLock = useRef(false)
   const [notes, setNotes] = useState<Record<string, string>>({})
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editSaving, setEditSaving] = useState(false)
@@ -61,36 +83,26 @@ export default function ViralPage() {
       return next
     })
 
-  const load = useCallback(async () => {
-    const res = await v3Request<ViralResponse>('/api/v3/viral', {}, '급상승 영상을 불러오지 못했어요.')
-    if (!res.ok) {
-      setLoadError(res.error)
-      showErrorRef.current(res.error || '급상승 영상을 불러오지 못했어요.')
-      return
-    }
-    setLoadError(null)
-    setData(res.data)
-  }, [showErrorRef])
-
-  useEffect(() => {
-    void load()
-  }, [load])
-
-  const patchItem = (id: string, patch: Partial<ViralItem>) =>
-    setData((prev) => (prev ? { ...prev, items: prev.items.map((item) => (item.id === id ? { ...item, ...patch } : item)) } : prev))
+  // 화면에서 먼저 바꿔 보여 준다(캐시에도 같이 반영). 저장이 끝난 뒤에는 다음 조회가 서버 최신 값을 받도록 표시해 둔다.
+  const patchItem = (id: string, patch: Partial<ViralItem>) => {
+    mutate((prev) => ({ ...prev, items: prev.items.map((item) => (item.id === id ? { ...item, ...patch } : item)) }))
+    markDirtyV3('/api/v3/viral')
+  }
 
   // 확인 표시: 화면에서 먼저 "확인 완료"로 옮기고, 저장에 실패하면 되돌린다.
   const ack = async (item: ViralItem) => {
-    if (ackingId) return
+    if (ackingId || ackLock.current) return
+    ackLock.current = true
     const actionNote = (notes[item.id] || '').trim()
     setAckingId(item.id)
     setCardError(item.id, null)
     patchItem(item.id, { acknowledged: true, actionNote: actionNote || null, ackedAt: new Date().toISOString(), ackedByName: me?.name || null })
-    const res = await v3Request('/api/v3/viral/ack', { method: 'POST', body: { videoId: item.id, actionNote: actionNote || undefined } }, '확인 표시를 저장하지 못했어요.')
+    const out = await v3Request('/api/v3/viral/ack', { method: 'POST', body: { videoId: item.id, actionNote: actionNote || undefined } }, '확인 표시를 저장하지 못했어요.')
+    ackLock.current = false
     setAckingId(null)
-    if (!res.ok) {
+    if (!out.ok) {
       patchItem(item.id, { acknowledged: false, actionNote: item.actionNote, ackedAt: item.ackedAt ?? null, ackedByName: item.ackedByName ?? null })
-      setCardError(item.id, res.error)
+      setCardError(item.id, out.error)
       return
     }
     setNotes((prev) => {
@@ -103,10 +115,10 @@ export default function ViralPage() {
   const saveNote = async (item: ViralItem, value: string) => {
     setEditSaving(true)
     setEditError(null)
-    const res = await v3Request('/api/v3/viral/ack', { method: 'PATCH', body: { videoId: item.id, actionNote: value || undefined } }, '메모를 저장하지 못했어요.')
+    const out = await v3Request('/api/v3/viral/ack', { method: 'PATCH', body: { videoId: item.id, actionNote: value || undefined } }, '메모를 저장하지 못했어요.')
     setEditSaving(false)
-    if (!res.ok) {
-      setEditError(res.error)
+    if (!out.ok) {
+      setEditError(out.error)
       return
     }
     patchItem(item.id, { actionNote: value || null })
@@ -117,19 +129,19 @@ export default function ViralPage() {
     setUndoingId(item.id)
     setCardError(item.id, null)
     patchItem(item.id, { acknowledged: false, actionNote: null })
-    const res = await v3Request('/api/v3/viral/ack', { method: 'DELETE', body: { videoId: item.id } }, '확인 취소에 실패했어요.')
+    const out = await v3Request('/api/v3/viral/ack', { method: 'DELETE', body: { videoId: item.id } }, '확인 취소에 실패했어요.')
     setUndoingId(null)
-    if (!res.ok) {
+    if (!out.ok) {
       patchItem(item.id, { acknowledged: true, actionNote: item.actionNote })
-      setCardError(item.id, res.error)
+      setCardError(item.id, out.error)
       return
     }
     // 예전 메모는 지워졌으니, 다시 확인할 때 빈 칸에서 시작한다.
     setNotes((prev) => ({ ...prev, [item.id]: '' }))
   }
 
-  const pending = (data?.items || []).filter((i) => !i.acknowledged)
-  const done = (data?.items || []).filter((i) => i.acknowledged)
+  const pending = useMemo(() => (data?.items || []).filter((i) => !i.acknowledged), [data])
+  const done = useMemo(() => (data?.items || []).filter((i) => i.acknowledged), [data])
   const pendingMore = useShowMore(pending, 5, 10)
   const doneMore = useShowMore(done, 5, 10)
 
@@ -139,8 +151,17 @@ export default function ViralPage() {
     return (
       <>
         {header}
-        <Toast toast={toast} />
-        {loadError ? <ErrorBlock message={loadError} onRetry={() => void load()} /> : <LoadingBlock>급상승 영상을 찾는 중이에요…</LoadingBlock>}
+        {res.error ? (
+          <ErrorBlock message={res.error} status={res.status} onRetry={() => void reload(true)} />
+        ) : (
+          <SkeletonShell label="급상승 영상을 찾는 중이에요…">
+            <AnswerSkeleton />
+            <StatsSkeleton count={3} />
+            <SectionSkeleton>
+              <CardsSkeleton count={3} />
+            </SectionSkeleton>
+          </SkeletonShell>
+        )}
       </>
     )
   }
@@ -158,7 +179,7 @@ export default function ViralPage() {
         <div className="v3a-card-head">
           <div className="v3a-card-title">
             {item.youtubeUrl ? (
-              <a className="v3-link" href={item.youtubeUrl} target="_blank" rel="noreferrer">
+              <a className="v3-link" href={item.youtubeUrl} target="_blank" rel="noreferrer" title={item.title}>
                 {item.title}
               </a>
             ) : (
@@ -167,17 +188,32 @@ export default function ViralPage() {
             <Tag tone={item.contentType === 'shortform' ? 'violet' : 'blue'}>{item.contentType === 'shortform' ? '숏폼' : '롱폼'}</Tag>
             {item.stockName ? <Tag tone="gray">{item.stockName}</Tag> : null}
           </div>
-          <span className="v3a-badge">보통의 {item.ratio.toFixed(1)}배</span>
+          <span className="v3a-badge" title={`평소 영상의 하루 조회수보다 ${fx(item.ratio)}배 빠르게 늘고 있어요`}>
+            <span aria-hidden>▲ </span>보통의 {fx(item.ratio)}배
+          </span>
         </div>
         <div className="v3a-card-meta">
-          <span>지금까지 조회수 {formatCompactNumber(item.viewCount)}회</span>
+          {item.publishedAt ? (
+            <span>
+              올린 지 <RelTime value={item.publishedAt} />
+            </span>
+          ) : null}
+          <span title={`${formatNumber(item.viewCount)}회`}>지금까지 조회수 {formatCompactNumber(item.viewCount)}회</span>
           <span>하루 평균 {formatNumber(item.velocity)}회씩 늘어요 (보통 영상은 {formatNumber(median)}회)</span>
         </div>
         {item.acknowledged ? (
           <>
             <div className="v3a-check">
               ✓ 확인 완료
-              {item.ackedByName || item.ackedAt ? ` (${[item.ackedByName, item.ackedAt ? formatDateTime(item.ackedAt) : null].filter(Boolean).join(' · ')})` : ''}
+              {item.ackedByName || item.ackedAt ? (
+                <>
+                  {' ('}
+                  {item.ackedByName ? item.ackedByName : null}
+                  {item.ackedByName && item.ackedAt ? ' · ' : null}
+                  {item.ackedAt ? <RelTime value={item.ackedAt} /> : null}
+                  {')'}
+                </>
+              ) : null}
               {item.actionNote ? ` · ${item.actionNote}` : ''}
             </div>
             {editingId === item.id ? (
@@ -246,7 +282,7 @@ export default function ViralPage() {
             </button>
           </form>
         )}
-        <FieldError>{cardErrors[item.id]}</FieldError>
+        <FieldError>{withLoginLink(cardErrors[item.id])}</FieldError>
       </div>
     )
   }
@@ -288,7 +324,7 @@ export default function ViralPage() {
         eyebrow={isAdmin ? '팀 전체 기준' : '내 영상 기준'}
         headline={
           <>
-            지금 눈여겨볼 영상이 {formatNumber(pending.length)}개 있어요. 1위는 “{top.title}” — 보통 영상보다 {top.ratio.toFixed(1)}배 빠르게 조회수가 오르고 있어요.
+            지금 눈여겨볼 영상이 {formatNumber(pending.length)}개 있어요. 1위는 “{top.title}” — 보통 영상보다 {fx(top.ratio)}배 빠르게 조회수가 오르고 있어요.
           </>
         }
         detail="이런 영상은 같은 종목의 후속 영상이나 비슷한 주제를 빨리 만들수록 효과가 커요."
@@ -310,9 +346,9 @@ export default function ViralPage() {
   return (
     <>
       {header}
-      <Toast toast={toast} />
 
-      <div className="v3a-stack">
+      <div className={`v3a-stack ${res.stale ? 'v3a-dim' : ''}`} aria-busy={res.refreshing}>
+        {res.error ? <RefreshFailed message={res.error} status={res.status} onRetry={() => void reload(true)} /> : null}
         {answer}
 
         {!data.acksAvailable && data.items.length > 0 ? <SetupNote>“확인했어요” 기록을 저장하려면 이 SQL을 먼저 실행해 주세요 —</SetupNote> : null}

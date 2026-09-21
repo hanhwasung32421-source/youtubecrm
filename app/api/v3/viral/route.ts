@@ -1,6 +1,5 @@
-import { NextResponse } from 'next/server'
 import { isoDaysAgo, median, viewVelocity } from '@/lib/v3/engagement'
-import { apiError, authenticate, isMissingTableError, loadTeamVideos, loadUserNames } from '@/lib/v3/server'
+import { VIDEO_FIELDS_LIST, apiError, authenticate, cachedJson, isMissingTableError, loadTeamVideos, loadUserNames } from '@/lib/v3/server'
 import { V3_TABLES } from '@/lib/v3/tables'
 
 const THRESHOLD_MULTIPLIER = 2
@@ -17,7 +16,7 @@ export async function GET(request: Request) {
 
   try {
     const now = new Date()
-    const teamVideos = await loadTeamVideos(supabaseAdmin, { sinceIso: isoDaysAgo(30, now), limit: 3000 })
+    const teamVideos = await loadTeamVideos(supabaseAdmin, { sinceIso: isoDaysAgo(30, now), limit: 3000, fields: VIDEO_FIELDS_LIST })
     const velocities = teamVideos.map((v) => viewVelocity(v, now))
     const teamMedian = median(velocities)
 
@@ -66,6 +65,7 @@ export async function GET(request: Request) {
         contentType: row.video.content_type,
         youtubeUrl: row.video.youtube_url,
         viewCount: row.video.view_count,
+        publishedAt: row.video.published_at || row.video.created_at,
         velocity: Math.round(row.velocity),
         ratio: row.ratio,
         note: `${row.video.stock_name || '이'} 영상이 팀 중앙값 대비 ${row.ratio.toFixed(1)}배 빠르게 조회수가 오르고 있습니다.`,
@@ -76,7 +76,7 @@ export async function GET(request: Request) {
       }
     })
 
-    return NextResponse.json({
+    return cachedJson({
       insufficientData,
       teamMedianVelocity: Math.round(teamMedian),
       teamSampleSize: teamVideos.length,

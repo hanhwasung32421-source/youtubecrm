@@ -5,30 +5,44 @@ import { useRouter } from 'next/navigation'
 import { getAccessToken } from '@/lib/session/authed-fetch'
 import { fetchMe } from '@/lib/session/me-client'
 import { isAdminRoleType, V2_HOME_HREF } from '@/lib/v2/menu'
-import { V2SessionProvider, useV2Me, type V2Me } from './session-context'
+import { ShellSkeleton } from './skeletons'
+import { getCachedV2Me, sameV2Me, setCachedV2Me, V2SessionProvider, useV2Me, type V2Me } from './session-context'
 
 // V2는 메뉴 권한 테이블을 쓰지 않는다. 역할(roleType)만으로 관리자/직원을 가른다.
 // 로그인 안 됨 → /v2/login, 관리자 전용 화면에 직원 접근 → 영상 등록 홈으로.
+//
+// 이 가드는 (ops) 레이아웃에 한 번만 붙어 있어서 메뉴를 옮겨 다녀도 다시 마운트되지 않는다.
+// 처음 들어올 때만 확인하고, 이미 확인된 프로필이 메모리에 있으면 그것으로 곧바로 그린 뒤 뒤에서 다시 확인한다.
 export function AuthGuard({ children, requireAdmin = false }: { children: React.ReactNode; requireAdmin?: boolean }) {
   const router = useRouter()
-  const [me, setMe] = useState<V2Me | null>(null)
+  const [me, setMe] = useState<V2Me | null>(() => getCachedV2Me())
   const [error, setError] = useState('')
+  const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
     let cancelled = false
+    const leaveToLogin = () => {
+      setCachedV2Me(null)
+      router.replace('/v2/login')
+    }
     const run = async () => {
       try {
         const accessToken = await getAccessToken()
         if (!accessToken) {
-          router.replace('/v2/login')
+          leaveToLogin()
           return
         }
 
         let data: Awaited<ReturnType<typeof fetchMe>>
         try {
           data = await fetchMe(accessToken)
-        } catch {
-          router.replace('/v2/login')
+        } catch (e: unknown) {
+          // 인터넷이 잠깐 끊긴 것(TypeError)이면 로그인 화면으로 쫓아내지 않고 다시 시도할 수 있게 한다.
+          if (e instanceof TypeError) {
+            if (!cancelled) setError('인터넷 연결을 확인한 뒤 다시 시도해 주세요.')
+            return
+          }
+          leaveToLogin()
           return
         }
 
@@ -39,13 +53,17 @@ export function AuthGuard({ children, requireAdmin = false }: { children: React.
         }
 
         if (!cancelled) {
-          setMe({
+          const next: V2Me = {
             crmUserId: data.crmUserId,
             name: data.name,
             roleType: data.roleType,
             roleName: data.roleName || data.roleType,
             isAdmin
-          })
+          }
+          setCachedV2Me(next)
+          setError('')
+          // 내용이 같으면 기존 객체를 그대로 두어 불필요한 다시 그리기를 막는다.
+          setMe((prev) => (sameV2Me(prev, next) ? prev : next))
         }
       } catch (e: unknown) {
         if (!cancelled) setError(e instanceof Error ? e.message : '인증 확인 중 오류가 발생했습니다.')
@@ -56,14 +74,28 @@ export function AuthGuard({ children, requireAdmin = false }: { children: React.
     return () => {
       cancelled = true
     }
-  }, [requireAdmin, router])
+  }, [requireAdmin, router, attempt])
 
-  if (error) {
-    return <div className="message-error">{error}</div>
+  if (error && !me) {
+    return (
+      <div className="panel v2-guard-error" role="alert">
+        <div className="v2-guard-error-text">{error}</div>
+        <button
+          type="button"
+          className="button"
+          onClick={() => {
+            setError('')
+            setAttempt((n) => n + 1)
+          }}
+        >
+          다시 시도
+        </button>
+      </div>
+    )
   }
 
   if (!me) {
-    return null
+    return <ShellSkeleton />
   }
 
   return <V2SessionProvider me={me}>{children}</V2SessionProvider>

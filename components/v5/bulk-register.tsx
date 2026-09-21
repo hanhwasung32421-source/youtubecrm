@@ -24,13 +24,16 @@ export function BulkRegister({
   registeredIds,
   onRegistered,
   onStocksUsed,
-  onBusyChange
+  onBusyChange,
+  initialText
 }: {
   recentStocks: string[]
   registeredIds: Set<string>
   onRegistered: (videoId: string) => void
   onStocksUsed: (stocks: string[]) => void
   onBusyChange: (busy: boolean) => void
+  // "한 개씩" 화면에서 넘어온 글. 있으면 열자마자 미리보기로 정리한다.
+  initialText?: string
 }) {
   const rootRef = useRef<HTMLDivElement | null>(null)
   const textRef = useRef<HTMLTextAreaElement | null>(null)
@@ -44,7 +47,14 @@ export function BulkRegister({
   const [emptyNote, setEmptyNote] = useState('')
 
   useEffect(() => {
-    textRef.current?.focus()
+    if (initialText && initialText.trim()) {
+      setText(initialText)
+      build(initialText)
+    } else {
+      textRef.current?.focus()
+    }
+    // 처음 한 번만 실행한다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -167,6 +177,7 @@ export function BulkRegister({
           className="input"
           list="v5-bulk-stocks"
           autoComplete="off"
+          spellCheck={false}
           placeholder="종목이 없는 줄에 이 종목을 씁니다"
           value={commonStock}
           disabled={running}
@@ -189,6 +200,8 @@ export function BulkRegister({
             ref={textRef}
             className="textarea v5-bulk-text"
             spellCheck={false}
+            autoComplete="off"
+            autoCapitalize="none"
             rows={6}
             placeholder={'한 줄에 영상 하나씩, 주소 뒤에 종목을 적으세요.\nhttps://youtu.be/abcdefghijk 삼성전자\nhttps://www.youtube.com/shorts/lmnopqrstuv SK하이닉스'}
             value={text}
@@ -223,26 +236,28 @@ export function BulkRegister({
           ) : null}
 
           <div className="v5-table-wrap v5-bulk-wrap">
-            <table className="v5-table compact">
-              <thead>
-                <tr>
-                  <th style={{ width: 34 }}>#</th>
-                  <th>영상</th>
-                  <th style={{ width: '32%' }}>종목</th>
-                  <th style={{ width: 96 }}>형식</th>
-                  <th style={{ width: 150 }}>상태</th>
-                  <th style={{ width: 56 }} />
+            <table className="v5-table compact v5-bulk-table" role="table" aria-label="등록할 영상 미리보기">
+              <thead role="rowgroup">
+                <tr role="row">
+                  <th role="columnheader" style={{ width: 34 }}>#</th>
+                  <th role="columnheader">영상</th>
+                  <th role="columnheader" style={{ width: '32%' }}>종목</th>
+                  <th role="columnheader" style={{ width: 96 }}>형식</th>
+                  <th role="columnheader" style={{ width: 150 }}>상태</th>
+                  <th role="columnheader" style={{ width: 56 }}>
+                    <span className="v5-sr-only">작업</span>
+                  </th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody role="rowgroup">
                 {rows.map((r, i) => {
                   const stock = effectiveStock(r)
                   const locked = running || r.status === 'done' || r.status === 'queued' || r.status === 'running'
                   const already = r.videoId ? registeredIds.has(r.videoId) : false
                   return (
-                    <tr key={r.key} className={r.status === 'done' ? 'v5-row-done' : ''}>
-                      <td className="small muted">{i + 1}</td>
-                      <td className="v5-title-cell" title={r.raw}>
+                    <tr key={r.key} role="row" className={`v5-bulk-row ${r.status === 'done' ? 'v5-row-done' : ''}`}>
+                      <td className="small muted b-num" role="cell">{i + 1}</td>
+                      <td className="v5-title-cell b-url" role="cell" title={r.raw}>
                         {r.problem ? (
                           <span className="v5-bulk-bad">
                             {r.raw.length > 40 ? `${r.raw.slice(0, 40)}...` : r.raw}
@@ -252,12 +267,14 @@ export function BulkRegister({
                         )}
                         {already && r.status === 'idle' ? <div className="v5-bulk-note">이미 등록된 영상 · 다시 등록하면 정보가 갱신됩니다</div> : null}
                       </td>
-                      <td>
+                      <td className="b-stock" role="cell">
                         {r.problem ? (
                           <span className="small muted">-</span>
                         ) : (
                           <input
                             className="input v5-cell-input"
+                            spellCheck={false}
+                            enterKeyHint="next"
                             data-stock=""
                             data-missing={stock ? '0' : '1'}
                             autoComplete="off"
@@ -276,7 +293,7 @@ export function BulkRegister({
                           />
                         )}
                       </td>
-                      <td>
+                      <td className="b-type" role="cell">
                         {r.problem ? null : (
                           <select
                             className="select v5-cell-input"
@@ -290,7 +307,7 @@ export function BulkRegister({
                           </select>
                         )}
                       </td>
-                      <td>
+                      <td className="b-status" role="cell">
                         {r.problem ? (
                           <span className="v5-bulk-err">{r.problem}</span>
                         ) : r.status === 'done' ? (
@@ -308,7 +325,7 @@ export function BulkRegister({
                           <Badge tone="plain">대기</Badge>
                         )}
                       </td>
-                      <td>
+                      <td className="b-remove" role="cell">
                         {r.status === 'done' || r.status === 'running' || r.status === 'queued' ? null : (
                           <button className="button ghost xs" type="button" disabled={running} onClick={() => removeRow(r.key)} aria-label={`${i + 1}번 줄 빼기`}>
                             빼기

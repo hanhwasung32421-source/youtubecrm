@@ -5,10 +5,11 @@ import { PageHeader } from '@/components/v2/app-shell'
 import { useV2Me } from '@/components/v2/session-context'
 import { KeywordStatusTag, PriorityTag } from '@/components/v2/tags'
 import { Toast, useToast } from '@/components/toast'
-import { Answer, EmptyGuide, FieldError, HowTo, InlineConfirm, Kpi, KpiRow, LoadError, LoadingLine, MoreButton, Req, SampleNote } from '@/lib/v2/analysis-ui'
-import { v2Delete, v2Get, v2Patch, v2Post } from '@/lib/v2/client'
-import { formatKstDateTime } from '@/lib/v2/dates'
+import { Answer, EmptyGuide, FieldError, HowTo, InlineConfirm, Kpi, KpiRow, LoadError, MoreButton, RefreshNote, Req, SampleNote, SkeletonList, SkeletonSummary, Stamp } from '@/lib/v2/analysis-ui'
+import { v2Delete, v2Patch, v2Post } from '@/lib/v2/client'
+import { formatKstStamp } from '@/lib/v2/dates'
 import { shortText } from '@/lib/v2/format'
+import { useV2Query } from '@/lib/v2/swr'
 import { useRememberedState } from '@/lib/v2/use-remembered'
 import { V2_MISSING_TABLE_MESSAGE } from '@/lib/v2/tables'
 import {
@@ -27,6 +28,10 @@ type Filter = 'open' | 'waiting' | 'in_progress' | 'done' | 'all'
 
 const FILTERS = ['open', 'waiting', 'in_progress', 'done', 'all'] as const
 const EMPTY: KeywordsPayload = { items: [], recentStocks: [] }
+const isPayload = (data: unknown) => {
+  const d = data as { items?: unknown; recentStocks?: unknown } | null
+  return Array.isArray(d?.items) && Array.isArray(d?.recentStocks)
+}
 const PAGE_STEP = 15
 const PRIORITY_ORDER: Record<Priority, number> = { high: 0, normal: 1, low: 2 }
 const LOAD_ERROR = '키워드 목록을 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.'
@@ -60,9 +65,10 @@ function sortItems(items: KeywordRadarItem[]) {
 export default function KeywordsPage() {
   const me = useV2Me()
   const { toast, showError } = useToast()
-  const [payload, setPayload] = useState<KeywordsPayload>(EMPTY)
-  const [loaded, setLoaded] = useState(false)
-  const [loadError, setLoadError] = useState('')
+  const query = useV2Query<KeywordsPayload>('/api/v2/keywords', { fallback: LOAD_ERROR, validate: isPayload })
+  const payload = query.data ?? EMPTY
+  const loaded = !query.loading
+  const loadError = query.error
   const [form, setForm] = useState<Form>(initialForm)
   const [submitted, setSubmitted] = useState(false)
   const [formError, setFormError] = useState('')
@@ -80,22 +86,11 @@ export default function KeywordsPage() {
   const keywordRef = useRef<HTMLInputElement>(null)
   const urlRef = useRef<HTMLInputElement>(null)
   const editStockRef = useRef<HTMLInputElement>(null)
-
-  const load = async () => {
-    const res = await v2Get<KeywordsPayload>('/api/v2/keywords', LOAD_ERROR)
-    setLoaded(true)
-    if (!res.ok) {
-      setLoadError(res.error)
-      return
-    }
-    setLoadError('')
-    setPayload(res.data)
-  }
-
-  useEffect(() => {
-    void load()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  // 버튼을 빠르게 두 번 눌러도 한 번만 보내도록, 상태보다 먼저 바뀌는 표시를 함께 둔다.
+  const creatingRef = useRef(false)
+  const editingRef = useRef(false)
+  const busyRef = useRef<Set<string>>(new Set())
+  const deletingRef = useRef(false)
 
   // 수정 칸이 열리면 첫 입력칸으로 포커스
   useEffect(() => {
@@ -111,7 +106,7 @@ export default function KeywordsPage() {
   }
 
   const setItems = (fn: (items: KeywordRadarItem[]) => KeywordRadarItem[], doneDelta = 0) => {
-    setPayload((prev) => ({
+    query.setData((prev) => ({
       ...prev,
       items: fn(prev.items),
       doneTotal: prev.doneTotal === undefined ? undefined : Math.max(0, prev.doneTotal + doneDelta)
@@ -137,20 +132,25 @@ export default function KeywordsPage() {
       ;(errors.stockName ? stockRef : errors.keyword ? keywordRef : urlRef).current?.focus()
       return
     }
-    if (guardSample()) return
+    if (guardSample() || creatingRef.current) return
+    creatingRef.current = true
     setSaving(true)
     const res = await v2Post<{ ok?: boolean; item?: KeywordRadarItem }>(
       '/api/v2/keywords',
       { stockName: form.stockName.trim(), keyword: form.keyword.trim(), sourceUrl: form.sourceUrl.trim() || null, priority: form.priority },
       '키워드를 저장하지 못했어요. 다시 시도해 주세요.'
     )
+    creatingRef.current = false
     setSaving(false)
+    query.noteStatus(res.status)
     if (!res.ok || !res.data.item) {
       setFormError(res.error || '키워드를 저장하지 못했어요. 다시 시도해 주세요.')
       return
     }
     const item = res.data.item
     setItems((items) => [item, ...items.filter((i) => i.id !== item.id)])
+    // 목록을 아직 못 받은 상태에서 추가했다면(드물게) 서버 값으로 다시 맞춘다.
+    if (!query.data) query.reload()
     setForm(initialForm())
     setSubmitted(false)
     // 새 키워드는 '대기'로 들어가므로, 안 보이는 탭이면 '할 일'로 옮겨 바로 보이게 한다.
@@ -160,12 +160,15 @@ export default function KeywordsPage() {
 
   // 상태 변경: 누르면 바로 바뀌고, 저장에 실패하면 원래대로 되돌린다.
   const setStatus = async (item: KeywordRadarItem, status: KeywordStatus) => {
-    if (guardSample() || busyIds.has(item.id)) return
+    if (guardSample() || busyIds.has(item.id) || busyRef.current.has(item.id)) return
+    busyRef.current.add(item.id)
     const before = item.status
     const delta = (status === 'done' ? 1 : 0) - (before === 'done' ? 1 : 0)
     setBusyIds((prev) => new Set(prev).add(item.id))
     setItems((items) => items.map((i) => (i.id === item.id ? { ...i, status } : i)), delta)
     const res = await v2Patch('/api/v2/keywords', { id: item.id, status }, '상태를 바꾸지 못했어요. 다시 시도해 주세요.')
+    busyRef.current.delete(item.id)
+    query.noteStatus(res.status)
     setBusyIds((prev) => {
       const copy = new Set(prev)
       copy.delete(item.id)
@@ -174,7 +177,7 @@ export default function KeywordsPage() {
     if (!res.ok) {
       setItems((items) => items.map((i) => (i.id === item.id ? { ...i, status: before } : i)), -delta)
       showError(res.error)
-      if (res.status === 404) void load()
+      if (res.status === 404) query.reload()
     }
   }
 
@@ -191,11 +194,12 @@ export default function KeywordsPage() {
   }
 
   const saveEdit = async (item: KeywordRadarItem) => {
-    if (editSaving) return
+    if (editSaving || editingRef.current) return
     setEditSubmitted(true)
     setEditError('')
     if (editHasError) return
     if (guardSample()) return
+    editingRef.current = true
     setEditSaving(true)
     const res = await v2Patch<{ ok?: boolean; item?: KeywordRadarItem }>(
       '/api/v2/keywords',
@@ -208,12 +212,14 @@ export default function KeywordsPage() {
       },
       '키워드를 저장하지 못했어요. 다시 시도해 주세요.'
     )
+    editingRef.current = false
     setEditSaving(false)
+    query.noteStatus(res.status)
     if (!res.ok || !res.data.item) {
       setEditError(res.error || '키워드를 저장하지 못했어요. 다시 시도해 주세요.')
       if (res.status === 404) {
         closeEdit()
-        void load()
+        query.reload()
       }
       return
     }
@@ -223,10 +229,13 @@ export default function KeywordsPage() {
   }
 
   const remove = async (item: KeywordRadarItem) => {
-    if (guardSample()) return
+    if (guardSample() || deletingRef.current) return
+    deletingRef.current = true
     setDeletingId(item.id)
     const res = await v2Delete(`/api/v2/keywords?id=${encodeURIComponent(item.id)}`, '삭제하지 못했어요. 다시 시도해 주세요.')
+    deletingRef.current = false
     setDeletingId(null)
+    query.noteStatus(res.status)
     if (!res.ok) {
       showError(res.error)
       return
@@ -265,10 +274,11 @@ export default function KeywordsPage() {
       <PageHeader title="키워드 모음" subtitle="지금 다루면 좋은 검색어를 팀이 함께 모아 두고, 누가 작업 중인지 확인하는 곳이에요." />
       <Toast toast={toast} />
       <SampleNote show={payload.sample} />
-      {loaded && loadError ? <LoadError message={loadError} onRetry={() => void load()} /> : null}
+      {(loaded && loadError) || query.expired ? <LoadError message={loadError} expired={query.expired} onRetry={query.reload} /> : null}
+      <RefreshNote show={query.refreshing} />
 
       {!loaded ? (
-        <LoadingLine />
+        <SkeletonSummary />
       ) : loadError && payload.items.length === 0 ? null : (
         <Answer>
           {openItems.length === 0 ? (
@@ -398,7 +408,7 @@ export default function KeywordsPage() {
           </div>
         ) : recentHit ? (
           <div className="v2a-field-warn" style={{ marginTop: 10 }}>
-            {recentHit.stock_name}은(는) 최근 7일 동안 {recentHit.count}번 다뤘어요 (마지막 {formatKstDateTime(recentHit.last_at)}). 다른 각도의 내용인지 확인해 주세요.
+            {recentHit.stock_name}은(는) 최근 7일 동안 {recentHit.count}번 다뤘어요 (마지막 {formatKstStamp(recentHit.last_at)}). 다른 각도의 내용인지 확인해 주세요.
           </div>
         ) : null}
       </form>
@@ -420,7 +430,9 @@ export default function KeywordsPage() {
           </div>
         </div>
 
-        {!loaded ? null : items.length === 0 ? (
+        {!loaded ? (
+          <SkeletonList rows={3} />
+        ) : items.length === 0 ? (
           payload.items.length === 0 ? (
             loadError ? null : (
               <EmptyGuide title="아직 모아 둔 키워드가 없어요">위 입력칸에 종목과 내용을 적고 ‘키워드 추가’를 누르면 팀 모두가 볼 수 있는 목록이 만들어져요.</EmptyGuide>
@@ -529,12 +541,14 @@ export default function KeywordsPage() {
                           <PriorityTag priority={item.priority} />
                           <KeywordStatusTag status={item.status} />
                         </div>
-                        <div className="v2-card-issue" style={{ marginTop: 4 }}>
+                        <div className="v2a-kw-issue" style={{ marginTop: 4 }}>
                           {item.keyword}
                         </div>
                         <div className="v2-card-meta" style={{ marginTop: 6 }}>
                           <span>추가한 사람 {item.created_by_name || '-'}</span>
-                          <span>{formatKstDateTime(item.created_at)}</span>
+                          <span>
+                            <Stamp iso={item.created_at} />
+                          </span>
                           {item.source_url ? (
                             <a className="link" href={item.source_url} target="_blank" rel="noreferrer noopener">
                               참고 기사 ↗
@@ -590,7 +604,7 @@ export default function KeywordsPage() {
           <>
             <div className="v2-chips">
               {payload.recentStocks.slice(0, 12).map((r) => (
-                <span key={r.stock_name} className={`v2-chip ${recentHit && recentHit.stock_name === r.stock_name ? 'hit' : ''}`} title={`마지막 ${formatKstDateTime(r.last_at)}`}>
+                <span key={r.stock_name} aria-label={`${r.stock_name} 최근 7일 ${r.count}번`} className={`v2-chip ${recentHit && recentHit.stock_name === r.stock_name ? 'hit' : ''}`} title={`마지막 ${formatKstStamp(r.last_at)}`}>
                   {r.stock_name}
                   <b>{r.count}</b>
                 </span>
@@ -600,7 +614,7 @@ export default function KeywordsPage() {
               <HowTo title={`나머지 ${payload.recentStocks.length - 12}종목 더 보기`}>
                 <div className="v2-chips">
                   {payload.recentStocks.slice(12, 60).map((r) => (
-                    <span key={r.stock_name} className="v2-chip" title={`마지막 ${formatKstDateTime(r.last_at)}`}>
+                    <span key={r.stock_name} aria-label={`${r.stock_name} 최근 7일 ${r.count}번`} className="v2-chip" title={`마지막 ${formatKstStamp(r.last_at)}`}>
                       {r.stock_name}
                       <b>{r.count}</b>
                     </span>

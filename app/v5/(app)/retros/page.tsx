@@ -1,12 +1,14 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { PageHeader } from '@/components/v5/app-shell'
 import { Toast, useToast } from '@/components/toast'
-import { authedDeleteJson, authedPatchJson, errorText, v5Get, v5Post } from '@/lib/v5/client'
-import { formatDate, isoWeekRangeText } from '@/lib/v5/format'
-import { AnswerBanner, EmptyBlock, FormField, LoadError, LoadingLine, SampleNote, fmtNum } from '@/lib/v5/page-parts'
-import { ConfirmDelete, useEscape } from '@/lib/v5/ui'
+import { authedDeleteJson, authedPatchJson, errorText, v5Post } from '@/lib/v5/client'
+import { formatDayShort, isoWeekRangeText } from '@/lib/v5/format'
+import { AnswerBanner, EmptyBlock, ErrorText, FormField, LoadError, RelTime, SampleNote, fmtNum } from '@/lib/v5/page-parts'
+import { RetroSkeleton } from '@/lib/v5/skeleton'
+import { useV5Query } from '@/lib/v5/swr'
+import { ConfirmDelete, useBeforeUnload, useEscape } from '@/lib/v5/ui'
 import type { RetroActionItem, WeeklyRetro } from '@/lib/v5/types'
 
 const MAX_ACTIONS = 20
@@ -41,10 +43,27 @@ function RetroEditor({
   const [actionDraft, setActionDraft] = useState('')
   const [error, setError] = useState<SubmitResult>(null)
   const [saving, setSaving] = useState(false)
+  const [asking, setAsking] = useState(false)
+  const savingRef = useRef(false)
   const firstRef = useRef<HTMLTextAreaElement>(null)
 
+  // 실제로 바뀐 것이 있을 때만 "쓰던 내용이 사라져요"를 묻는다.
+  const dirty =
+    wentWell.trim() !== initial.wentWell.trim() ||
+    toImprove.trim() !== initial.toImprove.trim() ||
+    actionDraft.trim() !== '' ||
+    JSON.stringify(actionItems) !== JSON.stringify(initial.actionItems)
+  useBeforeUnload(dirty)
+
+  const requestCancel = () => {
+    if (savingRef.current) return
+    if (dirty) setAsking(true)
+    else onCancel?.()
+  }
+
   useEscape(Boolean(onCancel), () => {
-    if (!saving) onCancel?.()
+    if (asking) setAsking(false)
+    else requestCancel()
   })
 
   // 고치기를 누르면 바로 쓸 수 있게(처음 열릴 때 한 번만)
@@ -66,7 +85,7 @@ function RetroEditor({
   }
 
   const submit = async () => {
-    if (saving) return
+    if (savingRef.current) return
     // 입력 중이던 할 일도 놓치지 않게 함께 저장한다.
     const draft = actionDraft.trim()
     const finalActions = draft ? [...actionItems, { text: draft, done: false }] : actionItems
@@ -79,6 +98,7 @@ function RetroEditor({
       return
     }
     setError(null)
+    savingRef.current = true
     setSaving(true)
     try {
       const result = await onSubmit({ wentWell: wentWell.trim(), toImprove: toImprove.trim(), actionItems: finalActions })
@@ -94,6 +114,7 @@ function RetroEditor({
         firstRef.current?.focus()
       }
     } finally {
+      savingRef.current = false
       setSaving(false)
     }
   }
@@ -191,7 +212,7 @@ function RetroEditor({
       </FormField>
       {error ? (
         <div className="v5p-field-error" role="alert">
-          {error.message}
+          <ErrorText message={error.message} />
           {error.extra ? <span className="v5p-inline-action">{error.extra}</span> : null}
         </div>
       ) : null}
@@ -199,10 +220,21 @@ function RetroEditor({
         <button className="button" type="submit" disabled={saving}>
           {saving ? '저장 중…' : submitLabel}
         </button>
-        {onCancel ? (
-          <button className="button secondary" type="button" disabled={saving} onClick={onCancel}>
+        {onCancel && !asking ? (
+          <button className="button secondary" type="button" disabled={saving} onClick={requestCancel}>
             취소
           </button>
+        ) : null}
+        {onCancel && asking ? (
+          <>
+            <span className="small v5p-discard-inline">쓰던 내용이 사라져요. 닫을까요?</span>
+            <button className="button secondary" type="button" onClick={() => setAsking(false)}>
+              계속 쓰기
+            </button>
+            <button className="button danger" type="button" onClick={onCancel}>
+              닫기
+            </button>
+          </>
         ) : null}
       </div>
     </form>
@@ -215,7 +247,7 @@ function RetroEditor({
 function kpiLine(retro: WeeklyRetro) {
   const k = retro.kpi_snapshot
   if (!k || k.totalVideos === undefined) return null
-  const range = k.weekStart && k.weekEnd ? `${k.weekStart.slice(5).replace('-', '/')}~${k.weekEnd.slice(5).replace('-', '/')} 등록 영상` : '쓸 당시 최근 7일 기록: 영상'
+  const range = k.weekStart && k.weekEnd ? `${formatDayShort(k.weekStart)} ~ ${formatDayShort(k.weekEnd)} 등록 영상` : '쓸 당시 최근 7일 기록: 영상'
   const parts = [`${range} ${fmtNum(k.totalVideos)}편`, `조회수 합계 ${fmtNum(k.totalViews)}`]
   if (k.unsyncedVideos) parts.push(`조회수 미확인 ${fmtNum(k.unsyncedVideos)}편 포함`)
   if (k.truncated) parts.push('일부만 집계')
@@ -277,7 +309,7 @@ function RetroCard({
           {weekBadge ? <span className="v5p-week-badge">{weekBadge}</span> : null}
         </h3>
         <span className="small muted">
-          {retro.author_name || '관리자'} · {formatDate(retro.created_at)} 작성
+          {retro.author_name || '관리자'} · <RelTime value={retro.created_at} /> 작성
         </span>
       </header>
 
@@ -348,7 +380,7 @@ function RetroCard({
           />
           {deleteError ? (
             <span className="v5p-field-error" role="alert">
-              {deleteError}
+              <ErrorText message={deleteError} />
             </span>
           ) : null}
         </div>
@@ -359,13 +391,17 @@ function RetroCard({
 
 export default function RetrosPage() {
   const { toast, showSuccess, showError } = useToast()
-  const [items, setItems] = useState<WeeklyRetro[]>([])
-  const [sample, setSample] = useState(false)
-  const [thisWeek, setThisWeek] = useState('')
-  const [lastWeek, setLastWeek] = useState('')
-  const [loaded, setLoaded] = useState(false)
-  const [refreshing, setRefreshing] = useState(false)
-  const [loadError, setLoadError] = useState('')
+  const q = useV5Query<{ sample?: boolean; items: WeeklyRetro[]; thisWeekLabel?: string; lastWeekLabel?: string }>('/api/v5/retros', { errorFallback: '주간 회고를 불러오지 못했어요.' })
+  const { update: updateData, reload, rev } = q
+  const items = useMemo(() => q.data?.items || [], [q.data])
+  const sample = Boolean(q.data?.sample)
+  const thisWeek = q.data?.thisWeekLabel || ''
+  const lastWeek = q.data?.lastWeekLabel || ''
+  // showError 는 렌더마다 바뀔 수 있으므로 큐(비동기) 안에서는 ref 로만 쓴다.
+  const showErrorRef = useRef(showError)
+  showErrorRef.current = showError
+  // 저장 결과를 화면과 캐시에 함께 반영한다.
+  const setItems = (fn: (prev: WeeklyRetro[]) => WeeklyRetro[]) => updateData((d) => ({ ...d, items: fn(d.items || []) }))
   // 새로 쓰는 주. 기본은 이번 주, "지난주 회고 쓰기"를 누르면 지난주.
   const [target, setTarget] = useState<'this' | 'last'>('this')
   const [showLastForm, setShowLastForm] = useState(false)
@@ -378,27 +414,12 @@ export default function RetrosPage() {
   const confirmedRef = useRef(new Map<string, RetroActionItem[]>())
   const queueRef = useRef(new Map<string, Promise<void>>())
 
-  const load = useCallback(async () => {
-    setRefreshing(true)
-    setLoadError('')
-    const res = await v5Get<{ sample: boolean; items: WeeklyRetro[]; thisWeekLabel?: string; lastWeekLabel?: string }>('/api/v5/retros')
-    if (res.ok) {
-      const list = res.data.items || []
-      confirmedRef.current = new Map(list.map((r) => [r.id, r.action_items]))
-      setItems(list)
-      setSample(Boolean(res.data.sample))
-      setThisWeek(res.data.thisWeekLabel || '')
-      setLastWeek(res.data.lastWeekLabel || '')
-      setLoaded(true)
-    } else {
-      setLoadError(errorText(res, '주간 회고를 불러오지 못했어요.'))
-    }
-    setRefreshing(false)
-  }, [])
-
+  // 서버가 확인해 준 값(새로 받을 때마다)을 "되돌릴 기준"으로 삼는다. 체크를 눌러 화면만 바꾼 것은 여기 포함되지 않는다.
   useEffect(() => {
-    void load()
-  }, [load])
+    if (rev === 0) return
+    confirmedRef.current = new Map((q.data?.items || []).map((r) => [r.id, r.action_items]))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rev])
 
   const current = useMemo(() => items.find((r) => r.week_label === thisWeek) || null, [items, thisWeek])
   const lastRetroOfLastWeek = useMemo(() => items.find((r) => r.week_label === lastWeek) || null, [items, lastWeek])
@@ -430,7 +451,7 @@ export default function RetrosPage() {
               className="button xs secondary"
               onClick={async () => {
                 setContinueReq({ id: existingId, draft: values })
-                await load()
+                reload()
               }}
             >
               쓰던 내용을 그 회고에 이어 쓰기
@@ -457,7 +478,7 @@ export default function RetrosPage() {
       actionItems: values.actionItems
     })
     if (!res.ok) {
-      if (res.status === 404) await load()
+      if (res.status === 404) reload()
       return { message: errorText(res, '저장하지 못했어요. 잠시 뒤 다시 해 주세요.') }
     }
     const saved = res.data.item
@@ -499,7 +520,7 @@ export default function RetrosPage() {
         itemsRef.current = itemsRef.current.map((r) => (r.id === retroId ? { ...r, action_items: confirmed } : r))
         setItems((prev) => prev.map((r) => (r.id === retroId ? { ...r, action_items: confirmed } : r)))
       }
-      showError(`체크를 저장하지 못해서 원래대로 돌려놨어요. ${errorText(res, '')}`.trim())
+      showErrorRef.current(`체크를 저장하지 못해서 원래대로 돌려놨어요. ${errorText(res, '')}`.trim())
     })
     queueRef.current.set(retroId, task)
   }
@@ -510,7 +531,7 @@ export default function RetrosPage() {
   const showLastFormNow = showLastForm && !lastRetroOfLastWeek && Boolean(lastWeek) && lastWeek !== thisWeek
   const canOfferLast = Boolean(current) && !lastRetroOfLastWeek && Boolean(lastWeek) && items.length > 0
   const shownList = current ? items : previous
-  const ready = loaded
+  const ready = Boolean(q.data)
 
   const createHeader = (which: 'this' | 'last', title: string) => (
     <div className="v5p-section-head">
@@ -530,11 +551,11 @@ export default function RetrosPage() {
 
       <SampleNote show={sample} />
 
-      {loadError ? <LoadError message={loadError} onRetry={() => void load()} /> : null}
-      {!ready && !loadError ? <LoadingLine /> : null}
+      {q.error ? <LoadError message={q.error} status={q.status} onRetry={reload} /> : null}
+      {!ready && !q.error ? <RetroSkeleton /> : null}
 
       {ready ? (
-        <div className={refreshing ? 'v5p-refreshing' : undefined}>
+        <div className={q.validating ? 'v5p-refreshing' : undefined} aria-busy={q.validating}>
           <AnswerBanner
             label={`이번 주 (${weekRange})`}
             tone={current ? 'good' : 'neutral'}

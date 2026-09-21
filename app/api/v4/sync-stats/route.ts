@@ -1,4 +1,5 @@
-import { NextResponse } from 'next/server'
+import { noStoreJson } from '@/lib/v4/http'
+import { invalidatePeriodRows } from '@/lib/v4/period-rows'
 import { dbError, requireV4Admin, v4ErrorResponse } from '@/lib/v4/server'
 import { V4_TABLES } from '@/lib/v4/tables'
 import { YT_BATCH_SIZE, YoutubeApiError, fetchYoutubeStatsBatch, youtubeIdOf, type YoutubeStat } from '@/lib/v4/youtube-stats'
@@ -66,7 +67,7 @@ export async function POST(request: Request) {
     const usable = (accounts || []).filter((a) => a.api_key && a.is_active !== false)
     const keyPool = (usable.length > 0 ? usable : (accounts || []).filter((a) => a.api_key)) as Array<{ api_key: string; account_name: string | null }>
     if (keyPool.length === 0) {
-      return NextResponse.json({ error: '활성화된 유튜브 API 키가 없어요. 유튜브 계정에서 API를 켜 주세요.' }, { status: 409 })
+      return noStoreJson({ error: '활성화된 유튜브 API 키가 없어요. 유튜브 계정에서 API를 켜 주세요.' }, { status: 409 })
     }
 
     // ---- 대상 영상 고르기: 최근 등록 + 가장 오래 못 받은 것
@@ -235,14 +236,17 @@ export async function POST(request: Request) {
       }
     }
 
+    // 조회수를 새로 받았으니, 15초 동안 기억해 둔 기간별 영상 목록을 비워 다음 조회에 새 숫자가 바로 나오게 한다.
+    invalidatePeriodRows()
+
     const updated = changedRows.length - updateFailed + unchangedIds.length
     // 통계를 한 건도 못 받았고 원인이 유튜브 쪽이면 성공처럼 보이지 않게 오류로 알린다.
     if (updated === 0 && state.apiError) {
-      return NextResponse.json({ error: state.apiError.message }, { status: state.apiError.reason === 'quota' ? 429 : 502 })
+      return noStoreJson({ error: state.apiError.message }, { status: state.apiError.reason === 'quota' ? 429 : 502 })
     }
 
     const accountName = keyPool[Math.min(keyIndex, keyPool.length - 1)]?.account_name || null
-    return NextResponse.json({
+    return noStoreJson({
       updated,
       changed: changedRows.length - updateFailed,
       unchanged: unchangedIds.length,

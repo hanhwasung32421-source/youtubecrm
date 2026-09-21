@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { readJson, requireV4User, v4ErrorResponse, type V4Context } from '@/lib/v4/server'
 import { V4_TABLES } from '@/lib/v4/tables'
+import { invalidatePeriodRows } from '@/lib/v4/period-rows'
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -81,6 +82,7 @@ export async function PATCH(request: Request, { params }: Params) {
 
     const { data, error } = await ctx.supabaseAdmin.from(V4_TABLES.videos).update(patch).eq('id', id).select(COLUMNS).single()
     if (error) throw new Error(error.message)
+    invalidatePeriodRows()
     return NextResponse.json({ ok: true, item: publicItem(data as OwnedRow) })
   } catch (e) {
     return v4ErrorResponse(e, '영상을 고치지 못했어요. 잠시 후 다시 시도해 주세요.')
@@ -99,6 +101,7 @@ export async function DELETE(request: Request, { params }: Params) {
 
     const { error } = await ctx.supabaseAdmin.from(V4_TABLES.videos).delete().eq('id', id)
     if (error) throw new Error(error.message)
+    invalidatePeriodRows()
     return NextResponse.json({ ok: true })
   } catch (e) {
     return v4ErrorResponse(e, '영상을 지우지 못했어요. 잠시 후 다시 시도해 주세요.')

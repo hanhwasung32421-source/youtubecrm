@@ -97,3 +97,47 @@ export function daysSince(iso: string | null | undefined, now = Date.now()): num
   const diff = (now - d.getTime()) / DAY_MS
   return Math.max(diff, 1 / 24)
 }
+
+// ---- 화면 표시용 (라운드 3) ----
+// Intl 의 hour12:false 는 자정을 "24:05"로 내는 브라우저가 있어, 오프셋 계산으로 직접 만든다.
+
+function kstParts(iso: string | null | undefined): { y: number; m: number; d: number; hh: number; mm: number; weekday: number } | null {
+  if (!iso) return null
+  const t = new Date(iso).getTime()
+  if (Number.isNaN(t)) return null
+  const k = new Date(t + KST_OFFSET_MS)
+  return { y: k.getUTCFullYear(), m: k.getUTCMonth() + 1, d: k.getUTCDate(), hh: k.getUTCHours(), mm: k.getUTCMinutes(), weekday: k.getUTCDay() }
+}
+
+// '9/21 (월) 14:30' (KST). 값이 없거나 잘못되면 '-'
+export function formatKstStamp(iso: string | null | undefined): string {
+  const p = kstParts(iso)
+  if (!p) return '-'
+  return `${p.m}/${p.d} (${WEEKDAY_LABELS[p.weekday]}) ${String(p.hh).padStart(2, '0')}:${String(p.mm).padStart(2, '0')}`
+}
+
+// '9/21 (월)' (KST 날짜만)
+export function formatKstMonthDay(iso: string | null | undefined): string {
+  const p = kstParts(iso)
+  if (!p) return '-'
+  return `${p.m}/${p.d} (${WEEKDAY_LABELS[p.weekday]})`
+}
+
+// '방금 전' / '5분 전' / '3시간 전' / '3일 전' / '2개월 전'. 값이 없거나 잘못되면 '-'.
+// 시계가 어긋나 미래로 보이는 값은 1분 안이면 '방금 전', 그보다 멀면 '곧'.
+export function formatRelative(iso: string | null | undefined, now: number = Date.now()): string {
+  if (!iso) return '-'
+  const t = new Date(iso).getTime()
+  if (Number.isNaN(t) || !Number.isFinite(now)) return '-'
+  const diff = now - t
+  if (diff < 0) return diff > -60_000 ? '방금 전' : '곧'
+  const min = Math.floor(diff / 60_000)
+  if (min < 1) return '방금 전'
+  if (min < 60) return `${min}분 전`
+  const hour = Math.floor(min / 60)
+  if (hour < 24) return `${hour}시간 전`
+  const day = Math.floor(hour / 24)
+  if (day < 30) return `${day}일 전`
+  if (day < 365) return `${Math.floor(day / 30)}개월 전`
+  return `${Math.floor(day / 365)}년 전`
+}

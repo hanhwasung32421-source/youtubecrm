@@ -1,0 +1,490 @@
+/*
+  V5 성장 관리 화면 3차 개선: 읽기 쉬운 데이터 표시 · 점수 시각화 · 로딩 자리표시 · 좁은 화면.
+  pages.css 뒤에 불러오며, 모두 .v5-theme 하위 v5p- 접두어로만 적용한다.
+*/
+
+/* ---------- 공통 조각 ---------- */
+.v5-theme .v5p-num {
+  font-variant-numeric: tabular-nums;
+}
+
+.v5-theme .v5p-ell {
+  min-width: 0;
+  max-width: 16ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.v5-theme .v5p-ell-inline {
+  display: inline-block;
+  max-width: min(100%, 32ch);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+.v5-theme .v5p-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.v5-theme .v5p-login-link {
+  color: var(--primary, #4f46e5);
+  font-weight: 800;
+  text-decoration: underline;
+}
+
+.v5-theme .v5p-card-hypo,
+.v5-theme .v5p-pb-title,
+.v5-theme .v5p-retro-block,
+.v5-theme .v5p-kv dd {
+  overflow-wrap: anywhere;
+}
+
+/* ---------- 로딩 자리표시(반짝이는 회색 블록) ---------- */
+@keyframes v5p-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
+.v5-theme .v5p-sk {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
+  border-radius: 6px;
+  background: linear-gradient(90deg, var(--bg-soft, #eef0f7) 0%, var(--line, #e7e9f2) 50%, var(--bg-soft, #eef0f7) 100%);
+  background-size: 200% 100%;
+  animation: v5p-shimmer 1.4s ease-in-out infinite;
+}
+
+.v5-theme .v5p-sk-gap {
+  margin-top: 8px;
+}
+
+.v5-theme .v5p-sk-card {
+  padding: 12px;
+  min-height: 92px;
+}
+
+.v5-theme .v5p-sk-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) minmax(200px, 300px) 84px;
+  align-items: center;
+  gap: 4px 14px;
+}
+
+.v5-theme .v5p-sk-col {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .v5-theme .v5p-sk {
+    animation: none;
+  }
+  .v5-theme .v5p-refreshing {
+    transition: none;
+  }
+}
+
+/* ---------- 점수판: 순위 줄 ---------- */
+.v5-theme .v5p-score-grid {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) minmax(200px, 300px) 84px;
+  grid-template-areas: 'rank main viz total';
+  align-items: center;
+  gap: 4px 14px;
+}
+
+.v5-theme .v5p-score-rank {
+  grid-area: rank;
+  justify-self: start;
+}
+
+.v5-theme .v5p-score-main {
+  grid-area: main;
+}
+
+.v5-theme .v5p-score-viz {
+  grid-area: viz;
+  min-width: 0;
+}
+
+.v5-theme .v5p-score-total {
+  grid-area: total;
+  align-items: flex-end;
+  text-align: right;
+}
+
+.v5-theme .v5p-score-num small {
+  margin-left: 2px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted, #6b7280);
+}
+
+.v5-theme .v5p-score-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 6px;
+  margin-top: 2px;
+}
+
+.v5-theme .v5p-score-detail {
+  margin-left: 48px;
+}
+
+.v5-theme .v5p-why {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.v5-theme .v5p-score-legend {
+  margin: 0 0 6px;
+}
+
+/* 세 요소를 이어 붙인 막대 */
+.v5-theme .v5p-sbar-track {
+  display: flex;
+  height: 12px;
+  border-radius: 6px;
+  background: var(--bg-soft, #eef0f7);
+  overflow: hidden;
+}
+
+.v5-theme .v5p-seg {
+  display: block;
+  height: 100%;
+  min-width: 0;
+  box-shadow: inset -1px 0 0 var(--panel, #fff);
+}
+
+.v5-theme .v5p-seg.velocity,
+.v5-theme .v5p-dot.velocity {
+  background-color: var(--primary, #4f46e5);
+}
+
+.v5-theme .v5p-seg.engagement,
+.v5-theme .v5p-dot.engagement {
+  background-color: var(--violet, #8b5cf6);
+}
+
+.v5-theme .v5p-seg.early,
+.v5-theme .v5p-dot.early {
+  background-color: #0ea5e9;
+}
+
+/* 기록이 부족해서 기본값을 쓴 조각은 빗금으로 구분(색이 아니라 무늬로도 알 수 있게) */
+.v5-theme .v5p-seg.pending,
+.v5-theme .v5p-dot.pending {
+  background-image: repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.7) 0 3px, transparent 3px 6px);
+}
+
+.v5-theme .v5p-sbar-legend {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  margin: 6px 0 0;
+  padding: 0;
+  font-size: 11.5px;
+  color: var(--muted, #6b7280);
+}
+
+.v5-theme .v5p-sbar-legend li {
+  white-space: nowrap;
+}
+
+.v5-theme .v5p-sbar-legend b {
+  color: var(--text, #14161f);
+  font-variant-numeric: tabular-nums;
+}
+
+.v5-theme .v5p-sbar-legend em {
+  margin-left: 4px;
+  font-style: normal;
+  font-weight: 700;
+  color: #b45309;
+}
+
+.v5-theme .v5p-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 5px;
+  border-radius: 3px;
+  vertical-align: baseline;
+  flex: none;
+}
+
+.v5-theme .v5p-sbar-max {
+  opacity: 0.7;
+}
+
+/* 점수 구간 분포(도넛 + 글자 목록) */
+.v5-theme .v5p-dist-card {
+  padding: 16px 20px;
+}
+
+.v5-theme .v5p-dist {
+  display: flex;
+  align-items: center;
+  gap: 8px 28px;
+  flex-wrap: wrap;
+  margin: 0;
+}
+
+.v5-theme .v5p-donut {
+  flex: none;
+}
+
+.v5-theme .v5p-donut-num {
+  font-size: 24px;
+  font-weight: 800;
+  fill: var(--text, #14161f);
+  font-variant-numeric: tabular-nums;
+}
+
+.v5-theme .v5p-donut-cap {
+  font-size: 10px;
+  fill: var(--muted, #6b7280);
+}
+
+.v5-theme .v5p-dist-legend {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.v5-theme .v5p-dist-title {
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.v5-theme .v5p-dist-legend ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.v5-theme .v5p-dist-legend li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.v5-theme .v5p-dist-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.v5-theme .v5p-dist-range {
+  color: var(--muted, #6b7280);
+  font-size: 12px;
+}
+
+.v5-theme .v5p-dist-count {
+  flex: none;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted, #6b7280);
+}
+
+.v5-theme .v5p-dist-count b {
+  color: var(--text, #14161f);
+}
+
+/* ---------- 성장 실험: 좁은 화면용 상태 탭 ---------- */
+.v5-theme .v5p-tabs {
+  display: none;
+}
+
+.v5-theme .v5p-tab {
+  min-width: 0;
+  padding: 9px 4px;
+  border: 1px solid var(--line-strong, #d7dae8);
+  border-radius: 10px;
+  background: var(--panel, #fff);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted, #6b7280);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.v5-theme .v5p-tab span {
+  margin-left: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.v5-theme .v5p-tab[aria-pressed='true'] {
+  background: var(--primary-soft, #eef0ff);
+  border-color: var(--primary, #4f46e5);
+  color: var(--primary, #4f46e5);
+}
+
+/* 목록 표: 셀 안 긴 글은 말줄임 + title */
+.v5-theme .v5p-td-clip {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.v5-theme .v5-table td.v5p-td-right,
+.v5-theme .v5-table th.v5p-td-right {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 좁은 화면(휴대폰) ---------- */
+@media (max-width: 720px) {
+  /* 실험 보드: 상태 탭 + 선택한 칸 하나만(가로 스크롤 없이) */
+  .v5-theme .v5p-tabs {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+    margin: 0 0 10px;
+  }
+
+  .v5-theme .v5p-board .v5p-col:not(.is-active) {
+    display: none;
+  }
+
+  /* 점수 순위 줄: 순위/제목/총점 위, 막대는 아래 한 줄 */
+  .v5-theme .v5p-score-grid {
+    grid-template-columns: 30px minmax(0, 1fr) auto;
+    grid-template-areas:
+      'rank main total'
+      'viz viz viz';
+  }
+
+  .v5-theme .v5p-sk-row {
+    grid-template-columns: 30px minmax(0, 1fr) auto;
+  }
+
+  .v5-theme .v5p-sk-row > *:nth-child(3) {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .v5-theme .v5p-score-detail {
+    margin-left: 0;
+  }
+
+  .v5-theme .v5p-ell {
+    max-width: 12ch;
+  }
+
+  .v5-theme .v5p-dist {
+    justify-content: center;
+  }
+
+  /* 목록 표 → 카드. 각 칸 앞에 data-label 이름이 붙는다 */
+  .v5-theme .v5-table-wrap.v5p-cardwrap {
+    overflow: visible;
+    background: transparent;
+    box-shadow: none;
+    border: 0;
+  }
+
+  .v5-theme .v5-table.v5p-cardtable,
+  .v5-theme .v5-table.v5p-cardtable tbody,
+  .v5-theme .v5-table.v5p-cardtable tr,
+  .v5-theme .v5-table.v5p-cardtable td {
+    display: block;
+    width: 100%;
+  }
+
+  .v5-theme .v5-table.v5p-cardtable thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+  }
+
+  .v5-theme .v5-table.v5p-cardtable tr {
+    margin: 0 0 10px;
+    padding: 8px 14px;
+    border: 1px solid var(--line, #e7e9f2);
+    border-radius: 12px;
+    background: var(--panel, #fff);
+    box-shadow: var(--shadow);
+  }
+
+  .v5-theme .v5-table.v5p-cardtable td {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 14px;
+    padding: 6px 0;
+    border-bottom: 1px dashed var(--line, #e7e9f2);
+    text-align: right;
+    max-width: none;
+    white-space: normal;
+  }
+
+  .v5-theme .v5-table.v5p-cardtable td:last-child {
+    border-bottom: none;
+  }
+
+  .v5-theme .v5-table.v5p-cardtable td::before {
+    content: attr(data-label);
+    flex: none;
+    color: var(--muted, #6b7280);
+    font-size: 12px;
+    font-weight: 700;
+    text-align: left;
+  }
+
+  .v5-theme .v5-table.v5p-cardtable td.v5p-td-clip {
+    overflow: visible;
+    text-overflow: clip;
+  }
+
+  .v5-theme .button.xs,
+  .v5-theme .v5p-chip.sm {
+    min-height: 32px;
+  }
+}
+
+/* ---------- 작은 보충 ---------- */
+.v5-theme .v5p-discard-inline {
+  align-self: center;
+  margin-right: 4px;
+}
+
+.v5-theme .v5p-pb-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 4px;
+  min-width: 0;
+}

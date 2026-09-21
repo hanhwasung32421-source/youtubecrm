@@ -6,13 +6,18 @@ export type NormalizedYoutubeUrl =
   | { ok: false; empty: boolean }
 
 const ID_PATTERN = /^[A-Za-z0-9_-]{11}$/
+export const ZERO_WIDTH = /[​-‍﻿]/g // 보이지 않는 문자(폭 없는 공백, BOM)
+const WRAP_START = /^[<(\[{"'“‘「『]+/
+const WRAP_END = /[>)\]}"'”’」』.,;:!?]+$/
 
 export function normalizeYoutubeUrl(raw: string): NormalizedYoutubeUrl {
   // 보이지 않는 문자(폭 없는 공백 등) 제거 후 첫 번째 주소처럼 보이는 덩어리만 사용
-  const cleaned = (raw || '').replace(/[​-‍﻿]/g, '').trim()
+  const cleaned = (raw || '').replace(ZERO_WIDTH, '').trim()
   if (!cleaned) return { ok: false, empty: true }
 
-  const token = cleaned.split(/\s+/)[0]
+  // 괄호·따옴표·문장부호로 감싸 붙여넣은 경우("(https://youtu.be/…)", "<…>", "…,")도 주소로 읽는다.
+  const token = cleaned.split(/\s+/)[0].replace(WRAP_START, '').replace(WRAP_END, '')
+  if (!token) return { ok: false, empty: false }
   const withProtocol = /^https?:\/\//i.test(token) ? token : `https://${token}`
 
   let parsed: URL

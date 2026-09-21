@@ -35,6 +35,7 @@
 /* ---------------------------------------------------------------- 답 카드 (Hero) */
 
 .v4-theme .v4p-hero {
+  container: v4hero / inline-size;
   border: 1px solid rgba(79, 70, 229, 0.25);
   background: linear-gradient(135deg, rgba(79, 70, 229, 0.08), rgba(79, 70, 229, 0.02));
   border-radius: 16px;
@@ -113,7 +114,9 @@
 
 /* Top3 카드 */
 .v4-theme .v4p-top3 {
-  margin-top: 14px;
+  list-style: none;
+  padding: 0;
+  margin: 14px 0 0;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
@@ -237,6 +240,7 @@
 /* ---------------------------------------------------------------- 카드 */
 
 .v4-theme .v4p-card {
+  container: v4card / inline-size;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 16px;
@@ -373,9 +377,11 @@
 /* ---------------------------------------------------------------- 표 (가로 스크롤 없이 노트북 폭에 맞춤) */
 
 .v4-theme .v4p-tbl {
+  container: v4tbl / inline-size;
   border: 1px solid var(--line);
   border-radius: 12px;
-  overflow: hidden;
+  /* clip 은 hidden 과 달리 스크롤 영역을 만들지 않아 머리줄이 화면 위에 붙어 따라온다(sticky). */
+  overflow: clip;
   transition: opacity 0.15s ease;
 }
 
@@ -403,6 +409,10 @@
 }
 
 .v4-theme .v4p-tr.head {
+  position: sticky;
+  top: var(--v4p-sticky-top, 0px);
+  z-index: 2;
+  box-shadow: 0 1px 0 var(--line);
   background: var(--bg-soft);
   font-size: 12px;
   font-weight: 700;
@@ -450,8 +460,8 @@
 }
 
 .v4-theme .v4p-th-arrow {
-  font-size: 9px;
-  min-width: 9px;
+  font-size: 11px;
+  min-width: 11px;
 }
 
 .v4-theme .v4p-title-cell {
@@ -520,6 +530,17 @@
 .v4-theme .v4p-pager .button {
   padding: 8px 14px;
   font-size: 13px;
+}
+
+.v4-theme .v4p-pager-error {
+  color: var(--p-bad);
+  font-weight: 600;
+}
+
+.v4-theme .v4p-login-link {
+  color: inherit;
+  font-weight: 800;
+  text-decoration: underline;
 }
 
 /* ---------------------------------------------------------------- 배지 */
@@ -662,11 +683,30 @@
 /* ---------------------------------------------------------------- 종목 타일 */
 
 .v4-theme .v4p-tiles {
+  list-style: none;
+  margin: 0;
+  padding: 0;
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
-  grid-auto-rows: 72px;
+  grid-auto-rows: 80px;
   grid-auto-flow: dense;
   gap: 8px;
+  transition: opacity 0.15s ease;
+}
+
+.v4-theme .v4p-tiles.busy {
+  opacity: 0.6;
+}
+
+/* 종목이 하나뿐이면 한 줄을 다 쓴다 */
+.v4-theme .v4p-tile.xl:only-child {
+  grid-column: 1 / -1;
+}
+
+.v4-theme .v4p-tile.skel {
+  background: linear-gradient(90deg, #eef2f7 25%, #e2e8f0 37%, #eef2f7 63%);
+  background-size: 400% 100%;
+  animation: v4p-shimmer 1.4s ease infinite;
 }
 
 .v4-theme .v4p-tile {
@@ -700,11 +740,18 @@
 
 .v4-theme .v4p-tile-meta {
   font-size: 12px;
-  opacity: 0.92;
+  opacity: 0.95;
   font-variant-numeric: tabular-nums;
   display: flex;
   flex-direction: column;
   gap: 1px;
+  min-width: 0;
+}
+
+.v4-theme .v4p-tile-meta > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .v4-theme .v4p-tile.sm .v4p-tile-meta { font-size: 11px; }
@@ -712,15 +759,38 @@
 /* ---------------------------------------------------------------- 히트맵 */
 
 .v4-theme .v4p-heat {
-  overflow-x: auto;
-  padding-bottom: 4px;
+  min-width: 0;
+}
+
+.v4-theme .v4p-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.v4-theme .v4p-axis-cap {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
 }
 
 .v4-theme .v4p-heat-grid {
-  display: grid;
-  grid-template-columns: 30px repeat(24, minmax(28px, 1fr));
+  display: flex;
+  flex-direction: column;
   gap: 3px;
-  min-width: 780px;
+}
+
+.v4-theme .v4p-heat-row {
+  display: grid;
+  gap: 3px;
+  align-items: stretch;
 }
 
 .v4-theme .v4p-heat-label {
@@ -731,34 +801,80 @@
   align-items: center;
   justify-content: center;
   min-height: 18px;
+  white-space: nowrap;
 }
 
 .v4-theme .v4p-heat-cell {
-  height: 32px;
+  position: relative;
+  height: 36px;
   border-radius: 5px;
   background: var(--bg-soft);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   color: var(--text);
   font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  overflow: hidden;
+  white-space: nowrap;
+  cursor: default;
 }
 
-.v4-theme .v4p-heat-cell.thin {
-  opacity: 0.55;
+.v4-theme .v4p-heat-grid.tall .v4p-heat-cell {
+  height: 26px;
+}
+
+/* 영상이 1개뿐인 칸(참고만): 색이 아니라 점선 테두리로도 알 수 있게 */
+.v4-theme .v4p-heat-cell.thin::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 1.5px dashed rgba(15, 23, 42, 0.6);
+  border-radius: 5px;
+  pointer-events: none;
 }
 
 .v4-theme .v4p-heat-cell.rec {
-  outline: 2px solid #f59e0b;
+  outline: 2px solid #b45309;
   outline-offset: -2px;
-  opacity: 1;
+}
+
+.v4-theme .v4p-heat-star {
+  position: absolute;
+  top: 1px;
+  left: 3px;
+  font-size: 11px;
+  line-height: 1;
 }
 
 .v4-theme .v4p-heat-cell:hover {
   outline: 2px solid var(--primary);
   outline-offset: -2px;
+}
+
+.v4-theme .v4p-heat-cell:focus-visible {
+  outline: 3px solid var(--primary);
+  outline-offset: 1px;
+  z-index: 1;
+}
+
+.v4-theme .v4p-heat-readout {
+  margin-top: 10px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: var(--bg-soft);
+  font-size: 13px;
+  line-height: 1.6;
+  min-height: 42px;
+  word-break: keep-all;
+}
+
+.v4-theme .v4p-skel-heat {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .v4-theme .v4p-legend {
@@ -794,13 +910,13 @@
 }
 
 .v4-theme .v4p-swatch.rec {
-  border: 2px solid #f59e0b;
+  border: 2px solid #b45309;
   background: transparent;
 }
 
 .v4-theme .v4p-swatch.thin {
-  background: rgba(79, 70, 229, 0.3);
-  border-color: transparent;
+  background: transparent;
+  border: 1.5px dashed rgba(15, 23, 42, 0.6);
 }
 
 /* ---------------------------------------------------------------- 막대 */
@@ -830,6 +946,17 @@
   font-weight: 800;
 }
 
+.v4-theme .v4p-bar-flag {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  vertical-align: 1px;
+}
+
 .v4-theme .v4p-bar-track {
   height: 16px;
   border-radius: 999px;
@@ -840,7 +967,7 @@
 .v4-theme .v4p-bar-fill {
   height: 100%;
   border-radius: 999px;
-  background: #a5b4fc;
+  background: #818cf8;
   transition: width 0.3s ease;
 }
 
@@ -868,7 +995,7 @@
 }
 
 .v4-theme .v4p-minibar {
-  width: 8px;
+  width: 9px;
   border-radius: 2px;
   background: var(--line);
 }
@@ -1114,27 +1241,243 @@
   word-break: keep-all;
 }
 
-/* ---------------------------------------------------------------- 좁은 화면 */
+/* ---------------------------------------------------------------- 공용 보조 */
 
-@media (max-width: 900px) {
+.v4-theme .v4p-search-input {
+  width: 220px;
+  padding: 8px 12px;
+}
+
+/* 데스크톱에서는 열 제목을 눌러 정렬하므로 정렬 선택 칸은 숨긴다 (좁은 화면에서만 보인다) */
+.v4-theme .v4p-sortsel,
+.v4-theme .v4p-mobile-only {
+  display: none;
+}
+
+/* ---------------------------------------------------------------- 뼈대(스켈레톤): 완성 화면과 같은 자리 */
+
+.v4-theme .v4p-skel-table {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: clip;
+}
+
+.v4-theme .v4p-skel-thead {
+  padding: 12px 14px;
+  background: var(--bg-soft);
+  border-bottom: 1px solid var(--line);
+}
+
+.v4-theme .v4p-skel-trow {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) 64px 64px;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 14px;
+  min-height: 61px;
+  border-bottom: 1px solid var(--line);
+}
+
+.v4-theme .v4p-skel-trow:last-child {
+  border-bottom: none;
+}
+
+.v4-theme .v4p-skel-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.v4-theme .v4p-skel-card {
+  min-height: 190px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .v4-theme .v4p-tile.skel {
+    animation: none;
+  }
+  .v4-theme .v4p-bar-fill,
+  .v4-theme .v4p-tbl,
+  .v4-theme .v4p-tiles {
+    transition: none;
+  }
+  .v4-theme .v4p-exp.flash {
+    animation: none;
+  }
+}
+
+/* ---------------------------------------------------------------- 좁은 화면 (화면 폭이 아니라 "그 칸의 폭" 기준: 사이드바가 있어도 정확하다) */
+
+@container v4hero (max-width: 640px) {
   .v4-theme .v4p-top3 {
     grid-template-columns: 1fr;
+  }
+}
+
+@container v4card (max-width: 640px) {
+  .v4-theme .v4p-sortsel {
+    display: block;
+    flex: 1 1 180px;
+  }
+  .v4-theme .v4p-mobile-only {
+    display: flex;
+  }
+  .v4-theme .v4p-search-input {
+    width: 100%;
+  }
+  .v4-theme .v4p-filters .input.search {
+    max-width: none;
+    flex-basis: 100%;
   }
   .v4-theme .v4p-tiles {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
-  .v4-theme .v4p-tile.xl { grid-column: span 4; }
-  .v4-theme .v4p-tile.lg { grid-column: span 2; }
-  .v4-theme .v4p-form-grid,
-  .v4-theme .v4p-ab {
-    grid-template-columns: 1fr;
+  .v4-theme .v4p-tile.xl {
+    grid-column: span 4;
+  }
+  .v4-theme .v4p-tile.lg {
+    grid-column: span 2;
+  }
+  .v4-theme .v4p-tile.md {
+    grid-column: span 2;
+  }
+  .v4-theme .v4p-tile.sm {
+    grid-column: span 2;
   }
   .v4-theme .v4p-bar {
     grid-template-columns: minmax(56px, 90px) minmax(0, 1fr);
+    gap: 4px 12px;
   }
   .v4-theme .v4p-bar-value {
     grid-column: 1 / -1;
     text-align: left;
+  }
+}
+
+@container v4card (max-width: 420px) {
+  .v4-theme .v4p-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .v4-theme .v4p-tile.xl,
+  .v4-theme .v4p-tile.lg {
+    grid-column: span 2;
+  }
+  .v4-theme .v4p-tile.xl {
+    grid-row: span 2;
+  }
+  .v4-theme .v4p-tile.lg {
+    grid-row: span 1;
+  }
+  .v4-theme .v4p-tile.md,
+  .v4-theme .v4p-tile.sm {
+    grid-column: span 1;
+  }
+}
+
+/* 표 → 카드: 표가 좁아지면 한 줄이 카드 한 장이 된다. 값 앞에 data-label 이 이름표로 붙는다. */
+@container v4tbl (max-width: 660px) {
+  .v4-theme .v4p-tr.head {
+    display: none;
+  }
+  .v4-theme .v4p-tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px 16px;
+    align-items: baseline;
+    position: relative;
+    padding: 12px 14px 12px 52px;
+    font-size: 14px;
+  }
+  .v4-theme .v4p-tr > .v4p-cell-rank {
+    position: absolute;
+    left: 14px;
+    top: 12px;
+  }
+  .v4-theme .v4p-tr > .v4p-title-cell {
+    grid-column: 1 / -1;
+  }
+  .v4-theme .v4p-tr > [data-label] {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+    text-align: right;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .v4-theme .v4p-tr > [data-label]::before {
+    content: attr(data-label);
+    flex: none;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--muted);
+    text-align: left;
+  }
+  .v4-theme .v4p-tr > .v4p-share-cell {
+    grid-column: 1 / -1;
+    display: block;
+    text-align: left;
+  }
+  .v4-theme .v4p-tr > .v4p-share-cell::before {
+    display: block;
+    margin-bottom: 2px;
+  }
+}
+
+/* 좋아요·댓글까지 펼친 "자세히 보기"는 열이 많아서 조금 더 일찍 카드로 바꾼다 */
+@container v4tbl (max-width: 940px) {
+  .v4-theme .v4p-tbl.wide .v4p-tr.head {
+    display: none;
+  }
+  .v4-theme .v4p-tbl.wide .v4p-tr {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px 16px;
+    align-items: baseline;
+    position: relative;
+    padding: 12px 14px 12px 52px;
+    font-size: 14px;
+  }
+  .v4-theme .v4p-tbl.wide .v4p-tr > .v4p-cell-rank {
+    position: absolute;
+    left: 14px;
+    top: 12px;
+  }
+  .v4-theme .v4p-tbl.wide .v4p-tr > .v4p-title-cell {
+    grid-column: 1 / -1;
+  }
+  .v4-theme .v4p-tbl.wide .v4p-tr > [data-label] {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+    text-align: right;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .v4-theme .v4p-tbl.wide .v4p-tr > [data-label]::before {
+    content: attr(data-label);
+    flex: none;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--muted);
+    text-align: left;
+  }
+}
+
+@container v4tbl (max-width: 500px) {
+  .v4-theme .v4p-tbl.wide .v4p-tr {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .v4-theme .v4p-form-grid,
+  .v4-theme .v4p-ab {
+    grid-template-columns: 1fr;
   }
   .v4-theme .v4p-hero-headline {
     font-size: 19px;
@@ -1146,10 +1489,16 @@
     flex-direction: row;
     flex-wrap: wrap;
   }
-  .v4-theme .v4p-tbl {
-    overflow-x: auto;
+}
+
+@media (max-width: 480px) {
+  .v4-theme .v4p-hero {
+    padding: 16px;
   }
-  .v4-theme .v4p-tbl .v4p-tr {
-    min-width: 620px;
+  .v4-theme .v4p-card {
+    padding: 14px;
+  }
+  .v4-theme .v4p-hero-headline {
+    font-size: 18px;
   }
 }

@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import { createSupabaseBrowserClient } from '@/lib/supabase/browser-client'
 import { fetchMe } from '@/lib/session/me-client'
 import { LOGIN_HREF, homeHrefForRole } from '@/lib/v4/menu'
+import { PasswordField } from '@/components/v4/password-field'
 
 type FieldKey = 'email' | 'loginId' | 'password' | 'name' | 'birthDate' | 'phone' | 'antiBotCode'
 type FieldErrors = Partial<Record<FieldKey, string>>
@@ -303,29 +304,27 @@ export default function SignupPage() {
                 <FieldError id="v4-su-loginid-err" text={fieldErrors.loginId} />
               </div>
 
-              <div className="field">
-                <label className="label" htmlFor="v4-su-password">
-                  비밀번호
-                </label>
-                <input
-                  id="v4-su-password"
-                  ref={passwordRef}
-                  className="input"
-                  type="password"
-                  autoComplete="new-password"
-                  value={password}
-                  aria-invalid={fieldErrors.password ? true : undefined}
-                  aria-describedby="v4-su-password-help v4-su-password-err"
-                  onChange={(e) => {
-                    setPassword(e.target.value)
-                    clearFieldError('password')
-                  }}
-                />
-                <div id="v4-su-password-help" className="small muted">
-                  6자 이상으로 정해 주세요.
-                </div>
-                <FieldError id="v4-su-password-err" text={fieldErrors.password} />
-              </div>
+              <PasswordField
+                id="v4-su-password"
+                label="비밀번호"
+                autoComplete="new-password"
+                value={password}
+                inputRef={passwordRef}
+                invalid={Boolean(fieldErrors.password)}
+                describedBy="v4-su-password-help v4-su-password-err"
+                onChange={(next) => {
+                  setPassword(next)
+                  clearFieldError('password')
+                }}
+                help={
+                  <>
+                    <div id="v4-su-password-help" className="small muted">
+                      6자 이상으로 정해 주세요. &quot;보기&quot;를 누르면 입력한 글자를 확인할 수 있어요.
+                    </div>
+                    <FieldError id="v4-su-password-err" text={fieldErrors.password} />
+                  </>
+                }
+              />
 
               <div className="field">
                 <label className="label" htmlFor="v4-su-name">
@@ -378,7 +377,7 @@ export default function SignupPage() {
                 <label className="label" htmlFor="v4-su-phone-mid">
                   전화번호
                 </label>
-                <div className="row">
+                <div className="row v4-phone-row">
                   <input className="input" style={{ maxWidth: 90, textAlign: 'center' }} value="010" disabled aria-label="전화번호 앞자리 010" />
                   <span className="muted">-</span>
                   <input
@@ -474,7 +473,7 @@ export default function SignupPage() {
             </div>
           ) : null}
           {message ? (
-            <div className="message-success small" role="status">
+            <div className="message-success small" role="status" aria-live="polite">
               {message}
             </div>
           ) : null}

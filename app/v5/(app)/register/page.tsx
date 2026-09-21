@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { PageHeader, useV5Me } from '@/components/v5/app-shell'
 import { BulkRegister } from '@/components/v5/bulk-register'
-import { MyVideosTable, type MineVideo } from '@/components/v5/my-videos-table'
+import { MyVideosSkeleton, MyVideosTable, type MineVideo } from '@/components/v5/my-videos-table'
+import { analyzePaste, toBulkText } from '@/components/v5/paste-detect'
+import { SegmentedChoice } from '@/components/v5/segmented'
 import {
   CONTENT_TYPE_LABEL,
   DAILY_GOAL,
@@ -19,6 +21,9 @@ import { Badge, EmptyState } from '@/components/v5/widget'
 import { authedFetchJson, authedPostJson } from '@/lib/session/authed-fetch'
 
 type PlaybookOption = { id: string; title: string; usage_count: number }
+
+// 붙여넣은 글에 대한 안내(여러 개를 붙였거나, 주소 말고 다른 글이 함께 붙었을 때).
+type PasteNote = { kind: 'multi'; text: string; count: number } | { kind: 'extra'; text: string; leftover: string; multiLine: boolean }
 
 type Confirmation =
   | { kind: 'ok'; id: string; stock: string; type: ContentType; title: string | null; refreshed: boolean; nth: number | null }
@@ -54,6 +59,8 @@ export default function RegisterPage() {
 
   const [mode, setMode] = useState<'single' | 'bulk'>('single')
   const [bulkBusy, setBulkBusy] = useState(false)
+  const [bulkSeed, setBulkSeed] = useState<{ key: number; text: string; dropped: number } | null>(null)
+  const [pasteNote, setPasteNote] = useState<PasteNote | null>(null)
 
   const [youtubeUrl, setYoutubeUrl] = useState('')
   const [contentType, setContentType] = useState<ContentType>('longform')
@@ -76,6 +83,7 @@ export default function RegisterPage() {
   const [todayCount, setTodayCount] = useState(0)
   const [teamToday, setTeamToday] = useState<number | null>(null)
 
+  const savingRef = useRef(false) // 화면이 다시 그려지기 전에 Enter 를 두 번 눌러도 한 번만 보낸다.
   const pageRef = useRef(1)
   const refreshTimer = useRef<number | null>(null)
 
@@ -214,8 +222,18 @@ export default function RegisterPage() {
     else urlRef.current?.focus()
   }
 
+  // 붙여 넣은 글을 "여러 개 붙여넣기" 화면으로 옮긴다(주소 없는 줄은 빼고).
+  const switchToBulk = (text: string) => {
+    if (saving || savingRef.current) return
+    const converted = toBulkText(text)
+    setBulkSeed({ key: Date.now(), text: converted.text, dropped: converted.droppedLines })
+    setPasteNote(null)
+    setYoutubeUrl('')
+    setMode('bulk')
+  }
+
   const onSubmit = async () => {
-    if (saving) return
+    if (saving || savingRef.current) return
     setTouched(true)
     setConfirmation(null)
     if (!cleanUrl || urlProblem || !videoId) {
@@ -230,6 +248,7 @@ export default function RegisterPage() {
     const stock = stockName.trim()
     const type = contentType
     const refreshed = alreadyRegistered
+    savingRef.current = true
     setSaving(true)
     try {
       const res = await registerVideo({ videoId, contentType: type, stockName: stock, contentCategory: contentCategory.trim() })
@@ -253,6 +272,7 @@ export default function RegisterPage() {
       setUsedPlaybookId('')
       setAutoTypeNote(false)
       setTouched(false)
+      setPasteNote(null)
       urlRef.current?.focus()
 
       // 목록과 오늘 숫자는 뒤에서 갱신하고, 새 줄만 잠깐 강조한다.
@@ -265,6 +285,7 @@ export default function RegisterPage() {
         highlight(res.id)
       })()
     } finally {
+      savingRef.current = false
       setSaving(false)
     }
   }
@@ -304,14 +325,27 @@ export default function RegisterPage() {
             <button type="button" className={mode === 'single' ? 'active' : ''} aria-pressed={mode === 'single'} disabled={bulkBusy} onClick={() => setMode('single')}>
               한 개씩 등록
             </button>
-            <button type="button" className={mode === 'bulk' ? 'active' : ''} aria-pressed={mode === 'bulk'} disabled={bulkBusy || saving} onClick={() => setMode('bulk')}>
+            <button type="button" className={mode === 'bulk' ? 'active' : ''} aria-pressed={mode === 'bulk'} disabled={bulkBusy || saving}
+              onClick={() => {
+                setBulkSeed(null)
+                setMode('bulk')
+              }}
+            >
               여러 개 붙여넣기
             </button>
           </div>
         </div>
 
         {mode === 'bulk' ? (
+          <>
+            {bulkSeed && bulkSeed.dropped > 0 ? (
+              <div className="v5-hint" role="status">
+                주소가 없는 {bulkSeed.dropped}줄(제목 등)은 뺐습니다. 제목은 등록할 때 자동으로 가져옵니다.
+              </div>
+            ) : null}
           <BulkRegister
+            key={bulkSeed?.key ?? 0}
+            initialText={bulkSeed?.text}
             recentStocks={recentStocks}
             registeredIds={registeredIds}
             onBusyChange={setBulkBusy}
@@ -321,6 +355,7 @@ export default function RegisterPage() {
               scheduleRefresh()
             }}
           />
+          </>
         ) : (
           <form
             onSubmit={(e) => {
@@ -340,16 +375,29 @@ export default function RegisterPage() {
                 autoComplete="off"
                 spellCheck={false}
                 disabled={saving}
+                autoCapitalize="none"
+                enterKeyHint="next"
                 placeholder="여기에 유튜브 영상 주소를 붙여 넣으세요"
                 value={youtubeUrl}
-                onChange={(e) => setYoutubeUrl(e.target.value)}
+                onChange={(e) => {
+                  setYoutubeUrl(e.target.value)
+                  setPasteNote(null)
+                }}
                 onPaste={(e) => {
-                  // 붙여넣기: 앞뒤 공백을 지우고, 종목이 비어 있으면 곧바로 종목 칸으로 넘어간다.
+                  // 붙여넣기: 여러 개면 넣지 않고 "여러 개 붙여넣기"를 권한다.
+                  // 하나면 앞뒤 공백을 지우고, 종목이 비어 있으면 곧바로 종목 칸으로 넘어간다.
                   const text = e.clipboardData.getData('text')
+                  const info = analyzePaste(text)
+                  if (info.kind === 'multi') {
+                    e.preventDefault()
+                    setPasteNote({ kind: 'multi', text, count: info.videoCount })
+                    return
+                  }
                   const cleaned = normalizeUrl(text)
                   if (!cleaned) return
                   e.preventDefault()
                   setYoutubeUrl(cleaned)
+                  setPasteNote(info.kind === 'text-with-url' ? { kind: 'extra', text, leftover: info.leftover, multiLine: info.lineCount >= 2 } : null)
                   if (isShortsUrl(cleaned) && contentType !== 'shortform') {
                     setContentType('shortform')
                     setAutoTypeNote(true)
@@ -360,6 +408,14 @@ export default function RegisterPage() {
                   if (youtubeUrl && youtubeUrl !== cleanUrl) setYoutubeUrl(cleanUrl)
                 }}
                 onKeyDown={(e) => {
+                  if (e.key === 'Escape' && (youtubeUrl || pasteNote)) {
+                    // Esc: 잘못 붙인 주소를 한 번에 비운다.
+                    e.preventDefault()
+                    setYoutubeUrl('')
+                    setPasteNote(null)
+                    setAutoTypeNote(false)
+                    return
+                  }
                   if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
                     e.preventDefault()
                     if (!stockName.trim() && cleanUrl && !urlProblem) stockRef.current?.focus()
@@ -367,14 +423,51 @@ export default function RegisterPage() {
                   }
                 }}
                 aria-invalid={Boolean(urlProblem)}
+                aria-describedby="v5-reg-url-hint"
               />
-              <div className={`v5-hint ${urlProblem || alreadyRegistered ? 'warn' : ''}`}>
+              <div id="v5-reg-url-hint" className={`v5-hint ${urlProblem || alreadyRegistered ? 'warn' : ''}`}>
                 {urlProblem ||
                   (alreadyRegistered
                     ? '이미 등록된 영상입니다. 다시 등록하면 정보가 새로 갱신됩니다.'
                     : autoTypeNote
                       ? '숏폼 주소라서 형식을 숏폼으로 맞췄습니다.'
                       : '')}
+              </div>
+              <div className="v5-live" aria-live="polite" aria-atomic="true">
+                {pasteNote ? (
+                  <div className="v5-paste-note">
+                    <span className="v5-paste-note-text">
+                      {pasteNote.kind === 'multi'
+                        ? `영상 ${pasteNote.count}개를 한꺼번에 붙여 넣으셨네요. 여러 개 붙여넣기로 바꾸면 한 번에 등록할 수 있습니다.`
+                        : pasteNote.multiLine
+                          ? '주소 말고 다른 줄도 함께 붙어 있어서 주소만 넣었습니다. 제목은 자동으로 가져옵니다.'
+                          : '주소 옆에 다른 글자가 붙어 있어서 주소만 넣었습니다.'}
+                    </span>
+                    <span className="v5-paste-note-actions">
+                      {pasteNote.kind === 'extra' && pasteNote.leftover && !stockName.trim() ? (
+                        <button
+                          className="button secondary sm"
+                          type="button"
+                          onClick={() => {
+                            setStockName(pasteNote.leftover)
+                            setPasteNote(null)
+                            submitRef.current?.focus()
+                          }}
+                        >
+                          종목을 “{pasteNote.leftover}”로 쓰기
+                        </button>
+                      ) : null}
+                      {pasteNote.kind === 'multi' || pasteNote.multiLine ? (
+                        <button className="button sm" type="button" onClick={() => switchToBulk(pasteNote.text)}>
+                          여러 개 붙여넣기로 바꾸기
+                        </button>
+                      ) : null}
+                      <button className="button ghost sm" type="button" onClick={() => setPasteNote(null)}>
+                        닫기
+                      </button>
+                    </span>
+                  </div>
+                ) : null}
               </div>
             </div>
 
@@ -389,6 +482,8 @@ export default function RegisterPage() {
                   className="input"
                   list="v5-recent-stocks"
                   autoComplete="off"
+                  spellCheck={false}
+                  enterKeyHint="done"
                   disabled={saving}
                   placeholder="예: 삼성전자"
                   value={stockName}
@@ -400,6 +495,7 @@ export default function RegisterPage() {
                     }
                   }}
                   aria-invalid={Boolean(stockProblem)}
+                  aria-describedby="v5-reg-stock-hint"
                 />
                 <datalist id="v5-recent-stocks">
                   {recentStocks.map((s) => (
@@ -408,26 +504,29 @@ export default function RegisterPage() {
                 </datalist>
               </div>
               <div className="field">
-                <span className="label">형식</span>
-                <div className="v5-type-toggle" role="group" aria-label="영상 형식">
-                  {(['longform', 'shortform'] as const).map((t) => (
-                    <button key={t} type="button" className={contentType === t ? 'active' : ''} aria-pressed={contentType === t} disabled={saving} onClick={() => chooseType(t)}>
-                      {CONTENT_TYPE_LABEL[t]}
-                    </button>
-                  ))}
-                </div>
+                <span className="label" aria-hidden="true">형식</span>
+                <SegmentedChoice
+                  label="영상 형식"
+                  value={contentType}
+                  disabled={saving}
+                  onChange={chooseType}
+                  options={[
+                    { value: 'longform', label: CONTENT_TYPE_LABEL.longform },
+                    { value: 'shortform', label: CONTENT_TYPE_LABEL.shortform }
+                  ]}
+                />
               </div>
-              <button ref={submitRef} className="button" type="submit" disabled={saving}>
+              <button ref={submitRef} className="button v5-submit" type="submit" disabled={saving} aria-busy={saving}>
                 {saving ? '등록 중...' : '등록'}
               </button>
             </div>
-            <div className={`v5-hint ${stockProblem ? 'warn' : ''}`}>{stockProblem}</div>
+            <div id="v5-reg-stock-hint" className={`v5-hint ${stockProblem ? 'warn' : ''}`}>{stockProblem}</div>
 
             {recentStocks.length > 0 ? (
-              <div className="v5-chip-row" aria-label="최근 종목">
+              <div className="v5-chip-row" role="group" aria-label="최근 종목">
                 <span className="v5-chip-label">최근 종목</span>
                 {recentStocks.map((s) => (
-                  <button key={s} type="button" className={`v5-chip ${stockName.trim() === s ? 'on' : ''}`} disabled={saving} onClick={() => pickChip(s)}>
+                  <button key={s} type="button" className={`v5-chip ${stockName.trim() === s ? 'on' : ''}`} disabled={saving} aria-pressed={stockName.trim() === s} onClick={() => pickChip(s)}>
                     {s}
                   </button>
                 ))}
@@ -444,6 +543,7 @@ export default function RegisterPage() {
                   <input
                     id="v5-reg-category"
                     className="input"
+                    autoComplete="off"
                     value={contentCategory}
                     disabled={saving}
                     onChange={(e) => setContentCategory(e.target.value)}
@@ -468,28 +568,30 @@ export default function RegisterPage() {
               </div>
             </details>
 
-            {confirmation ? (
-              confirmation.kind === 'ok' ? (
-                <div className="v5-confirm" role="status">
-                  <span>
-                    {confirmation.refreshed
-                      ? '✓ 다시 등록됨 · 정보를 새로 갱신했습니다'
-                      : `✓ 등록됨 · 오늘 ${(confirmation.nth ?? todayCount + 1).toLocaleString('ko-KR')}번째`}
-                  </span>
-                  <span className="v5-confirm-detail">
-                    {confirmation.stock} · {CONTENT_TYPE_LABEL[confirmation.type]}
-                    {confirmation.title ? ` · ${confirmation.title}` : ''}
-                  </span>
-                </div>
-              ) : (
-                <div className="v5-confirm error" role="alert">
-                  <span>등록하지 못했습니다</span>
-                  <span className="v5-confirm-detail" style={{ whiteSpace: 'normal' }}>
-                    {confirmation.message}
-                  </span>
-                </div>
-              )
-            ) : null}
+            <div className="v5-live" aria-live="polite" aria-atomic="true">
+              {confirmation ? (
+                confirmation.kind === 'ok' ? (
+                  <div className="v5-confirm">
+                    <span>
+                      {confirmation.refreshed
+                        ? '✓ 다시 등록됨 · 정보를 새로 갱신했습니다'
+                        : `✓ 등록됨 · 오늘 ${(confirmation.nth ?? todayCount + 1).toLocaleString('ko-KR')}번째`}
+                    </span>
+                    <span className="v5-confirm-detail">
+                      {confirmation.stock} · {CONTENT_TYPE_LABEL[confirmation.type]}
+                      {confirmation.title ? ` · ${confirmation.title}` : ''}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="v5-confirm error">
+                    <span>등록하지 못했습니다</span>
+                    <span className="v5-confirm-detail" style={{ whiteSpace: 'normal' }}>
+                      {confirmation.message}
+                    </span>
+                  </div>
+                )
+              ) : null}
+            </div>
           </form>
         )}
       </div>
@@ -515,7 +617,7 @@ export default function RegisterPage() {
         </div>
 
         {!loadedOnce ? (
-          <div className="small muted">목록을 불러오는 중...</div>
+          <MyVideosSkeleton />
         ) : listError ? (
           <EmptyState
             title="목록을 불러오지 못했습니다"

@@ -7,6 +7,7 @@ import { v4Json } from '@/lib/v4/client'
 import { DEFAULT_METRIC } from '@/lib/v4/experiment-consts'
 import type { VideoOption } from '@/lib/v4/experiments'
 import { fmtDateKst } from '@/lib/v4/format'
+import { FormError } from '@/lib/v4/analysis-ui'
 import type { ExperimentItem } from '@/lib/v4/sample-data'
 import { Field } from './field'
 
@@ -51,6 +52,8 @@ export function ExperimentForm({
 }) {
   const [form, setForm] = useState<FormState>(() => (editing ? fromItem(editing) : emptyForm()))
   const [saving, setSaving] = useState(false)
+  const savingRef = useRef(false) // 아주 빠른 더블 클릭도 한 번만 저장되게 (state 는 다음 렌더에야 바뀐다)
+  const [errorStatus, setErrorStatus] = useState(0)
   const [submitted, setSubmitted] = useState(false)
   const [touched, setTouched] = useState<Partial<Record<FieldKey, boolean>>>({})
   const [formError, setFormError] = useState('')
@@ -83,7 +86,7 @@ export function ExperimentForm({
 
   const submit = async (e?: FormEvent) => {
     e?.preventDefault()
-    if (saving) return
+    if (saving || savingRef.current) return
     setSubmitted(true)
     if (Object.keys(errors).length > 0) {
       // 첫 오류 칸으로 커서를 옮긴다.
@@ -92,8 +95,10 @@ export function ExperimentForm({
       if (first) document.getElementById(ids[first])?.focus()
       return
     }
+    savingRef.current = true
     setSaving(true)
     setFormError('')
+    setErrorStatus(0)
     const payload = {
       videoId: form.videoId || null,
       hypothesis: form.hypothesis.trim(),
@@ -105,9 +110,11 @@ export function ExperimentForm({
     const result = editing
       ? await v4Json<{ item: ExperimentItem }>('PATCH', `/api/v4/experiments/${editing.id}`, payload, '저장하지 못했어요. 잠시 후 다시 시도해 주세요.')
       : await v4Json<{ item: ExperimentItem }>('POST', '/api/v4/experiments', payload, '실험을 등록하지 못했어요. 잠시 후 다시 시도해 주세요.')
+    savingRef.current = false
     setSaving(false)
     if (!result.ok) {
       setFormError(result.message)
+      setErrorStatus(result.status)
       return
     }
     onSaved(result.data.item, editing ? 'edit' : 'create')
@@ -220,9 +227,7 @@ export function ExperimentForm({
       </details>
 
       {formError ? (
-        <div className="v4p-form-error" role="alert">
-          {formError}
-        </div>
+        <FormError message={formError} status={errorStatus} />
       ) : null}
       <div className="v4p-form-actions">
         <button type="submit" className="button" disabled={saving}>

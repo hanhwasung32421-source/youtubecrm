@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { mapPlaybook, PLAYBOOK_SELECT, playbookInputSchema, type PlaybookRow } from '@/lib/v5/playbook'
 import { SAMPLE_PLAYBOOK } from '@/lib/v5/sample-data'
 import { V5_TABLES } from '@/lib/v5/tables'
-import { badRequest, countMissingVideos, fetchAllPages, getSession, handleRouteError, isMissingTableError, missingTableResponse, readJson } from '@/lib/v5/api'
+import { badRequest, countMissingVideos, fetchAllPages, getSession, handleRouteError, isMissingTableError, jsonCached, jsonNoStore, missingTableResponse, readJson } from '@/lib/v5/api'
 
 // 팀 전체가 함께 만드는 라이브러리라 조회는 관리자/직원 구분 없이 전체 공개한다.
 export async function GET(request: Request) {
@@ -31,7 +31,7 @@ export async function GET(request: Request) {
     }
 
     const items = await mapPlaybook(supabaseAdmin, all.rows, session)
-    return NextResponse.json({ sample: false, items, top: items.slice(0, 3), truncated: all.truncated })
+    return jsonCached({ sample: false, items, top: items.slice(0, 3), truncated: all.truncated })
   } catch (e) {
     return handleRouteError(e, '성공 공식을 불러오지 못했어요.')
   }
@@ -68,7 +68,7 @@ export async function POST(request: Request) {
     }
 
     const [item] = await mapPlaybook(supabaseAdmin, [data as PlaybookRow], session)
-    return NextResponse.json({ item })
+    return jsonNoStore({ item })
   } catch (e) {
     return handleRouteError(e, '성공 공식을 저장하지 못했어요. 잠시 뒤 다시 해 주세요.')
   }

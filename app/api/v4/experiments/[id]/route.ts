@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server'
+import { noStoreJson } from '@/lib/v4/http'
 import { z } from 'zod'
 import { getKstYmd } from '@/lib/attendance/time'
 import { firstIssueMessage } from '@/lib/v4/errors'
@@ -28,17 +28,17 @@ export async function PATCH(request: Request, { params }: Params) {
     const ctx = await requireV4User(request)
     const { id } = await params
     if (!idSchema.safeParse(id).success) {
-      return NextResponse.json({ error: '잘못된 실험입니다. 화면을 새로 열어 주세요.' }, { status: 400 })
+      return noStoreJson({ error: '잘못된 실험입니다. 화면을 새로 열어 주세요.' }, { status: 400 })
     }
     const parsed = experimentInputSchema.partial().safeParse(await readJson(request))
     if (!parsed.success) {
-      return NextResponse.json({ error: firstIssueMessage(parsed.error) }, { status: 400 })
+      return noStoreJson({ error: firstIssueMessage(parsed.error) }, { status: 400 })
     }
 
     const owned = await loadOwned(ctx, id)
-    if ('missing' in owned) return NextResponse.json({ error: MISSING_TABLE_MESSAGE }, { status: 409 })
-    if ('notFound' in owned) return NextResponse.json({ error: '실험을 찾을 수 없어요. 이미 삭제됐을 수 있어요.' }, { status: 404 })
-    if ('forbidden' in owned) return NextResponse.json({ error: '본인이 등록한 실험만 수정할 수 있어요.' }, { status: 403 })
+    if ('missing' in owned) return noStoreJson({ error: MISSING_TABLE_MESSAGE }, { status: 409 })
+    if ('notFound' in owned) return noStoreJson({ error: '실험을 찾을 수 없어요. 이미 삭제됐을 수 있어요.' }, { status: 404 })
+    if ('forbidden' in owned) return noStoreJson({ error: '본인이 등록한 실험만 수정할 수 있어요.' }, { status: 403 })
 
     const input = parsed.data
     const patch: Record<string, unknown> = {}
@@ -53,7 +53,7 @@ export async function PATCH(request: Request, { params }: Params) {
     if (input.learning !== undefined) patch.learning = input.learning || null
 
     if (Object.keys(patch).length === 0) {
-      return NextResponse.json({ error: '바꿀 내용이 없어요.' }, { status: 400 })
+      return noStoreJson({ error: '바꿀 내용이 없어요.' }, { status: 400 })
     }
 
     const startedOn = (input.startedOn ?? owned.row.started_on) as string
@@ -66,7 +66,7 @@ export async function PATCH(request: Request, { params }: Params) {
       patch.ended_on = endedOn
     }
     if (endedOn && startedOn && endedOn < startedOn) {
-      return NextResponse.json({ error: '종료일은 시작일보다 빠를 수 없어요.' }, { status: 400 })
+      return noStoreJson({ error: '종료일은 시작일보다 빠를 수 없어요.' }, { status: 400 })
     }
     if (input.videoId && input.videoId !== owned.row.video_id) await assertLinkableVideo(ctx, input.videoId)
 
@@ -78,10 +78,10 @@ export async function PATCH(request: Request, { params }: Params) {
       .select(EXPERIMENT_SELECT)
       .maybeSingle()
     if (error) throw dbError(error)
-    if (!data) return NextResponse.json({ error: '실험을 찾을 수 없어요. 이미 삭제됐을 수 있어요.' }, { status: 404 })
+    if (!data) return noStoreJson({ error: '실험을 찾을 수 없어요. 이미 삭제됐을 수 있어요.' }, { status: 404 })
 
     const [item] = await mapExperiments(ctx, [data as ExperimentRow])
-    return NextResponse.json({ item })
+    return noStoreJson({ item })
   } catch (e) {
     return v4ErrorResponse(e, '실험 수정 실패')
   }
@@ -92,17 +92,17 @@ export async function DELETE(request: Request, { params }: Params) {
     const ctx = await requireV4User(request)
     const { id } = await params
     if (!idSchema.safeParse(id).success) {
-      return NextResponse.json({ error: '잘못된 실험입니다. 화면을 새로 열어 주세요.' }, { status: 400 })
+      return noStoreJson({ error: '잘못된 실험입니다. 화면을 새로 열어 주세요.' }, { status: 400 })
     }
     const owned = await loadOwned(ctx, id)
-    if ('missing' in owned) return NextResponse.json({ error: MISSING_TABLE_MESSAGE }, { status: 409 })
+    if ('missing' in owned) return noStoreJson({ error: MISSING_TABLE_MESSAGE }, { status: 409 })
     // 이미 지워졌다면 목적(없애기)은 달성된 것이므로 성공으로 본다.
-    if ('notFound' in owned) return NextResponse.json({ ok: true, alreadyDeleted: true })
-    if ('forbidden' in owned) return NextResponse.json({ error: '본인이 등록한 실험만 삭제할 수 있어요.' }, { status: 403 })
+    if ('notFound' in owned) return noStoreJson({ ok: true, alreadyDeleted: true })
+    if ('forbidden' in owned) return noStoreJson({ error: '본인이 등록한 실험만 삭제할 수 있어요.' }, { status: 403 })
 
     const { error } = await ctx.supabaseAdmin.from(V4_TABLES.contentExperiments).delete().eq('id', id)
     if (error) throw dbError(error)
-    return NextResponse.json({ ok: true })
+    return noStoreJson({ ok: true })
   } catch (e) {
     return v4ErrorResponse(e, '실험 삭제 실패')
   }

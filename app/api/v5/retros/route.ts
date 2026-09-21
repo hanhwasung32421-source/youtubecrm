@@ -3,7 +3,7 @@ import { SAMPLE_RETROS } from '@/lib/v5/sample-data'
 import { V5_TABLES } from '@/lib/v5/tables'
 import { isoWeekRangeText } from '@/lib/v5/format'
 import { mapRetros, pullKpiSnapshot, RETRO_SELECT, retroCreateSchema, writableWeeks, type RetroRow } from '@/lib/v5/retros'
-import { badRequest, fetchAllPages, forbidden, getSession, handleRouteError, isMissingTableError, missingTableResponse, readJson } from '@/lib/v5/api'
+import { badRequest, fetchAllPages, forbidden, getSession, handleRouteError, isMissingTableError, jsonNoStore, missingTableResponse, readJson } from '@/lib/v5/api'
 
 export async function GET(request: Request) {
   try {
@@ -89,7 +89,7 @@ export async function POST(request: Request) {
     }
 
     const [item] = await mapRetros(supabaseAdmin, [data as RetroRow])
-    return NextResponse.json({ item, weekText: isoWeekRangeText(weekLabel) })
+    return jsonNoStore({ item, weekText: isoWeekRangeText(weekLabel) })
   } catch (e) {
     return handleRouteError(e, '주간 회고를 저장하지 못했어요. 잠시 뒤 다시 해 주세요.')
   }

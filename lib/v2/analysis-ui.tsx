@@ -4,6 +4,7 @@
 // 스타일은 ./analysis.css (.v2-theme 스코프, v2a- 접두어)에만 둔다.
 import Link from 'next/link'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { formatKstStamp, formatRelative } from './dates'
 import { V2_SAMPLE_BANNER_TEXT } from './tables'
 import './analysis.css'
 
@@ -114,8 +115,21 @@ export function FieldError({ id, children }: { id?: string; children?: ReactNode
   )
 }
 
-// 목록을 못 불러왔을 때: 빈 화면처럼 보이지 않게 이유 + 다시 시도 버튼
-export function LoadError({ message, onRetry }: { message: string; onRetry: () => void }) {
+// 목록을 못 불러왔을 때: 빈 화면처럼 보이지 않게 이유 + 다시 시도 버튼.
+// 로그인 시간이 지난 경우(expired)에는 "다시 시도" 대신 로그인 화면으로 가는 링크를 보여준다.
+export const V2_LOGIN_HREF = '/v2/login'
+
+export function LoadError({ message, onRetry, expired }: { message: string; onRetry: () => void; expired?: boolean }) {
+  if (expired) {
+    return (
+      <div className="v2a-loaderror" role="alert">
+        <span>로그인 시간이 지났어요. 다시 로그인해 주세요.</span>
+        <Link className="button secondary xs" href={V2_LOGIN_HREF}>
+          다시 로그인
+        </Link>
+      </div>
+    )
+  }
   return (
     <div className="v2a-loaderror" role="alert">
       <span>{message}</span>
@@ -123,6 +137,133 @@ export function LoadError({ message, onRetry }: { message: string; onRetry: () =
         다시 불러오기
       </button>
     </div>
+  )
+}
+
+// 오래된 값을 먼저 보여주고 새 값을 받는 중일 때 조용히 알린다.
+export function RefreshNote({ show }: { show?: boolean }) {
+  if (!show) return null
+  return (
+    <div className="v2a-refresh" role="status">
+      최신 내용으로 바꾸는 중…
+    </div>
+  )
+}
+
+// 시각: 화면에는 "3일 전", 마우스를 올리면(title) 정확한 날짜·시각(KST)
+export function Stamp({ iso, absolute }: { iso: string | null | undefined; absolute?: boolean }) {
+  if (!iso) return <span>-</span>
+  const full = formatKstStamp(iso)
+  if (full === '-') return <span>-</span>
+  return (
+    <time dateTime={iso} title={absolute ? formatRelative(iso) : full}>
+      {absolute ? full : formatRelative(iso)}
+    </time>
+  )
+}
+
+// ---- 스켈레톤: 실제 화면과 같은 모양의 회색 틀 (움직임 줄이기 설정이면 멈춤) ----
+export function Skel({ w, h = 14, className = '' }: { w?: number | string; h?: number | string; className?: string }) {
+  return <span className={`v2a-skel ${className}`} style={{ width: w, height: h }} aria-hidden="true" />
+}
+
+function SkelWrap({ children, label = '불러오는 중' }: { children: ReactNode; label?: string }) {
+  return (
+    <div className="v2a-skel-wrap" role="status" aria-busy="true" aria-live="polite">
+      <span className="v2a-vh">{label}</span>
+      <div aria-hidden="true" style={{ display: 'contents' }}>
+        {children}
+      </div>
+    </div>
+  )
+}
+
+// 결론 한 줄 + 숫자 카드 3개
+export function SkeletonSummary() {
+  return (
+    <SkelWrap>
+      <div className="v2a-answer neutral">
+        <Skel w={72} h={11} />
+        <Skel w="72%" h={18} />
+      </div>
+      <div className="v2a-kpis">
+        {[0, 1, 2].map((i) => (
+          <div className="v2a-kpi" key={i}>
+            <Skel w="55%" h={13} />
+            <div style={{ marginTop: 10 }}>
+              <Skel w={80} h={28} />
+            </div>
+            <div style={{ marginTop: 10 }}>
+              <Skel w="90%" h={12} />
+            </div>
+          </div>
+        ))}
+      </div>
+    </SkelWrap>
+  )
+}
+
+// 카드 목록 (영상 점검·키워드 목록)
+export function SkeletonList({ rows = 4 }: { rows?: number }) {
+  return (
+    <SkelWrap>
+      <div className="list">
+        {Array.from({ length: rows }, (_, i) => (
+          <div className="list-item" key={i}>
+            <Skel w={`${60 - (i % 3) * 8}%`} h={16} />
+            <div style={{ marginTop: 10 }}>
+              <Skel w="40%" h={12} />
+            </div>
+            <div className="v2a-skel-row" style={{ marginTop: 12 }}>
+              <Skel w={110} h={22} />
+              <Skel w={90} h={22} />
+            </div>
+          </div>
+        ))}
+      </div>
+    </SkelWrap>
+  )
+}
+
+// 순위 표 (성과 요약)
+export function SkeletonTable({ rows = 6 }: { rows?: number }) {
+  return (
+    <SkelWrap>
+      <div className="v2a-skel-table">
+        {Array.from({ length: rows }, (_, i) => (
+          <div className="v2a-skel-tr" key={i}>
+            <Skel w={18} h={14} />
+            <div className="v2a-skel-title">
+              <Skel w={`${70 - (i % 4) * 9}%`} h={14} />
+              <Skel w="45%" h={11} />
+            </div>
+            <Skel w={54} h={14} className="hide-sm" />
+            <Skel w={44} h={14} className="hide-sm" />
+            <Skel w={96} h={14} />
+          </div>
+        ))}
+      </div>
+    </SkelWrap>
+  )
+}
+
+// 주간 계획 표 (담당자 줄 × 7일)
+export function SkeletonPlanner({ rows = 3 }: { rows?: number }) {
+  return (
+    <SkelWrap>
+      <div className="v2a-skel-plan">
+        {Array.from({ length: rows }, (_, r) => (
+          <div className="v2a-skel-plan-row" key={r}>
+            <Skel w={56} h={16} />
+            <div className="v2a-skel-plan-cells">
+              {Array.from({ length: 7 }, (_, c) => (
+                <Skel key={c} h={62} className="v2a-skel-cell" />
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </SkelWrap>
   )
 }
 

@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { V2_TABLES } from '@/lib/v2/tables'
 import {
   authedContext,
+  cachedJson,
   forbidden,
   handleDbError,
   handleRouteError,
@@ -10,6 +11,7 @@ import {
   isUuid,
   loadRecentStocks,
   loadStaffMap,
+  noStoreJson,
   nowIso
 } from '@/lib/v2/server'
 import { sampleKeywordsPayload } from '@/lib/v2/sample-data'
@@ -65,11 +67,13 @@ export async function GET(request: Request) {
   try {
     const { supabaseAdmin } = await authedContext(request)
 
-    const [openRes, doneRes, doneCountRes, recentStocks] = await Promise.all([
+    // 담당자 이름 조회까지 한꺼번에 보낸다 (서로 기다릴 필요가 없다).
+    const [openRes, doneRes, doneCountRes, recentStocks, staffMap] = await Promise.all([
       supabaseAdmin.from(V2_TABLES.keywordRadar).select(SELECT).neq('status', 'done').order('created_at', { ascending: false }).limit(1000),
       supabaseAdmin.from(V2_TABLES.keywordRadar).select(SELECT).eq('status', 'done').order('updated_at', { ascending: false }).limit(DONE_KEEP),
       supabaseAdmin.from(V2_TABLES.keywordRadar).select('id', { count: 'exact', head: true }).eq('status', 'done'),
-      loadRecentStocks(supabaseAdmin)
+      loadRecentStocks(supabaseAdmin),
+      loadStaffMap(supabaseAdmin)
     ])
 
     const error = openRes.error || doneRes.error
@@ -78,7 +82,6 @@ export async function GET(request: Request) {
       return handleDbError(error, READ_ERROR)
     }
 
-    const staffMap = await loadStaffMap(supabaseAdmin)
     type Row = Omit<KeywordRadarItem, 'created_by_name'>
     const items: KeywordRadarItem[] = [...((openRes.data || []) as Row[]), ...((doneRes.data || []) as Row[])]
       .map((row) => ({ ...row, created_by_name: row.created_by ? staffMap.get(row.created_by) || null : null }))
@@ -89,7 +92,7 @@ export async function GET(request: Request) {
       })
 
     const payload: KeywordsPayload = { items, recentStocks, doneTotal: doneCountRes.count ?? items.filter((i) => i.status === 'done').length }
-    return NextResponse.json(payload)
+    return cachedJson(payload)
   } catch (e) {
     return handleRouteError(e, READ_ERROR)
   }
@@ -113,7 +116,7 @@ export async function POST(request: Request) {
       .select(SELECT)
       .single()
     if (error || !data) return handleDbError(error, SAVE_ERROR)
-    return NextResponse.json({ ok: true, item: { ...data, created_by_name: profile.name || null } })
+    return noStoreJson({ ok: true, item: { ...data, created_by_name: profile.name || null } })
   } catch (e) {
     return handleRouteError(e, SAVE_ERROR)
   }
@@ -145,7 +148,7 @@ export async function PATCH(request: Request) {
     const { data, error } = await supabaseAdmin.from(V2_TABLES.keywordRadar).update(patch).eq('id', body.id).select(SELECT).maybeSingle()
     if (error) return handleDbError(error, SAVE_ERROR)
     if (!data) return NextResponse.json({ error: '이미 삭제된 키워드예요. 목록을 새로고침합니다.' }, { status: 404 })
-    return NextResponse.json({ ok: true, item: data })
+    return noStoreJson({ ok: true, item: data })
   } catch (e) {
     return handleRouteError(e, SAVE_ERROR)
   }
@@ -160,12 +163,12 @@ export async function DELETE(request: Request) {
     }
     const { data: existing, error: loadError } = await supabaseAdmin.from(V2_TABLES.keywordRadar).select('id, created_by').eq('id', id).maybeSingle()
     if (loadError) return handleDbError(loadError, DELETE_ERROR)
-    if (!existing) return NextResponse.json({ ok: true })
+    if (!existing) return noStoreJson({ ok: true })
     if (!isAdmin && existing.created_by !== profile.id) return forbidden('추가한 사람과 관리자만 삭제할 수 있어요.')
 
     const { error } = await supabaseAdmin.from(V2_TABLES.keywordRadar).delete().eq('id', id)
     if (error) return handleDbError(error, DELETE_ERROR)
-    return NextResponse.json({ ok: true })
+    return noStoreJson({ ok: true })
   } catch (e) {
     return handleRouteError(e, DELETE_ERROR)
   }

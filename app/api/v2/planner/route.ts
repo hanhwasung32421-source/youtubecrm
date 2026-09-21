@@ -3,15 +3,20 @@ import { z } from 'zod'
 import { TABLES } from '@/lib/supabase/tables'
 import { V2_TABLES } from '@/lib/v2/tables'
 import { addDays, kstDayStart, kstDayEnd, kstYmd, weekStartMonday } from '@/lib/v2/dates'
-import { computeTimingHint, handleDbError, handleRouteError, isMissingTableError, isUuid, loadStaff, requireV2Admin, selectAllPages } from '@/lib/v2/server'
+import { cachedJson, computeTimingHint, handleDbError, handleRouteError, isMissingTableError, isUuid, loadStaff, noStoreJson, requireV2Admin, selectAllPages } from '@/lib/v2/server'
 import { samplePlannerPayload } from '@/lib/v2/sample-data'
-import type { PlannedSlot, PlannerPayload } from '@/lib/v2/types'
+import type { PlannedSlot, PlannerPayload, TimingHint } from '@/lib/v2/types'
 
 const READ_ERROR = '업로드 계획을 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.'
 const SAVE_ERROR = '계획을 저장하지 못했어요. 잠시 뒤 다시 시도해 주세요.'
 const DELETE_ERROR = '계획을 지우지 못했어요. 잠시 뒤 다시 시도해 주세요.'
 const DUP_ERROR = '이 담당자는 그 시간에 이미 계획이 있어요. 다른 시간을 골라 주세요.'
 const SLOT_SELECT = 'id, staff_user_id, planned_date, planned_hour, note, created_at'
+
+// 주를 넘기며 볼 때마다 같은 "최근 영상 500개 통계"를 다시 계산하지 않도록 잠깐(60초) 기억해 둔다.
+// (같은 서버 인스턴스 안에서만 적용되는 가벼운 캐시라, 없어져도 결과는 같다)
+const TIMING_TTL_MS = 60_000
+let timingCache: { at: number; value: TimingHint } | null = null
 
 // 발행 모멘텀 플래너: 요일 × 담당자 업로드 계획(planned_slots) vs 실제 등록 수, 최적 발행 시간 힌트
 export async function GET(request: Request) {
@@ -26,13 +31,40 @@ export async function GET(request: Request) {
     const staff = await loadStaff(supabaseAdmin)
     const staffIds = staff.map((s) => s.id)
 
-    const { data: slotRows, error: slotError } = await supabaseAdmin
-      .from(V2_TABLES.plannedSlots)
-      .select(SLOT_SELECT)
-      .in('staff_user_id', staffIds.length > 0 ? staffIds : ['00000000-0000-0000-0000-000000000000'])
-      .gte('planned_date', weekStart)
-      .lte('planned_date', weekEnd)
-      .order('planned_hour', { ascending: true })
+    // 계획·실제 등록·발행 시간 통계는 서로 기다릴 필요가 없어 한꺼번에 조회한다.
+    const emptyIds = ['00000000-0000-4000-8000-000000000000']
+    const videoTask =
+      staffIds.length > 0
+        ? // 한 주에 등록되는 영상이 1000개를 넘을 수 있어 나눠서 모두 읽는다.
+          selectAllPages<{ primary_owner_user_id: string; created_at: string }>(
+            (from, to) =>
+              supabaseAdmin
+                .from(TABLES.videos)
+                .select('primary_owner_user_id, created_at')
+                .in('primary_owner_user_id', staffIds)
+                .gte('created_at', kstDayStart(weekStart).toISOString())
+                .lt('created_at', kstDayEnd(weekEnd).toISOString())
+                .order('created_at', { ascending: true })
+                .range(from, to),
+            6000
+          )
+        : Promise.resolve([] as { primary_owner_user_id: string; created_at: string }[])
+
+    const [slotRes, videoRows, timingRes] = await Promise.all([
+      supabaseAdmin
+        .from(V2_TABLES.plannedSlots)
+        .select(SLOT_SELECT)
+        .in('staff_user_id', staffIds.length > 0 ? staffIds : emptyIds)
+        .gte('planned_date', weekStart)
+        .lte('planned_date', weekEnd)
+        .order('planned_hour', { ascending: true }),
+      videoTask,
+      timingCache && Date.now() - timingCache.at < TIMING_TTL_MS
+        ? Promise.resolve(null)
+        : supabaseAdmin.from(TABLES.videos).select('published_at, view_count').order('created_at', { ascending: false }).limit(500)
+    ])
+
+    const { data: slotRows, error: slotError } = slotRes
     if (slotError) {
       if (isMissingTableError(slotError)) return NextResponse.json(samplePlannerPayload(weekStart))
       return handleDbError(slotError, READ_ERROR)
@@ -53,34 +85,23 @@ export async function GET(request: Request) {
         planned[row.staff_user_id][row.planned_date].push(row)
       }
     }
-
-    if (staffIds.length > 0) {
-      // 한 주에 등록되는 영상이 1000개를 넘을 수 있어 나눠서 모두 읽는다.
-      const videoRows = await selectAllPages<{ primary_owner_user_id: string; created_at: string }>(
-        (from, to) =>
-          supabaseAdmin
-            .from(TABLES.videos)
-            .select('primary_owner_user_id, created_at')
-            .in('primary_owner_user_id', staffIds)
-            .gte('created_at', kstDayStart(weekStart).toISOString())
-            .lt('created_at', kstDayEnd(weekEnd).toISOString())
-            .order('created_at', { ascending: true })
-            .range(from, to),
-        6000
-      )
-      for (const row of videoRows as { primary_owner_user_id: string; created_at: string }[]) {
-        const day = kstYmd(new Date(row.created_at))
-        if (actual[row.primary_owner_user_id] && day in actual[row.primary_owner_user_id]) {
-          actual[row.primary_owner_user_id][day] += 1
-        }
+    for (const row of videoRows) {
+      const day = kstYmd(new Date(row.created_at))
+      if (actual[row.primary_owner_user_id] && day in actual[row.primary_owner_user_id]) {
+        actual[row.primary_owner_user_id][day] += 1
       }
     }
 
-    const { data: timingRows } = await supabaseAdmin.from(TABLES.videos).select('published_at, view_count').order('created_at', { ascending: false }).limit(500)
-    const timingHint = computeTimingHint((timingRows || []) as { published_at: string | null; view_count: number | null }[])
+    let timingHint: TimingHint
+    if (timingRes) {
+      timingHint = computeTimingHint((timingRes.data || []) as { published_at: string | null; view_count: number | null }[])
+      if (!timingRes.error) timingCache = { at: Date.now(), value: timingHint }
+    } else {
+      timingHint = (timingCache as { at: number; value: TimingHint }).value
+    }
 
     const payload: PlannerPayload = { weekStart, days, staff, planned, actual, timingHint }
-    return NextResponse.json(payload)
+    return cachedJson(payload)
   } catch (e) {
     return handleRouteError(e, READ_ERROR)
   }
@@ -118,7 +139,7 @@ export async function POST(request: Request) {
       .select(SLOT_SELECT)
       .single()
     if (error || !data) return handleDbError(error, SAVE_ERROR, DUP_ERROR)
-    return NextResponse.json({ ok: true, item: data })
+    return noStoreJson({ ok: true, item: data })
   } catch (e) {
     return handleRouteError(e, SAVE_ERROR)
   }
@@ -138,7 +159,7 @@ export async function PATCH(request: Request) {
     const { data, error } = await supabaseAdmin.from(V2_TABLES.plannedSlots).update(patch).eq('id', body.id).select(SLOT_SELECT).maybeSingle()
     if (error) return handleDbError(error, SAVE_ERROR, DUP_ERROR)
     if (!data) return NextResponse.json({ error: '이미 지워진 계획이에요. 목록을 새로고침합니다.' }, { status: 404 })
-    return NextResponse.json({ ok: true, item: data })
+    return noStoreJson({ ok: true, item: data })
   } catch (e) {
     return handleRouteError(e, SAVE_ERROR)
   }
@@ -153,7 +174,7 @@ export async function DELETE(request: Request) {
     }
     const { error } = await supabaseAdmin.from(V2_TABLES.plannedSlots).delete().eq('id', id)
     if (error) return handleDbError(error, DELETE_ERROR)
-    return NextResponse.json({ ok: true })
+    return noStoreJson({ ok: true })
   } catch (e) {
     return handleRouteError(e, DELETE_ERROR)
   }

@@ -5,6 +5,7 @@
 
 import Link from 'next/link'
 import type { ReactNode } from 'react'
+import { fmtKstStamp, fmtRelative } from '@/lib/v4/format'
 import { V4_SQL_FILE } from '@/lib/v4/tables'
 
 // ------------------------------------------------------------------ 답부터 보여주는 상단 카드
@@ -122,14 +123,26 @@ export function EmptyPanel({
   )
 }
 
-export function ErrorPanel({ message, onRetry }: { message: string; onRetry?: () => void }) {
+export function ErrorPanel({ message, onRetry, status, busy }: { message: string; onRetry?: () => void; status?: number; busy?: boolean }) {
+  // 로그인이 풀린 경우(401)에는 다시 불러와도 소용없으니 로그인 화면으로 안내한다.
+  if (status === 401) {
+    return (
+      <div className="v4p-empty error" role="alert">
+        <div className="v4p-empty-title">다시 로그인해 주세요</div>
+        <p className="v4p-empty-text">로그인이 만료됐어요. 로그인하면 보던 화면으로 돌아올 수 있어요.</p>
+        <Link href="/v4/login" className="button">
+          로그인하러 가기
+        </Link>
+      </div>
+    )
+  }
   return (
     <div className="v4p-empty error" role="alert">
       <div className="v4p-empty-title">불러오지 못했어요</div>
       <p className="v4p-empty-text">{message}</p>
       {onRetry ? (
-        <button type="button" className="button secondary" onClick={onRetry}>
-          다시 불러오기
+        <button type="button" className="button secondary" onClick={onRetry} disabled={busy}>
+          {busy ? '불러오는 중…' : '다시 불러오기'}
         </button>
       ) : null}
     </div>
@@ -156,11 +169,99 @@ export function Skel({ w = '100%', h = 14 }: { w?: number | string; h?: number }
 
 export function SkelRows({ rows = 5 }: { rows?: number }) {
   return (
-    <div className="v4p-skel-rows" aria-busy="true">
+    <div className="v4p-skel-rows" aria-busy="true" aria-label="불러오는 중">
       {Array.from({ length: rows }, (_, i) => (
         <Skel key={i} h={38} />
       ))}
     </div>
+  )
+}
+
+// ---- 완성됐을 때와 같은 모양의 뼈대 (자리가 미리 잡혀 있어 데이터가 와도 화면이 밀리지 않는다)
+
+// 표 모양: 머리줄 + 행. 좁은 화면에서는 카드 높이로 바뀐다.
+export function SkelTable({ rows = 6 }: { rows?: number }) {
+  return (
+    <div className="v4p-skel-table" aria-busy="true" aria-label="불러오는 중">
+      <div className="v4p-skel-thead">
+        <Skel w="40%" h={12} />
+      </div>
+      {Array.from({ length: rows }, (_, i) => (
+        <div className="v4p-skel-trow" key={i}>
+          <Skel w={24} h={24} />
+          <div className="v4p-skel-cell">
+            <Skel w={i % 2 ? '62%' : '78%'} h={14} />
+            <Skel w="34%" h={11} />
+          </div>
+          <Skel w={64} h={14} />
+          <Skel w={64} h={14} />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+export function SkelTiles({ count = 8 }: { count?: number }) {
+  const sizes = ['xl', 'lg', 'lg', 'md', 'md', 'md', 'sm', 'sm', 'sm', 'sm', 'sm', 'sm']
+  return (
+    <div className="v4p-tiles" aria-busy="true" aria-label="불러오는 중">
+      {Array.from({ length: count }, (_, i) => (
+        <div className={`v4p-tile skel ${sizes[i] || 'sm'}`} key={i} />
+      ))}
+    </div>
+  )
+}
+
+export function SkelBars({ rows = 5 }: { rows?: number }) {
+  return (
+    <div className="v4p-bars" aria-busy="true" aria-label="불러오는 중">
+      {Array.from({ length: rows }, (_, i) => (
+        <div className="v4p-bar" key={i}>
+          <Skel w="70%" h={14} />
+          <Skel h={16} />
+          <Skel w="60%" h={14} />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+export function SkelHeat() {
+  return (
+    <div className="v4p-skel-heat" aria-busy="true" aria-label="불러오는 중">
+      <Skel h={16} w="30%" />
+      <Skel h={224} />
+    </div>
+  )
+}
+
+export function SkelCards({ count = 3 }: { count?: number }) {
+  return (
+    <div className="v4p-exp-list" aria-busy="true" aria-label="불러오는 중">
+      {Array.from({ length: count }, (_, i) => (
+        <div className="v4p-exp v4p-skel-card" key={i}>
+          <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <Skel w="45%" h={14} />
+            <Skel w="80%" h={18} />
+            <div className="v4p-ab">
+              <Skel h={64} />
+              <Skel h={64} />
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// 시각 표기: 화면에는 "3시간 전", 마우스를 올리면 정확한 한국 시간 ("9/21 (월) 14:30")
+export function TimeAgo({ iso, prefix }: { iso: string | null | undefined; prefix?: string }) {
+  if (!iso || Number.isNaN(new Date(iso).getTime())) return <>-</>
+  return (
+    <time dateTime={iso} title={fmtKstStamp(iso)}>
+      {prefix}
+      {fmtRelative(iso)}
+    </time>
   )
 }
 
@@ -255,10 +356,12 @@ export function SortHead({
 // 최근 7일 업로드 수를 막대 7개로
 export function MiniBars({ values, labels }: { values: number[]; labels?: string[] }) {
   const max = Math.max(...values, 1)
+  const label = (i: number) => labels?.[i] ?? (values.length - 1 - i === 0 ? '오늘' : `${values.length - 1 - i}일 전`)
+  const summary = values.map((v, i) => `${label(i)} ${v}개`).join(', ')
   return (
-    <div className="v4p-minibars" role="img" aria-label={`최근 7일 업로드 수: ${values.join(', ')}`}>
+    <div className="v4p-minibars" role="img" aria-label={`최근 ${values.length}일 하루 업로드 수: ${summary}`} title={`최근 ${values.length}일 하루 업로드 수 (오른쪽이 오늘)\n${summary}`}>
       {values.map((v, i) => (
-        <span key={i} className={`v4p-minibar ${v > 0 ? 'on' : ''}`} style={{ height: `${Math.max(12, (v / max) * 100)}%` }} title={`${labels?.[i] ?? `${values.length - i}일 전`} · ${v}개`} />
+        <span key={i} className={`v4p-minibar ${v > 0 ? 'on' : ''}`} style={{ height: `${Math.max(12, (v / max) * 100)}%` }} />
       ))}
     </div>
   )
@@ -271,7 +374,8 @@ export function BarRow({
   max,
   valueText,
   sub,
-  leader
+  leader,
+  exact
 }: {
   label: string
   value: number
@@ -279,18 +383,40 @@ export function BarRow({
   valueText: string
   sub?: string
   leader?: boolean
+  // 마우스를 올리면 보이는 정확한 값 (예: "1,234,567회")
+  exact?: string
 }) {
-  const w = max > 0 ? Math.max((value / max) * 100, value > 0 ? 2 : 0) : 0
+  const w = Number.isFinite(value) && max > 0 ? Math.min(100, Math.max((value / max) * 100, value > 0 ? 2 : 0)) : 0
   return (
-    <div className={`v4p-bar ${leader ? 'leader' : ''}`}>
-      <div className="v4p-bar-label" title={label}>{label}</div>
-      <div className="v4p-bar-track">
+    <div className={`v4p-bar ${leader ? 'leader' : ''}`} title={exact ? `${label} · ${exact}` : undefined}>
+      <div className="v4p-bar-label" title={label}>
+        {label}
+        {leader ? <span className="v4p-bar-flag">최고</span> : null}
+      </div>
+      <div className="v4p-bar-track" aria-hidden="true">
         <div className="v4p-bar-fill" style={{ width: `${w}%` }} />
       </div>
       <div className="v4p-bar-value">
         <strong>{valueText}</strong>
         {sub ? <span className="v4p-bar-sub">{sub}</span> : null}
       </div>
+    </div>
+  )
+}
+
+// 폼 안의 저장 실패 안내. 로그인이 풀린 경우(401)에는 로그인 화면으로 가는 링크를 함께 보여준다.
+export function FormError({ message, status }: { message: string; status?: number }) {
+  return (
+    <div className="v4p-form-error" role="alert">
+      {message}
+      {status === 401 ? (
+        <>
+          {' '}
+          <Link href="/v4/login" className="v4p-login-link">
+            다시 로그인하기
+          </Link>
+        </>
+      ) : null}
     </div>
   )
 }

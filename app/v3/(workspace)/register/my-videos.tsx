@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { DocRow, DocTable, Tag, type DocColumn } from '@/components/v3/ui'
+import { SegmentedType } from '@/components/v3/segmented'
+import { Tag } from '@/components/v3/ui'
 import { isTodayKst } from '@/lib/v3/engagement'
 import { formatDateTime, formatNumber } from '@/lib/v3/format'
 import { callMyVideo, type ContentType } from './register-api'
@@ -21,13 +22,7 @@ export type MineVideo = {
 
 type VideoPatch = { stock_name: string | null; content_type: ContentType }
 
-const COLUMNS: DocColumn[] = [
-  { key: 'time', label: '시각', width: '56px' },
-  { key: 'title', label: '영상', width: 'minmax(0, 1.8fr)' },
-  { key: 'type', label: '형식', width: '64px' },
-  { key: 'views', label: '조회수', width: '72px', align: 'right' },
-  { key: 'actions', label: '', width: '104px' }
-]
+// 표 모양(넓은 화면)과 카드 모양(좁은 화면)은 CSS(.v3-vrow)가 바꾼다. 마크업은 하나.
 
 function typeLabel(type: ContentType) {
   return type === 'shortform' ? '숏폼' : '롱폼'
@@ -41,12 +36,13 @@ function whenLabel(iso: string, today: boolean) {
 }
 
 type Handlers = {
+  stockListId: string
   onPatched: (id: string, patch: VideoPatch) => void
   onDeleted: (id: string) => void
   onNotice: (text: string, tone: 'success' | 'error') => void
 }
 
-function VideoRow({ video, today, highlight, ...handlers }: { video: MineVideo; today: boolean; highlight: boolean } & Handlers) {
+function VideoRow({ video, today, highlight, stockListId, ...handlers }: { video: MineVideo; today: boolean; highlight: boolean } & Handlers) {
   const [mode, setMode] = useState<'view' | 'edit' | 'delete'>('view')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -155,7 +151,7 @@ function VideoRow({ video, today, highlight, ...handlers }: { video: MineVideo; 
 
   if (mode === 'edit') {
     return (
-      <div className="data-table-row v3-row-editing" style={{ gridTemplateColumns: '1fr' }} onKeyDown={onKeyDown}>
+      <div className="data-table-row v3-vrow-open v3-row-editing" onKeyDown={onKeyDown}>
         <form className="v3-edit-form" onSubmit={save} noValidate>
           <div className="v3-edit-title" title={title}>{title}</div>
           <div className="v3-edit-grid">
@@ -167,6 +163,11 @@ function VideoRow({ video, today, highlight, ...handlers }: { video: MineVideo; 
                 className="input"
                 autoFocus
                 autoComplete="off"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                enterKeyHint="done"
+                list={stockListId}
                 value={stock}
                 readOnly={busy}
                 onChange={(e) => {
@@ -177,13 +178,7 @@ function VideoRow({ video, today, highlight, ...handlers }: { video: MineVideo; 
             </div>
             <div className="field">
               <span className="label" id={`v3-edit-type-${video.id}`}>형식</span>
-              <div className="v3-seg" role="group" aria-labelledby={`v3-edit-type-${video.id}`}>
-                {(['longform', 'shortform'] as const).map((t) => (
-                  <button key={t} type="button" aria-pressed={type === t} disabled={busy} onClick={() => setType(t)}>
-                    {typeLabel(t)}
-                  </button>
-                ))}
-              </div>
+              <SegmentedType value={type} onChange={setType} disabled={busy} labelledBy={`v3-edit-type-${video.id}`} />
             </div>
             <div className="field">
               <label className="label" htmlFor={`v3-edit-memo-${video.id}`}>메모</label>
@@ -191,6 +186,7 @@ function VideoRow({ video, today, highlight, ...handlers }: { video: MineVideo; 
                 id={`v3-edit-memo-${video.id}`}
                 className="input"
                 autoComplete="off"
+                spellCheck={false}
                 value={memo}
                 readOnly={busy || memoState !== 'ready'}
                 placeholder={memoState === 'loading' ? '불러오는 중…' : memoState === 'failed' ? '메모를 불러오지 못했어요 (그대로 유지돼요)' : '예: 실적 브리핑'}
@@ -214,8 +210,8 @@ function VideoRow({ video, today, highlight, ...handlers }: { video: MineVideo; 
 
   if (mode === 'delete') {
     return (
-      <div className="data-table-row v3-row-deleting" style={{ gridTemplateColumns: '1fr' }} onKeyDown={onKeyDown}>
-        <div className="v3-delete-confirm">
+      <div className="data-table-row v3-vrow-open v3-row-deleting" onKeyDown={onKeyDown}>
+        <div className="v3-delete-confirm" role="group" aria-label={`${title} 삭제 확인`}>
           <span className="v3-delete-text">
             <strong title={title}>{video.stock_name || title}</strong> 등록을 지울까요? 지우면 되돌릴 수 없어요.
           </span>
@@ -234,9 +230,9 @@ function VideoRow({ video, today, highlight, ...handlers }: { video: MineVideo; 
   }
 
   return (
-    <DocRow columns={COLUMNS} className={highlight ? 'v3-row-new' : undefined}>
-      <div className="small muted">{whenLabel(video.created_at, today)}</div>
-      <div style={{ minWidth: 0 }}>
+    <div className={`data-table-row v3-vrow ${highlight ? 'v3-row-new' : ''}`}>
+      <div className="v3-vc-time small muted">{whenLabel(video.created_at, today)}</div>
+      <div className="v3-vc-title" style={{ minWidth: 0 }}>
         {video.youtube_url ? (
           <a className="v3-link v3-cell-clip" href={video.youtube_url} target="_blank" rel="noreferrer">
             {title}
@@ -244,13 +240,18 @@ function VideoRow({ video, today, highlight, ...handlers }: { video: MineVideo; 
         ) : (
           <div className="v3-cell-clip">{title}</div>
         )}
-        {video.stock_name ? <div className="v3-cell-sub">{video.stock_name}</div> : null}
+        {video.stock_name || highlight ? (
+          <div className="v3-cell-sub">
+            {video.stock_name}
+            {highlight ? <span className="v3-tag green v3-just-added">방금 등록</span> : null}
+          </div>
+        ) : null}
       </div>
-      <div>
+      <div className="v3-vc-type">
         <Tag tone={video.content_type === 'shortform' ? 'violet' : 'blue'}>{typeLabel(video.content_type)}</Tag>
       </div>
-      <div className="data-right">{formatNumber(video.view_count)}</div>
-      <div className="v3-cell-actions">
+      <div className="v3-vc-views data-right">{formatNumber(video.view_count)}</div>
+      <div className="v3-cell-actions v3-vc-actions">
         <button ref={editBtnRef} type="button" className="v3-row-action" onClick={openEdit} aria-label={`${title} 수정`}>
           수정
         </button>
@@ -258,7 +259,7 @@ function VideoRow({ video, today, highlight, ...handlers }: { video: MineVideo; 
           삭제
         </button>
       </div>
-    </DocRow>
+    </div>
   )
 }
 
@@ -267,7 +268,8 @@ export function MyVideosList({
   highlightIds,
   onPatched,
   onDeleted,
-  onNotice
+  onNotice,
+  stockListId
 }: { videos: MineVideo[]; highlightIds: Set<string> } & Handlers) {
   const today = videos.filter((v) => isTodayKst(v.created_at))
   const earlier = videos.filter((v) => !isTodayKst(v.created_at))
@@ -275,11 +277,23 @@ export function MyVideosList({
   // 오늘 등록한 게 없으면 최근 등록 내역을 바로 보여 준다.
   const earlierOpen = showEarlier || today.length === 0
 
-  const handlers = { onPatched, onDeleted, onNotice }
+  const handlers = { onPatched, onDeleted, onNotice, stockListId }
 
   return (
     <>
-      <DocTable columns={COLUMNS} isEmpty={today.length === 0 && earlier.length === 0} empty="등록된 영상이 없습니다.">
+      <div className="data-table v3-vtable">
+        <div className="data-table-header v3-vrow v3-vhead" aria-hidden>
+          <div className="v3-vc-time">시각</div>
+          <div className="v3-vc-title">영상</div>
+          <div className="v3-vc-type">형식</div>
+          <div className="v3-vc-views data-right">조회수</div>
+          <div className="v3-vc-actions" />
+        </div>
+        {today.length === 0 && earlier.length === 0 ? (
+          <div className="data-table-row v3-vrow-open">
+            <div className="muted small">등록된 영상이 없습니다.</div>
+          </div>
+        ) : null}
         {today.map((video) => (
           <VideoRow key={video.id} video={video} today highlight={highlightIds.has(video.id)} {...handlers} />
         ))}
@@ -288,7 +302,7 @@ export function MyVideosList({
               <VideoRow key={video.id} video={video} today={false} highlight={highlightIds.has(video.id)} {...handlers} />
             ))
           : null}
-      </DocTable>
+      </div>
       {today.length > 0 && earlier.length > 0 ? (
         <button type="button" className="v3-more-toggle" onClick={() => setShowEarlier((v) => !v)} aria-expanded={showEarlier}>
           {showEarlier ? '이전 등록 접기' : `이전에 등록한 영상 ${Math.min(earlier.length, 8)}개 보기`}

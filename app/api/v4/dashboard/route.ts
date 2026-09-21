@@ -1,8 +1,9 @@
-import { NextResponse } from 'next/server'
 import { getKstDayStartIso } from '@/lib/attendance/time'
-import { KPI_COLUMNS, computeDailySeries, computeKpis, getPeriodRange, num, parsePeriod, rankVideos } from '@/lib/v4/analytics'
+import { computeDailySeries, computeKpis, getPeriodRange, num, parsePeriod, rankVideos } from '@/lib/v4/analytics'
+import { cachedJson } from '@/lib/v4/http'
+import { loadPeriodRows, loadUsersShared } from '@/lib/v4/period-rows'
 import { getSampleGoal } from '@/lib/v4/sample-data'
-import { dbError, loadUsers, loadVideos, requireV4User, splitByIso, v4ErrorResponse } from '@/lib/v4/server'
+import { dbError, loadVideos, requireV4User, splitByIso, v4ErrorResponse } from '@/lib/v4/server'
 import { V4_TABLES, isMissingTableError } from '@/lib/v4/tables'
 
 const TARGET_PER_STAFF_PER_DAY = 12
@@ -20,9 +21,10 @@ export async function GET(request: Request) {
     // 90일 화면이면 약 12,000행이므로, 기본 1000행 제한에 걸려 합계가 줄어드는 일이 없어야 한다.
     const windowStartIso = new Date(range.prevStartIso) < new Date(monthStartIso) ? range.prevStartIso : monthStartIso
     const [windowRows, feedVideos, { map: userMap, staff }, syncRow, goalResult] = await Promise.all([
-      loadVideos(supabaseAdmin, { startIso: windowStartIso, endIso: range.endIso, ownerId, columns: KPI_COLUMNS }),
+      // 랭킹·종목 등 다른 분석 화면과 같은 기간 읽기를 15초 동안 함께 쓴다.
+      loadPeriodRows(supabaseAdmin, { startIso: windowStartIso, endIso: range.endIso, ownerId }),
       loadVideos(supabaseAdmin, { ownerId, limit: 20 }),
-      loadUsers(supabaseAdmin),
+      loadUsersShared(supabaseAdmin),
       (async () => {
         let q = supabaseAdmin
           .from(V4_TABLES.videos)
@@ -99,7 +101,8 @@ export async function GET(request: Request) {
     const actualVideos = monthVideos.length
     const actualViews = monthVideos.reduce((sum, v) => sum + num(v.view_count), 0)
 
-    return NextResponse.json({
+    // 통계 새로고침(sync-stats) 직후 화면을 다시 불러오면 새 숫자가 바로 보여야 해서, 브라우저 저장은 5초만 한다.
+    return cachedJson({
       scope: isAdmin ? 'admin' : 'staff',
       period: range.days,
       range: { start: range.startYmd, end: range.endYmd },
@@ -121,7 +124,7 @@ export async function GET(request: Request) {
         teamGoal: teamGoal ? { targetVideos: num(teamGoal.target_videos), targetViews: num(teamGoal.target_views) } : null,
         sample
       }
-    })
+    }, 'private, max-age=5')
   } catch (e) {
     return v4ErrorResponse(e, '성장 대시보드 조회 실패')
   }

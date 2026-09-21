@@ -1,7 +1,6 @@
-import { NextResponse } from 'next/server'
 import { V5_TABLES } from '@/lib/v5/tables'
 import { mapRetros, RETRO_SELECT, retroPatchSchema, type RetroRow } from '@/lib/v5/retros'
-import { badRequest, forbidden, getSession, handleRouteError, isMissingTableError, missingTableResponse, notFound, readJson, uuidSchema } from '@/lib/v5/api'
+import { badRequest, forbidden, getSession, handleRouteError, isMissingTableError, jsonNoStore, missingTableResponse, notFound, readJson, uuidSchema } from '@/lib/v5/api'
 
 // 회고 내용을 다듬거나, 액션 아이템 체크박스를 토글할 때 쓴다. 관리자 전용.
 // week_label 과 kpi_snapshot 은 저장 시점 기록이라 여기서 바꾸지 않는다.
@@ -28,7 +27,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     if (!data) return notFound('회고를 찾을 수 없어요. 이미 지워졌을 수 있어요.')
 
     const [item] = await mapRetros(supabaseAdmin, [data as RetroRow])
-    return NextResponse.json({ item })
+    return jsonNoStore({ item })
   } catch (e) {
     return handleRouteError(e, '회고를 저장하지 못했어요. 잠시 뒤 다시 해 주세요.')
   }
@@ -47,7 +46,7 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
       if (isMissingTableError(error)) return missingTableResponse()
       throw error
     }
-    return NextResponse.json({ ok: true })
+    return jsonNoStore({ ok: true })
   } catch (e) {
     return handleRouteError(e, '회고를 지우지 못했어요. 잠시 뒤 다시 해 주세요.')
   }

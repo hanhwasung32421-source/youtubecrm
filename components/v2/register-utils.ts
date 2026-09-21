@@ -1,11 +1,53 @@
 // 영상 등록 화면에서 함께 쓰는 순수 함수 모음(서버 코드 없음).
 
+// 유튜브 주소처럼 보이는 조각인지: (https://)(www.|m.|music.)youtube.com/… , youtu.be/… 만 인정한다.
+// 예전에는 "YouTube"라는 단어(공유 문구의 "제목 - YouTube")까지 주소로 착각했다.
+const YT_TOKEN = /^(?:https?:\/\/)?(?:[\w-]+\.)*(?:youtube\.com|youtube-nocookie\.com|youtu\.be)(?:[/?#:]|$)/i
+const LEADING_JUNK = /^[(\[{<'"“‘「『]+/
+const TRAILING_JUNK = /[)\]}>.,;!'"”’」』]+$/
+
+function cleanToken(token: string): string {
+  return token.replace(LEADING_JUNK, '').replace(TRAILING_JUNK, '')
+}
+
+export function isYoutubeToken(token: string): boolean {
+  return YT_TOKEN.test(cleanToken(token))
+}
+
+// 글 안에서 첫 번째 유튜브 주소 조각(괄호·마침표 등 앞뒤 기호는 뗀 것). 없으면 null.
+export function findYoutubeToken(raw: string): string | null {
+  for (const t of raw.split(/\s+/)) {
+    const c = cleanToken(t)
+    if (c && YT_TOKEN.test(c)) return c
+  }
+  return null
+}
+
+export function hasYoutubeUrl(raw: string): boolean {
+  return findYoutubeToken(raw) !== null
+}
+
 // 앞뒤 공백·줄바꿈 제거, "제목 + 주소"처럼 섞여 있으면 주소 부분만, https:// 가 없으면 붙여 준다.
 export function normalizeYoutubeUrl(raw: string): string {
-  const tokens = raw.split(/\s+/).filter(Boolean)
-  if (tokens.length === 0) return ''
-  const token = tokens.find((t) => /youtu\.?be/i.test(t)) || tokens[0]
+  const token = findYoutubeToken(raw) ?? raw.split(/\s+/).map(cleanToken).find(Boolean)
+  if (!token) return ''
   return /^https?:\/\//i.test(token) ? token : `https://${token.replace(/^\/+/, '')}`
+}
+
+// 붙여넣은 글에 들어 있는 서로 다른 유튜브 영상 주소를 모두(같은 영상은 한 번만).
+export function extractYoutubeUrls(raw: string): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const t of raw.split(/\s+/)) {
+    const c = cleanToken(t)
+    if (!c || !YT_TOKEN.test(c)) continue
+    const url = normalizeYoutubeUrl(c)
+    const key = youtubeVideoId(url) || url
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(url)
+  }
+  return out
 }
 
 export function youtubeVideoId(url: string): string | null {
@@ -71,7 +113,7 @@ export function parseBulkText(text: string): ParsedBulk {
     const trimmed = rawLine.trim()
     if (!trimmed) return
     const tokens = trimmed.split(/\s+/)
-    let urlIndex = tokens.findIndex((t) => /youtu\.?be/i.test(t))
+    let urlIndex = tokens.findIndex((t) => isYoutubeToken(t))
     if (urlIndex < 0) urlIndex = tokens.findIndex((t) => /^https?:\/\//i.test(t))
     if (urlIndex < 0) urlIndex = 0
     const rawUrl = tokens[urlIndex]

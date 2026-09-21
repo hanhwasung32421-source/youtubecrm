@@ -6,6 +6,8 @@
 
 body:has(.v3-theme) {
   background: #ffffff;
+  /* 좁은 화면에서 가로 스크롤이 생기지 않게(표는 자체 상자 안에서만 스크롤) */
+  overflow-x: clip;
 }
 
 .v3-theme {
@@ -16,10 +18,14 @@ body:has(.v3-theme) {
   --line: #edece9;
   --line-strong: #ddd6cd;
   --text: #37352f;
-  --muted: #787774;
-  --primary: #3b6fe0;
-  --primary-soft: rgba(59, 111, 224, 0.1);
-  --danger: #e0574b;
+  /* 대비 4.5:1 이상 확보: 본문 12.3:1, 보조 글자 5.4:1(흰색·연회색 배경 모두), 강조 6.3:1 */
+  --muted: #66655f;
+  --primary: #2c58c8;
+  --primary-soft: rgba(44, 88, 200, 0.1);
+  --focus: #1d4ed8;
+  --field-border: #95938e;
+  --placeholder: #767571;
+  --danger: #c0392b;
   --success: #2f9e6e;
   --warning: #d9822b;
   --violet: #9b7ede;
@@ -53,8 +59,18 @@ body:has(.v3-theme) {
 .v3-theme .textarea {
   background: var(--panel);
   color: var(--text);
-  border: 1px solid var(--line);
+  border: 1px solid var(--field-border);
   border-radius: 8px;
+}
+
+.v3-theme .input::placeholder,
+.v3-theme .textarea::placeholder {
+  color: var(--placeholder);
+  opacity: 1;
+}
+
+.v3-theme .input[readonly] {
+  background: var(--bg-soft);
 }
 
 .v3-theme .input:focus,
@@ -322,8 +338,8 @@ body:has(.v3-theme) {
 }
 
 .v3-theme .v3-callout.info {
-  background: rgba(59, 111, 224, 0.06);
-  border-color: rgba(59, 111, 224, 0.2);
+  background: rgba(44, 88, 200, 0.06);
+  border-color: rgba(44, 88, 200, 0.2);
 }
 
 .v3-theme .v3-callout.warning {
@@ -469,7 +485,7 @@ body:has(.v3-theme) {
 }
 
 .v3-theme .data-table-row.v3-row-editing {
-  background: rgba(59, 111, 224, 0.05);
+  background: rgba(44, 88, 200, 0.05);
 }
 
 .v3-theme .v3-cell-main {
@@ -515,9 +531,9 @@ body:has(.v3-theme) {
   white-space: nowrap;
 }
 
-.v3-theme .v3-tag.blue { background: rgba(59, 111, 224, 0.12); color: #2c56b8; }
-.v3-theme .v3-tag.green { background: rgba(47, 158, 110, 0.14); color: #1f7a52; }
-.v3-theme .v3-tag.amber { background: rgba(217, 130, 43, 0.16); color: #a15e17; }
+.v3-theme .v3-tag.blue { background: rgba(44, 88, 200, 0.12); color: #2c56b8; }
+.v3-theme .v3-tag.green { background: rgba(47, 158, 110, 0.14); color: #176a45; }
+.v3-theme .v3-tag.amber { background: rgba(217, 130, 43, 0.16); color: #8f5313; }
 .v3-theme .v3-tag.red { background: rgba(224, 87, 75, 0.14); color: #b8392f; }
 .v3-theme .v3-tag.violet { background: rgba(155, 126, 222, 0.16); color: #6b4fc4; }
 .v3-theme .v3-tag.gray { background: rgba(55, 53, 47, 0.08); color: #5f5e5a; }
@@ -685,7 +701,7 @@ body:has(.v3-theme) {
 
 .v3-theme .v3-bar-tip {
   font-size: 11px;
-  fill: #787774;
+  fill: #66655f;
 }
 
 /* 비교용 인쇄 스타일 표 (형식 · 시리즈 효과 비교 등) */
@@ -772,7 +788,7 @@ body:has(.v3-theme) {
 .v3-theme .v3-link {
   color: var(--primary);
   text-decoration: underline;
-  text-decoration-color: rgba(59, 111, 224, 0.35);
+  text-decoration-color: rgba(44, 88, 200, 0.35);
   text-underline-offset: 3px;
 }
 
@@ -836,7 +852,7 @@ body:has(.v3-theme) {
   transform: translate(-50%, 50%);
   background: var(--primary);
   border: 2px solid #ffffff;
-  box-shadow: 0 0 0 1px rgba(59, 111, 224, 0.35);
+  box-shadow: 0 0 0 1px rgba(44, 88, 200, 0.35);
   cursor: default;
 }
 
@@ -985,22 +1001,50 @@ body:has(.v3-theme) {
   background: var(--bg-soft);
 }
 
-.v3-theme .v3-seg button {
-  border: none;
-  background: transparent;
-  color: var(--muted);
-  font: inherit;
-  font-size: 14px;
-  padding: 8px 14px;
-  border-radius: 6px;
+.v3-theme .v3-seg-opt {
+  position: relative;
+  display: block;
   cursor: pointer;
 }
 
-.v3-theme .v3-seg button[aria-pressed="true"] {
+.v3-theme .v3-seg-opt input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.v3-theme .v3-seg-opt span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 0 16px;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.v3-theme .v3-seg-opt input:checked + span {
   background: var(--panel);
   color: var(--primary);
-  font-weight: 600;
-  box-shadow: var(--shadow);
+  font-weight: 700;
+  box-shadow: var(--shadow), 0 0 0 1px var(--primary);
+}
+
+.v3-theme .v3-seg-opt input:focus-visible + span {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.v3-theme .v3-seg-opt input:disabled,
+.v3-theme .v3-seg-opt input:disabled + span {
+  cursor: not-allowed;
+  opacity: 0.65;
 }
 
 .v3-theme .v3-reg-chips {
@@ -1070,17 +1114,14 @@ body:has(.v3-theme) {
   font-size: 13px;
 }
 
-.v3-theme .v3-tag-button:focus-visible,
-.v3-theme .v3-seg button:focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: 1px;
-}
-
 @media (max-width: 720px) {
   .v3-theme .v3-reg-row {
     grid-template-columns: 1fr;
   }
-  .v3-theme .v3-seg button {
+  .v3-theme .v3-seg {
+    display: flex;
+  }
+  .v3-theme .v3-seg-opt {
     flex: 1;
   }
   .v3-theme .v3-reg-row .button {
@@ -1106,14 +1147,6 @@ body:has(.v3-theme) {
 
 .v3-theme .v3-text-button:hover {
   color: var(--primary);
-}
-
-.v3-theme .v3-text-button:focus-visible,
-.v3-theme .v3-row-action:focus-visible,
-.v3-theme .v3-icon-button:focus-visible,
-.v3-theme .v3-more-toggle:focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: 1px;
 }
 
 .v3-theme .v3-reg-modelink {
@@ -1242,7 +1275,7 @@ body:has(.v3-theme) {
 }
 
 .v3-theme .data-table-row.v3-row-new {
-  background: rgba(59, 111, 224, 0.1);
+  background: rgba(44, 88, 200, 0.1);
 }
 
 .v3-theme .data-table-row {
@@ -1306,8 +1339,9 @@ body:has(.v3-theme) {
   font-size: 12px;
 }
 
-.v3-theme .v3-edit-grid .v3-seg button {
-  padding: 6px 12px;
+.v3-theme .v3-edit-grid .v3-seg-opt span {
+  min-height: 34px;
+  padding: 0 12px;
   font-size: 13px;
 }
 
@@ -1380,5 +1414,794 @@ body:has(.v3-theme) {
 @media (max-width: 720px) {
   .v3-theme .v3-edit-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+/* ═════════════════════════════════════════════════════════════
+   3차: 좁은 화면 · 빠른 체감 · 키보드/스크린리더 · 로그인
+   ═════════════════════════════════════════════════════════════ */
+
+/* 숨김 속성은 항상 이긴다(display:grid 같은 규칙이 있어도) */
+.v3-theme [hidden] {
+  display: none !important;
+}
+
+.v3-theme .v3-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── 키보드 포커스: 모든 눌러지는 요소에 또렷한 테두리 ── */
+.v3-theme :is(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.v3-theme .input:focus-visible,
+.v3-theme .select:focus-visible,
+.v3-theme .textarea:focus-visible {
+  outline-offset: 0;
+  border-color: var(--focus);
+}
+
+.v3-theme #v3-main:focus,
+.v3-theme #v3-main:focus-visible {
+  outline: none;
+}
+
+.v3-theme .v3-tree-link:focus-visible,
+.v3-theme .v3-tag-button:focus-visible {
+  outline-offset: 1px;
+}
+
+/* 본문으로 바로가기: 키보드로 Tab을 처음 눌렀을 때만 보인다 */
+.v3-theme .v3-skip {
+  position: fixed;
+  left: 12px;
+  top: -80px;
+  z-index: 200;
+  padding: 10px 16px;
+  border-radius: 8px;
+  border: 2px solid var(--focus);
+  background: var(--panel);
+  color: var(--primary);
+  font-weight: 700;
+  font-size: 14px;
+  text-decoration: none;
+}
+
+.v3-theme .v3-skip:focus {
+  top: 12px;
+}
+
+/* ── 회색 뼈대(불러오는 동안): 반짝임은 움직임 줄이기 설정에서 꺼진다 ── */
+.v3-theme .v3-skel {
+  display: block;
+  max-width: 100%;
+  background: linear-gradient(90deg, #efeeeb 25%, #f8f7f5 40%, #efeeeb 60%);
+  background-size: 300% 100%;
+  border-radius: 6px;
+  animation: v3-shimmer 1.5s ease-in-out infinite;
+}
+
+@keyframes v3-shimmer {
+  0% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0 50%;
+  }
+}
+
+.v3-theme .v3-skel-page {
+  display: grid;
+  gap: 20px;
+}
+
+.v3-theme .v3-skel-head {
+  padding: 8px 0 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.v3-theme .v3-nav-skel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 8px;
+  width: 100%;
+}
+
+.v3-theme .v3-skel-rows {
+  display: grid;
+}
+
+.v3-theme .v3-skel-row {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) 64px;
+  gap: 14px;
+  align-items: center;
+  min-height: 56px;
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.v3-theme .v3-skel-row:last-child {
+  border-bottom: none;
+}
+
+.v3-theme .v3-skel-stack {
+  display: grid;
+  gap: 8px;
+}
+
+.v3-theme .v3-entry-skel {
+  width: 100%;
+  max-width: 520px;
+  padding: 32px 20px;
+}
+
+.v3-theme .v3-reg-preview {
+  min-height: 44px;
+}
+
+/* ── 로그아웃 · 계정 영역 ── */
+.v3-theme .v3-sidebar-account {
+  min-height: 92px; /* 이름이 들어와도 아래가 밀리지 않게 */
+}
+
+.v3-theme .v3-account-who {
+  display: grid;
+  gap: 2px;
+  font-size: 13px;
+  min-width: 0;
+}
+
+.v3-theme .v3-account-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.v3-theme .v3-account-role {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.v3-theme .v3-head-actions {
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.v3-theme .v3-nav {
+  position: relative;
+}
+
+/* ── 알림(토스트): 좁은 화면에서도 잘리지 않게, 글자 대비 확보 ── */
+.v3-theme .app-toast {
+  white-space: normal;
+  max-width: calc(100vw - 32px);
+  text-align: center;
+  line-height: 1.5;
+  border-radius: 14px;
+}
+
+.v3-theme .app-toast.success {
+  background: #176a45;
+}
+
+.v3-theme .app-toast.error {
+  background: #b8392f;
+}
+
+.v3-theme .button.danger {
+  background: var(--danger);
+}
+
+.v3-theme .button:disabled {
+  opacity: 1;
+  background: #d9d7d3;
+  border-color: #d9d7d3;
+  color: #5f5e5a;
+}
+
+.v3-theme .button.secondary:disabled {
+  background: var(--bg-soft);
+  border-color: var(--line);
+}
+
+.v3-theme .button.v3-submit,
+.v3-theme .button.v3-reg-submit {
+  min-height: 44px;
+}
+
+/* 비어 있는 안내 영역(스크린리더용으로 항상 존재)이 화면에서 간격을 차지하지 않게 */
+.v3-theme .v3-reg > :is([role="alert"], [aria-live]):empty:not(.v3-reg-hint) {
+  margin-top: -12px;
+}
+
+.v3-theme .v3-auth .form-stack > :is([role="alert"], [role="status"]):empty {
+  margin-top: -16px;
+}
+
+.v3-theme .v3-reg,
+.v3-theme .v3-bulk,
+.v3-theme .v3-reg-row {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 721px) {
+  .v3-theme .v3-reg-row {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+}
+
+/* ── 로딩 스피너(버튼 안) ── */
+.v3-theme .v3-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  display: inline-block;
+  animation: v3-spin 0.8s linear infinite;
+}
+
+@keyframes v3-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── 등록 화면 보조 ── */
+.v3-theme .v3-reg-offer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(44, 88, 200, 0.06);
+  border: 1px solid rgba(44, 88, 200, 0.2);
+  font-size: 13px;
+}
+
+.v3-theme .v3-just-added {
+  margin-left: 6px;
+}
+
+.v3-theme .v3-icon-button {
+  width: 32px;
+  height: 32px;
+}
+
+/* ── 비밀번호 칸 · 로그인 ── */
+.v3-theme .v3-pw {
+  position: relative;
+}
+
+.v3-theme .v3-pw .input {
+  padding-right: 72px;
+}
+
+.v3-theme .v3-pw-toggle {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  bottom: 4px;
+  min-width: 56px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--primary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.v3-theme .v3-pw-toggle:hover {
+  background: var(--primary-soft);
+}
+
+.v3-theme .v3-caps {
+  font-size: 12px;
+  color: #8a4f12;
+  line-height: 1.5;
+}
+
+.v3-theme .v3-caps:empty {
+  margin-top: -8px; /* 비어 있을 때는 간격도 없앤다 */
+}
+
+.v3-theme .v3-auth .input,
+.v3-theme .v3-auth .button {
+  min-height: 44px;
+}
+
+.v3-theme .v3-auth .input {
+  font-size: 16px; /* 휴대폰에서 칸을 누를 때 화면이 확대되지 않게 */
+}
+
+.v3-theme .v3-auth .message-error,
+.v3-theme .v3-auth .message-success {
+  padding: 10px 12px;
+}
+
+/* ═════════════ 좁은 화면(1100px 이하): 사이드바 → 위쪽 한 줄 메뉴 ═════════════ */
+@media (max-width: 1100px) {
+  .v3-theme .workspace {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+
+  .v3-theme .content-area {
+    max-width: none;
+  }
+
+  .v3-theme .sidebar-section.v3-side {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "brand account"
+      "nav nav";
+    gap: 8px 12px;
+    align-items: center;
+    padding: 10px 12px 8px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+  }
+
+  .v3-theme .v3-sidebar-brand {
+    grid-area: brand;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0 8px;
+    padding: 0;
+  }
+
+  .v3-theme .v3-sidebar-account {
+    grid-area: account;
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    border-top: none;
+  }
+
+  .v3-theme .v3-account-who {
+    text-align: right;
+    max-width: 120px;
+  }
+
+  .v3-theme .v3-sidebar-account .button.v3-logout {
+    min-height: 44px;
+    padding: 0 14px;
+    white-space: nowrap;
+  }
+
+  .v3-theme .v3-nav {
+    grid-area: nav;
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 8px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    scrollbar-width: thin;
+    padding: 2px 2px 8px;
+  }
+
+  .v3-theme .v3-nav-skel {
+    flex-direction: row;
+    gap: 8px;
+    padding: 0;
+  }
+
+  .v3-theme .v3-nav-skel .v3-skel {
+    flex: none;
+    width: 96px !important;
+    height: 44px !important;
+    border-radius: 999px;
+  }
+
+  .v3-theme .v3-tree-group {
+    display: contents;
+  }
+
+  .v3-theme .v3-tree-caption {
+    display: none;
+  }
+
+  .v3-theme .v3-tree-link {
+    flex: none;
+    min-height: 44px;
+    padding: 0 16px;
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
+    background: var(--panel);
+    white-space: nowrap;
+    scroll-snap-align: start;
+  }
+
+  .v3-theme .v3-tree-link::before {
+    display: none;
+  }
+
+  .v3-theme .v3-tree-link.active {
+    border-color: var(--primary);
+    background: var(--primary-soft);
+  }
+
+  .v3-theme .content-area {
+    gap: 22px;
+  }
+}
+
+/* ═════════════ 휴대폰·좁은 창(720px 이하) ═════════════ */
+@media (max-width: 720px) {
+  .v3-theme .auth-wrap {
+    margin-top: 16px;
+  }
+
+  .v3-theme .page-title {
+    font-size: 22px;
+  }
+
+  .v3-theme .v3-page-icon {
+    font-size: 20px;
+    margin-right: 8px;
+  }
+
+  .v3-theme .document-head {
+    padding-bottom: 14px;
+  }
+
+  .v3-theme .v3-head-actions {
+    flex-shrink: 1;
+  }
+
+  .v3-theme .v3-section-title {
+    font-size: 18px;
+  }
+
+  .v3-theme .sidebar-section.v3-side {
+    padding: 8px 10px 6px;
+  }
+
+  .v3-theme .v3-sidebar-brand-sub {
+    display: none;
+  }
+
+  .v3-theme .v3-account-role {
+    display: none;
+  }
+
+  /* 눌러야 하는 것은 모두 44px 이상, 글자는 16px(칸을 누를 때 확대 방지) */
+  .v3-theme .v3-reg .input,
+  .v3-theme .v3-bulk .input,
+  .v3-theme .v3-bulk .select,
+  .v3-theme .v3-edit-form .input,
+  .v3-theme .v3-reg .button,
+  .v3-theme .v3-bulk .button,
+  .v3-theme .v3-edit-actions .button {
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  .v3-theme .v3-bulk .data-table-row .input,
+  .v3-theme .v3-bulk .data-table-row .select {
+    padding: 8px 10px;
+    font-size: 16px;
+  }
+
+  .v3-theme .v3-seg-opt span {
+    min-height: 44px;
+    font-size: 15px;
+  }
+
+  .v3-theme .v3-edit-grid .v3-seg-opt span {
+    min-height: 44px;
+    font-size: 15px;
+  }
+
+  .v3-theme .v3-tag-button {
+    min-height: 44px;
+    padding: 0 16px;
+    font-size: 14px;
+    border-radius: 999px;
+  }
+
+  .v3-theme .v3-reg-chips {
+    gap: 8px;
+  }
+
+  .v3-theme .v3-text-button,
+  .v3-theme .v3-more-toggle,
+  .v3-theme .v3-reg-more summary {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    font-size: 14px;
+  }
+
+  .v3-theme .v3-row-action {
+    min-width: 44px;
+    min-height: 44px;
+    font-size: 14px;
+  }
+
+  .v3-theme .v3-icon-button {
+    width: 44px;
+    height: 44px;
+    font-size: 22px;
+  }
+
+  .v3-theme .v3-cell-actions .button,
+  .v3-theme .button.xs {
+    font-size: 14px;
+    padding: 0 14px;
+  }
+
+  .v3-theme .v3-edit-actions {
+    gap: 10px;
+  }
+
+  .v3-theme .v3-pw-toggle {
+    min-width: 60px;
+  }
+}
+
+/* ── 내가 등록한 영상 목록: 넓은 화면 = 표, 좁은 화면 = 카드 ── */
+.v3-theme .v3-vtable .data-table-header,
+.v3-theme .v3-vtable .data-table-row,
+.v3-theme .v3-btable .data-table-header,
+.v3-theme .v3-btable .data-table-row {
+  min-width: 0; /* 표 폭을 강제로 넓히지 않는다 */
+}
+
+.v3-theme .v3-vrow {
+  grid-template-columns: 56px minmax(0, 1.8fr) 64px 72px 104px;
+}
+
+.v3-theme .v3-vrow-open {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.v3-theme .v3-vc-views {
+  text-align: right;
+}
+
+.v3-theme .v3-vrow .v3-cell-actions {
+  flex-wrap: nowrap;
+}
+
+/* ── 여러 개 붙여넣기 표 ── */
+.v3-theme .v3-brow {
+  grid-template-columns: 32px minmax(0, 1.3fr) minmax(0, 1fr) 96px minmax(0, 1.1fr) 32px;
+}
+
+.v3-theme .v3-brow-invalid {
+  grid-template-columns: 32px minmax(0, 3.3fr) minmax(0, 1.1fr) 32px;
+}
+
+.v3-theme .v3-brow-invalid .v3-bc-raw {
+  grid-column: 2;
+}
+
+.v3-theme .v3-brow-invalid .v3-bc-state {
+  grid-column: 3;
+}
+
+.v3-theme .v3-bc-state {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+}
+
+@media (max-width: 720px) {
+  .v3-theme .v3-vhead,
+  .v3-theme .v3-bhead {
+    display: none;
+  }
+
+  .v3-theme .v3-vtable,
+  .v3-theme .v3-btable {
+    overflow-x: visible;
+  }
+
+  /* 영상 카드: 제목 · 형식 / 시각 · 조회수 · 수정·삭제 */
+  .v3-theme .v3-vrow {
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "title title title type"
+      "time views . actions";
+    gap: 6px 12px;
+    padding: 12px 14px;
+  }
+
+  .v3-theme .v3-vc-title {
+    grid-area: title;
+  }
+
+  .v3-theme .v3-vc-type {
+    grid-area: type;
+  }
+
+  .v3-theme .v3-vc-time {
+    grid-area: time;
+  }
+
+  .v3-theme .v3-vc-views {
+    grid-area: views;
+    text-align: left;
+  }
+
+  .v3-theme .v3-vc-views::before {
+    content: "조회 ";
+    color: var(--muted);
+  }
+
+  .v3-theme .v3-vc-actions {
+    grid-area: actions;
+  }
+
+  .v3-theme .v3-vc-time,
+  .v3-theme .v3-vc-views {
+    align-self: center;
+    font-size: 13px;
+    color: var(--muted);
+  }
+
+  .v3-theme .v3-vrow .v3-cell-clip {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    line-height: 1.45;
+  }
+
+  /* 여러 개 붙여넣기 카드: 번호·주소·빼기 / 종목·형식 / 상태 */
+  .v3-theme .v3-brow {
+    grid-template-columns: 28px minmax(0, 1fr) 112px 44px;
+    grid-template-areas:
+      "no url url remove"
+      "stock stock type type"
+      "state state state state";
+    gap: 8px 10px;
+    padding: 12px 14px;
+  }
+
+  .v3-theme .v3-brow .v3-bc-no {
+    grid-area: no;
+  }
+
+  .v3-theme .v3-brow .v3-bc-url {
+    grid-area: url;
+  }
+
+  .v3-theme .v3-brow .v3-bc-stock {
+    grid-area: stock;
+  }
+
+  .v3-theme .v3-brow .v3-bc-type {
+    grid-area: type;
+  }
+
+  .v3-theme .v3-brow .v3-bc-state {
+    grid-area: state;
+  }
+
+  .v3-theme .v3-brow .v3-bc-remove {
+    grid-area: remove;
+    justify-self: end;
+  }
+
+  .v3-theme .v3-brow-invalid {
+    grid-template-columns: 28px minmax(0, 1fr);
+    grid-template-areas:
+      "no raw"
+      "state state";
+  }
+
+  .v3-theme .v3-brow-invalid .v3-bc-raw {
+    grid-area: raw;
+    grid-column: auto;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .v3-theme .v3-brow-invalid .v3-bc-state {
+    grid-area: state;
+    grid-column: auto;
+  }
+
+  .v3-theme .v3-bc-url {
+    align-self: center;
+  }
+
+  .v3-theme .v3-bulk-actions {
+    align-items: stretch;
+  }
+
+  .v3-theme .v3-bulk-actions .row {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .v3-theme .v3-bulk-actions .button {
+    flex: 1 1 auto;
+  }
+
+  .v3-theme .v3-delete-confirm {
+    align-items: stretch;
+  }
+}
+
+/* 아주 좁은 화면(360px 안팎)에서 넘치지 않게 */
+@media (max-width: 400px) {
+  .v3-theme .v3-brow {
+    grid-template-columns: 24px minmax(0, 1fr) 104px 44px;
+    padding: 12px 10px;
+  }
+
+  .v3-theme .v3-vrow {
+    padding: 12px 10px;
+  }
+
+  .v3-theme .v3-reg-status {
+    align-items: flex-start;
+  }
+}
+
+/* ── 움직임 줄이기: 반짝임·강조 전환·회전을 모두 멈춘다 ── */
+@media (prefers-reduced-motion: reduce) {
+  .v3-theme *,
+  .v3-theme *::before,
+  .v3-theme *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .v3-theme .v3-skel {
+    background: #efeeeb;
+  }
+
+  .v3-theme .v3-spinner {
+    animation: none;
+    border-right-color: currentColor;
+    opacity: 0.6;
+  }
+
+  .v3-theme .button:hover {
+    transform: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .v3-theme .v3-seg-opt input:checked + span {
+    outline: 2px solid Highlight;
+  }
+}
+
+@media print {
+  .v3-theme .v3-skip {
+    display: none !important;
   }
 }

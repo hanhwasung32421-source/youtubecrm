@@ -1,8 +1,9 @@
 'use client'
 
 import { Fragment, useEffect, useRef, useState } from 'react'
-import { Badge } from '@/components/v5/widget'
+import { Badge, Skeleton, SkeletonRegion } from '@/components/v5/widget'
 import { CONTENT_TYPE_LABEL, formatKstWhen, friendlyError, kstYmd, type ContentType } from '@/components/v5/register-utils'
+import { SegmentedChoice } from '@/components/v5/segmented'
 import { authedFetchJson } from '@/lib/session/authed-fetch'
 
 export type MineVideo = {
@@ -143,22 +144,25 @@ export function MyVideosTable({
   const colCount = isAdmin ? 9 : 8
 
   return (
-    <div className="panel v5-table-wrap" style={{ padding: 0 }}>
-      <table className="v5-table compact">
-        <thead>
-          <tr>
-            <th>등록 시각</th>
-            <th>종목</th>
-            <th>제목</th>
-            <th>형식</th>
-            {isAdmin ? <th>등록자</th> : null}
-            <th className="num">조회수</th>
-            <th className="num">좋아요</th>
-            <th className="num">댓글</th>
-            <th />
+    <div className="panel v5-table-wrap v5-mv" style={{ padding: 0 }}>
+      {/* 좁은 화면에서는 CSS 가 각 줄을 카드로 바꾼다. 표의 의미는 role 로 그대로 유지한다. */}
+      <table className="v5-table compact" role="table" aria-label={isAdmin ? '등록된 영상 전체' : '내가 등록한 영상'}>
+        <thead role="rowgroup">
+          <tr role="row">
+            <th role="columnheader">등록 시각</th>
+            <th role="columnheader">종목</th>
+            <th role="columnheader">제목</th>
+            <th role="columnheader">형식</th>
+            {isAdmin ? <th role="columnheader">등록자</th> : null}
+            <th role="columnheader" className="num">조회수</th>
+            <th role="columnheader" className="num">좋아요</th>
+            <th role="columnheader" className="num">댓글</th>
+            <th role="columnheader">
+              <span className="v5-sr-only">작업</span>
+            </th>
           </tr>
         </thead>
-        <tbody>
+        <tbody role="rowgroup">
           {items.map((v, i) => {
             const today1 = isToday(v)
             const prevToday = i > 0 ? isToday(items[i - 1]) : null
@@ -168,27 +172,27 @@ export function MyVideosTable({
             return (
               <Fragment key={v.id}>
                 {header ? (
-                  <tr className="v5-group-row">
-                    <td colSpan={colCount}>{header}</td>
+                  <tr className="v5-group-row" role="row">
+                    <td colSpan={colCount} role="cell">{header}</td>
                   </tr>
                 ) : null}
-                <tr className={highlightIds.has(v.id) ? 'is-new' : ''}>
-                  <td className="small muted" style={{ whiteSpace: 'nowrap' }}>
+                <tr className={`v5-mv-row ${highlightIds.has(v.id) ? 'is-new' : ''}`} role="row">
+                  <td className="small muted c-when" role="cell" style={{ whiteSpace: 'nowrap' }}>
                     {formatKstWhen(v.created_at)}
                   </td>
-                  <td style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>{v.stock_name}</td>
-                  <td className="v5-title-cell" title={v.title || undefined}>
+                  <td className="c-stock" role="cell" style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>{v.stock_name}</td>
+                  <td className="v5-title-cell c-title" role="cell" title={v.title || undefined}>
                     {v.title || <span className="muted">제목 수집 전</span>}
                     {v.content_category ? <span className="v5-memo"> · {v.content_category}</span> : null}
                   </td>
-                  <td>
+                  <td className="c-type" role="cell">
                     <Badge tone="plain">{CONTENT_TYPE_LABEL[v.content_type] || v.content_type}</Badge>
                   </td>
-                  {isAdmin ? <td className="small muted" style={{ whiteSpace: 'nowrap' }}>{v.owner_name || '-'}</td> : null}
-                  <td className="num">{num(v.view_count)}</td>
-                  <td className="num">{num(v.like_count)}</td>
-                  <td className="num">{num(v.comment_count)}</td>
-                  <td className="v5-actions-cell">
+                  {isAdmin ? <td className="small muted c-owner" role="cell" data-label="등록자" style={{ whiteSpace: 'nowrap' }}>{v.owner_name || '-'}</td> : null}
+                  <td className="num c-views" role="cell" data-label="조회수">{num(v.view_count)}</td>
+                  <td className="num c-likes" role="cell" data-label="좋아요">{num(v.like_count)}</td>
+                  <td className="num c-comments" role="cell" data-label="댓글">{num(v.comment_count)}</td>
+                  <td className="v5-actions-cell c-actions" role="cell">
                     {arming ? (
                       <span
                         className="v5-confirm-inline"
@@ -206,16 +210,17 @@ export function MyVideosTable({
                       </span>
                     ) : (
                       <span className="v5-actions">
-                        <a className="v5-link-cell" href={v.youtube_url} target="_blank" rel="noreferrer">
+                        <a className="v5-link-cell" href={v.youtube_url} target="_blank" rel="noreferrer" aria-label={`${v.stock_name} 영상 열기 (새 창)`}>
                           열기
                         </a>
-                        <button className="button ghost xs" type="button" disabled={busy} onClick={() => startEdit(v)}>
+                        <button className="button ghost xs" type="button" disabled={busy} aria-label={`${v.stock_name} 수정`} onClick={() => startEdit(v)}>
                           수정
                         </button>
                         <button
                           className="button ghost xs v5-danger-text"
                           type="button"
                           disabled={busy}
+                          aria-label={`${v.stock_name} 삭제`}
                           onClick={() => {
                             setEditingId(null)
                             setDeleteError(null)
@@ -226,12 +231,12 @@ export function MyVideosTable({
                         </button>
                       </span>
                     )}
-                    {deleteError?.id === v.id ? <div className="v5-bulk-err">{deleteError.message}</div> : null}
+                    {deleteError?.id === v.id ? <div className="v5-bulk-err" role="alert">{deleteError.message}</div> : null}
                   </td>
                 </tr>
                 {editing ? (
-                  <tr className="v5-edit-row">
-                    <td colSpan={colCount}>
+                  <tr className="v5-edit-row" role="row">
+                    <td colSpan={colCount} role="cell">
                       <div
                         className="v5-editor"
                         onKeyDown={(e) => {
@@ -253,27 +258,24 @@ export function MyVideosTable({
                             ref={stockInputRef}
                             className="input"
                             autoComplete="off"
+                            spellCheck={false}
                             value={draft.stock}
                             disabled={saving}
                             onChange={(e) => setDraft((d) => ({ ...d, stock: e.target.value }))}
                           />
                         </div>
                         <div className="field">
-                          <span className="label">형식</span>
-                          <div className="v5-type-toggle" role="group" aria-label="영상 형식">
-                            {(['longform', 'shortform'] as const).map((t) => (
-                              <button
-                                key={t}
-                                type="button"
-                                className={draft.type === t ? 'active' : ''}
-                                aria-pressed={draft.type === t}
-                                disabled={saving}
-                                onClick={() => setDraft((d) => ({ ...d, type: t }))}
-                              >
-                                {CONTENT_TYPE_LABEL[t]}
-                              </button>
-                            ))}
-                          </div>
+                          <span className="label" aria-hidden="true">형식</span>
+                          <SegmentedChoice
+                            label="영상 형식"
+                            value={draft.type}
+                            disabled={saving}
+                            onChange={(t) => setDraft((d) => ({ ...d, type: t }))}
+                            options={[
+                              { value: 'longform', label: CONTENT_TYPE_LABEL.longform },
+                              { value: 'shortform', label: CONTENT_TYPE_LABEL.shortform }
+                            ]}
+                          />
                         </div>
                         <div className="field">
                           <label className="label" htmlFor={`v5-edit-memo-${v.id}`}>
@@ -312,5 +314,22 @@ export function MyVideosTable({
         </tbody>
       </table>
     </div>
+  )
+}
+
+// 목록을 불러오는 동안 보여 주는 자리표시. 실제 표/카드와 비슷한 높이로 잡아 화면이 덜 흔들린다.
+export function MyVideosSkeleton({ rows = 5 }: { rows?: number }) {
+  return (
+    <SkeletonRegion label="영상 목록을 불러오는 중" className="panel v5-mv-skel">
+      {Array.from({ length: rows }, (_, i) => (
+        <div className="v5-mv-skel-row" key={i}>
+          <Skeleton width={56} height={13} />
+          <Skeleton width={72} height={15} />
+          <Skeleton height={13} className="grow" />
+          <Skeleton width={44} height={22} radius={999} />
+          <Skeleton width={48} height={13} className="stat" />
+        </div>
+      ))}
+    </SkeletonRegion>
   )
 }

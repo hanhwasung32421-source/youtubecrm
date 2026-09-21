@@ -1,7 +1,6 @@
-import { NextResponse } from 'next/server'
 import { extractYoutubeVideoId } from '@/lib/youtube/api'
 import { isoDaysAgo, type VideoLite } from '@/lib/v3/engagement'
-import { ApiFail, apiError, authenticate, isUuid, loadActiveYoutubeApiKey, loadScopedVideos, loadVideosByIds, readJson, requireUuid } from '@/lib/v3/server'
+import { ApiFail, apiError, authenticate, isUuid, loadActiveYoutubeApiKey, loadScopedVideos, loadVideosByIds, noStoreJson, readJson, requireUuid } from '@/lib/v3/server'
 import { SHARED_TABLES } from '@/lib/v3/tables'
 import { fetchYoutubeStatsBatch } from '@/lib/v3/youtube-stats'
 
@@ -57,7 +56,7 @@ export async function POST(request: Request) {
 
     const results: ResultRow[] = []
     if (targets.length === 0) {
-      return NextResponse.json({ updated: 0, total: 0, skipped: 0, remaining: 0, results })
+      return noStoreJson({ updated: 0, total: 0, skipped: 0, remaining: 0, results })
     }
 
     // 1) 바로 직전(5분 안)에 이미 기록한 영상은 건너뛴다.
@@ -137,7 +136,7 @@ export async function POST(request: Request) {
       )
     }
 
-    return NextResponse.json({
+    return noStoreJson({
       updated: results.filter((r) => r.ok && !r.skipped).length,
       total: results.length,
       skipped: results.filter((r) => r.skipped).length,

@@ -1,17 +1,18 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { PageHeader } from '@/components/v4/app-shell'
 import { useV4Me } from '@/components/v4/me-context'
 import { Toast, useToast } from '@/components/toast'
 import { getKstYmd } from '@/lib/attendance/time'
 import { v4Fetch } from '@/lib/v4/client'
+import { useV4Query } from '@/lib/v4/use-v4-query'
 import { DEFAULT_METRIC } from '@/lib/v4/experiment-consts'
 import { useStoredState } from '@/lib/v4/use-stored-state'
 import type { ExperimentItem } from '@/lib/v4/sample-data'
 import type { VideoOption } from '@/lib/v4/experiments'
-import { Badge, Card, EmptyPanel, ErrorPanel, Hero, Kpi, KpiRow, SampleNote, Seg, SkelRows } from '@/lib/v4/analysis-ui'
-import { fmtDateKst, fmtNumber } from '@/lib/v4/format'
+import { Badge, Card, EmptyPanel, ErrorPanel, Hero, Kpi, KpiRow, SampleNote, Seg, SkelCards, TimeAgo } from '@/lib/v4/analysis-ui'
+import { fmtKstStamp, fmtNumberOr, fmtYmdKo } from '@/lib/v4/format'
 import { ExperimentForm } from './experiment-form'
 import { ResultRecorder } from './result-recorder'
 import '../pages.css'
@@ -52,8 +53,8 @@ function sortItems(items: ExperimentItem[]) {
 export default function ExperimentsPage() {
   const { me, isAdmin } = useV4Me()
   const { toast, showSuccess, showError } = useToast()
-  const [data, setData] = useState<ExperimentsResponse | null>(null)
-  const [loadError, setLoadError] = useState('')
+  const showErrorRef = useRef(showError)
+  showErrorRef.current = showError
   const [formMode, setFormMode] = useState<'closed' | 'new' | { edit: string }>('closed')
   const [recordId, setRecordId] = useState<string | null>(null)
   const [confirmId, setConfirmId] = useState<string | null>(null)
@@ -64,24 +65,25 @@ export default function ExperimentsPage() {
   const formRef = useRef<HTMLDivElement | null>(null)
   const autoOpened = useRef(false)
   const hasDataRef = useRef(false)
+  const removingRef = useRef(false)
+  const aliveRef = useRef(true)
 
-  const load = useCallback(async () => {
-    const result = await v4Fetch<ExperimentsResponse>('/api/v4/experiments', {}, '실험 목록을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.')
-    if (!result.ok) {
-      setLoadError(result.message)
-      // 이미 목록이 보이는 중이면 화면은 그대로 두고 알림만 띄운다.
-      if (hasDataRef.current) showError(result.message)
-      return
+  // 옛 목록을 먼저 보여주고 뒤에서 새로 받는다. 화면을 떠나면 요청이 취소된다.
+  const { data, error: loadError, status: loadStatus, fetching, reload, mutate } = useV4Query<ExperimentsResponse>('/api/v4/experiments', {
+    fallback: '실험 목록을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.',
+    // 이미 목록이 보이는 중이면 화면은 그대로 두고 알림만 띄운다.
+    onError: (message) => {
+      if (hasDataRef.current) showErrorRef.current(message)
     }
-    setLoadError('')
-    hasDataRef.current = true
-    setData(result.data)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  })
+  hasDataRef.current = data !== null
 
   useEffect(() => {
-    void load()
-  }, [load])
+    aliveRef.current = true
+    return () => {
+      aliveRef.current = false
+    }
+  }, [])
 
   // 처음 들어왔는데 실험이 하나도 없으면 등록 폼을 바로 펼쳐 둔다.
   useEffect(() => {
@@ -120,7 +122,7 @@ export default function ExperimentsPage() {
 
   // ---- 화면 상태만 바꾸는 도우미: 서버가 돌려준 실험으로 목록을 바로 갱신한다 (다시 불러오지 않아 화면이 튀지 않는다)
   const applyItem = (item: ExperimentItem) => {
-    setData((prev) => (prev ? { ...prev, items: sortItems([item, ...prev.items.filter((i) => i.id !== item.id)]) } : prev))
+    mutate((prev) => ({ ...prev, items: sortItems([item, ...prev.items.filter((i) => i.id !== item.id)]) }))
     setFlashId(item.id)
     window.setTimeout(() => setFlashId((cur) => (cur === item.id ? null : cur)), 1500)
   }
@@ -151,16 +153,20 @@ export default function ExperimentsPage() {
   }
 
   const remove = async (item: ExperimentItem) => {
+    if (removingRef.current) return // 더블 클릭으로 두 번 지우지 않는다
+    removingRef.current = true
     setDeletingId(item.id)
     setRowError((prev) => ({ ...prev, [item.id]: '' }))
     const result = await v4Fetch<{ ok: boolean }>(`/api/v4/experiments/${item.id}`, { method: 'DELETE' }, '삭제하지 못했어요. 잠시 후 다시 시도해 주세요.')
+    removingRef.current = false
+    if (!aliveRef.current) return
     setDeletingId(null)
     setConfirmId(null)
     if (!result.ok) {
       setRowError((prev) => ({ ...prev, [item.id]: result.message }))
       return
     }
-    setData((prev) => (prev ? { ...prev, items: prev.items.filter((i) => i.id !== item.id) } : prev))
+    mutate((prev) => ({ ...prev, items: prev.items.filter((i) => i.id !== item.id) }))
     if (recordId === item.id) setRecordId(null)
     if (typeof formMode === 'object' && formMode.edit === item.id) setFormMode('closed')
   }
@@ -184,7 +190,7 @@ export default function ExperimentsPage() {
         {sample ? <SampleNote /> : null}
 
         {loadError && !data ? (
-          <ErrorPanel message={loadError} onRetry={() => void load()} />
+          <ErrorPanel message={loadError} status={loadStatus} onRetry={reload} busy={fetching} />
         ) : (
           <>
             {/* 답부터: 지금 결과를 기다리는 실험 / 최근 배운 점 / 첫 사용 안내 */}
@@ -210,7 +216,7 @@ export default function ExperimentsPage() {
                 headline={
                   running.length > 0 ? (
                     <>
-                      진행 중인 실험 <span className="em">{fmtNumber(running.length)}개</span>가 결과를 기다리고 있어요
+                      진행 중인 실험 <span className="em">{fmtNumberOr(running.length)}개</span>가 결과를 기다리고 있어요
                     </>
                   ) : latestLearning ? (
                     '진행 중인 실험이 없어요. 가장 최근에 알게 된 점이에요'
@@ -224,11 +230,11 @@ export default function ExperimentsPage() {
                     {running.slice(0, 3).map((item) => (
                       <div className="v4p-running-item" key={item.id}>
                         <div>
-                          <div style={{ fontWeight: 700 }} className="v4p-ellipsis">
+                          <div style={{ fontWeight: 700 }} className="v4p-ellipsis" title={item.hypothesis}>
                             {item.hypothesis}
                           </div>
                           <div className="small muted">
-                            {fmtDateKst(item.startedOn)} 시작 · {fmtNumber(daysBetween(item.startedOn, today) + 1)}일째
+                            {fmtYmdKo(item.startedOn)} 시작 · {fmtNumberOr(daysBetween(item.startedOn, today) + 1)}일째
                           </div>
                         </div>
                         {canEdit(item) ? (
@@ -238,7 +244,7 @@ export default function ExperimentsPage() {
                         ) : null}
                       </div>
                     ))}
-                    {running.length > 3 ? <div className="small muted">그 밖에 {fmtNumber(running.length - 3)}개는 아래 목록에서 볼 수 있어요.</div> : null}
+                    {running.length > 3 ? <div className="small muted">그 밖에 {fmtNumberOr(running.length - 3)}개는 아래 목록에서 볼 수 있어요.</div> : null}
                   </div>
                 ) : latestLearning ? (
                   <div className="v4p-learn" style={{ background: 'rgba(255,255,255,0.7)' }}>
@@ -251,9 +257,9 @@ export default function ExperimentsPage() {
 
             {data && !noData ? (
               <KpiRow>
-                <Kpi label="진행 중인 실험" value={`${fmtNumber(running.length)}개`} hint="아직 결과를 기록하지 않은 실험이에요." />
-                <Kpi label="끝난 실험" value={`${fmtNumber(done.length)}개`} hint="결과까지 기록해서 마무리한 실험이에요." />
-                <Kpi label="새 방식(B)이 더 좋았던 실험" value={`${fmtNumber(bWins)}개`} hint="새로 해본 방식이 기존보다 잘 나온 횟수예요." tone={bWins > 0 ? 'good' : 'neutral'} />
+                <Kpi label="진행 중인 실험" value={`${fmtNumberOr(running.length)}개`} hint="아직 결과를 기록하지 않은 실험이에요." />
+                <Kpi label="끝난 실험" value={`${fmtNumberOr(done.length)}개`} hint="결과까지 기록해서 마무리한 실험이에요." />
+                <Kpi label="새 방식(B)이 더 좋았던 실험" value={`${fmtNumberOr(bWins)}개`} hint="새로 해본 방식이 기존보다 잘 나온 횟수예요." tone={bWins > 0 ? 'good' : 'neutral'} />
               </KpiRow>
             ) : null}
 
@@ -296,7 +302,7 @@ export default function ExperimentsPage() {
                 }
               >
                 {!data ? (
-                  <SkelRows rows={3} />
+                  <SkelCards count={3} />
                 ) : items.length === 0 ? (
                   <EmptyPanel
                     title={filter === 'running' ? '진행 중인 실험이 없어요' : '끝난 실험이 아직 없어요'}
@@ -320,11 +326,14 @@ export default function ExperimentsPage() {
                             <div className="v4p-exp-meta">
                               <StatusBadge winner={item.winner} />
                               <span>
-                                {fmtDateKst(item.startedOn)} ~ {item.endedOn ? fmtDateKst(item.endedOn) : item.winner ? '' : `${fmtNumber(daysBetween(item.startedOn, today) + 1)}일째`}
+                                {fmtYmdKo(item.startedOn)} ~ {item.endedOn ? fmtYmdKo(item.endedOn) : item.winner ? '' : `${fmtNumberOr(daysBetween(item.startedOn, today) + 1)}일째`}
                               </span>
                               {isAdmin ? <span>· {item.createdByName}</span> : null}
+                              <span title={`등록 ${fmtKstStamp(item.createdAt)}`}>
+                                · <TimeAgo iso={item.createdAt} prefix="등록 " />
+                              </span>
                             </div>
-                            <div className="v4p-exp-title">{item.hypothesis}</div>
+                            <div className="v4p-exp-title" title={item.hypothesis.length > 90 ? item.hypothesis : undefined}>{item.hypothesis}</div>
                             {item.videoId || item.metric !== DEFAULT_METRIC ? (
                               <div className="v4p-exp-link">
                                 {item.videoId ? (

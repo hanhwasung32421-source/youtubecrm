@@ -1,57 +1,42 @@
 'use client'
 
-import { createContext, useContext, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { createSupabaseBrowserClient } from '@/lib/supabase/browser-client'
-import { clearMeCache, fetchMe } from '@/lib/session/me-client'
-import { getAccessToken } from '@/lib/session/authed-fetch'
-import { findMenuByPath, getMenusForRole, isAdminRoleType, type MenuDefinition } from '@/lib/v5/menu'
+import { clearMeCache } from '@/lib/session/me-client'
+import { findMenuByPath, getMenusForRole, type MenuDefinition } from '@/lib/v5/menu'
+import { useV5CanAccess, useV5Session } from '@/components/v5/auth-guard'
+import { Skeleton, SkeletonRegion } from '@/components/v5/widget'
 
-export type V5Me = {
-  crmUserId: string
-  name: string
-  roleType: string
-  roleName: string
-  isAdmin: boolean
-}
+// 예전 import 경로 호환: 페이지들은 계속 여기서 useV5Me 를 가져다 쓴다.
+export { useV5Me } from '@/components/v5/auth-guard'
+export type { V5Me } from '@/components/v5/auth-guard'
 
-const MeContext = createContext<V5Me | null>(null)
+const MAIN_ID = 'v5-main'
 
-// 페이지에서 현재 사용자(관리자 여부, crmUserId)를 읽을 때 쓴다.
-export function useV5Me() {
-  return useContext(MeContext)
-}
-
-// 사이드바 + 계정 영역. app/v5/(app)/layout.tsx 에서 한 번만 마운트된다.
+// 사이드바(좁은 화면에서는 위쪽 가로 메뉴 띠) + 계정 영역.
+// app/v5/(app)/layout.tsx 에서 한 번만 마운트되고, 세션은 V5SessionProvider 가 이미 확인해 둔다.
 export function AppShellFrame({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
-  const [me, setMe] = useState<V5Me | null>(null)
-
-  useEffect(() => {
-    const run = async () => {
-      try {
-        const accessToken = await getAccessToken()
-        if (!accessToken) return
-        const data = await fetchMe(accessToken)
-        setMe({
-          crmUserId: data.crmUserId,
-          name: data.name,
-          roleType: data.roleType,
-          roleName: data.roleName || data.roleType,
-          isAdmin: isAdminRoleType(data.roleType)
-        })
-      } catch {}
-    }
-    void run()
-  }, [])
+  const session = useV5Session()
+  const allowed = useV5CanAccess()
+  const me = session.me
+  const [loggingOut, setLoggingOut] = useState(false)
+  const navRef = useRef<HTMLElement | null>(null)
 
   const logout = async () => {
-    const supabase = createSupabaseBrowserClient()
-    await supabase.auth.signOut()
-    clearMeCache()
-    router.replace('/v5/login')
+    if (loggingOut) return
+    setLoggingOut(true)
+    try {
+      const supabase = createSupabaseBrowserClient()
+      await supabase.auth.signOut()
+      clearMeCache()
+      router.replace('/v5/login')
+    } catch {
+      setLoggingOut(false)
+    }
   }
 
   const groups = useMemo(() => {
@@ -67,59 +52,129 @@ export function AppShellFrame({ children }: { children: React.ReactNode }) {
 
   const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`)
 
+  // 좁은 화면의 가로 메뉴 띠에서 지금 화면 버튼이 항상 보이도록 옆으로 밀어 준다.
+  useEffect(() => {
+    const active = navRef.current?.querySelector<HTMLElement>('a[aria-current="page"]')
+    if (!active || !navRef.current) return
+    const box = navRef.current
+    if (box.scrollWidth <= box.clientWidth) return
+    const target = active.offsetLeft - (box.clientWidth - active.offsetWidth) / 2
+    box.scrollLeft = Math.max(target, 0)
+  }, [pathname, me?.roleType])
+
   return (
-    <MeContext.Provider value={me}>
-      <div className="workspace">
-        <aside id="app-sidebar" className="sidebar">
-          <div className="sidebar-section">
-            <div className="sidebar-brand">
-              <img className="sidebar-brand-logo" src="/logo-ant.png" alt="" width={28} height={28} />
-              <div>
-                <div className="sidebar-brand-title">여왕개미미디어</div>
-                <div className="sidebar-brand-sub">영상 성장 관리</div>
-              </div>
+    <div className="workspace">
+      <a
+        className="v5-skip"
+        href={`#${MAIN_ID}`}
+        onClick={(e) => {
+          e.preventDefault()
+          const main = document.getElementById(MAIN_ID)
+          main?.focus()
+          main?.scrollIntoView({ block: 'start' })
+        }}
+      >
+        본문으로 건너뛰기
+      </a>
+
+      <aside id="app-sidebar" className="sidebar" aria-label="메뉴와 계정">
+        <div className="sidebar-section v5-side-main">
+          <div className="sidebar-brand">
+            <img className="sidebar-brand-logo" src="/logo-ant.png" alt="" width={28} height={28} />
+            <div className="v5-brand-text">
+              <div className="sidebar-brand-title">여왕개미미디어</div>
+              <div className="sidebar-brand-sub">영상 성장 관리</div>
             </div>
-            {groups.map(([group, menus]) => (
-              <div className="sidebar-group" key={group}>
-                <div className="sidebar-caption">{group}</div>
-                <nav className="sidebar-nav" aria-label={group}>
-                  {menus.map((item) => (
-                    <Link
-                      key={item.href}
-                      className={`sidebar-link ${isActive(item.href) ? 'active' : ''}`}
-                      href={item.href}
-                      aria-current={isActive(item.href) ? 'page' : undefined}
-                      title={item.description}
-                    >
-                      {item.label}
-                    </Link>
-                  ))}
-                </nav>
-              </div>
-            ))}
           </div>
 
-          <div className="sidebar-section sidebar-account-box">
+          <nav ref={navRef} className="v5-nav" aria-label="주요 메뉴">
             {me ? (
-              <div className="sidebar-account">
-                <div className="sidebar-avatar">{me.name.slice(0, 1)}</div>
-                <div style={{ minWidth: 0, flex: 1 }}>
-                  <div className="sidebar-account-name">{me.name}</div>
-                  <div className="small muted">{me.isAdmin ? '관리자' : '직원'}</div>
+              groups.map(([group, menus]) => (
+                <div className="sidebar-group" key={group} role="group" aria-label={group}>
+                  <div className="sidebar-caption" aria-hidden="true">
+                    {group}
+                  </div>
+                  <div className="sidebar-nav">
+                    {menus.map((item) => (
+                      <Link
+                        key={item.href}
+                        className={`sidebar-link ${isActive(item.href) ? 'active' : ''}`}
+                        href={item.href}
+                        prefetch
+                        aria-current={isActive(item.href) ? 'page' : undefined}
+                        title={item.description}
+                      >
+                        {item.label}
+                      </Link>
+                    ))}
+                  </div>
                 </div>
-                <button className="button secondary sm" type="button" onClick={logout}>
-                  로그아웃
-                </button>
-              </div>
+              ))
             ) : (
-              <div className="small muted">계정 확인 중...</div>
+              <SkeletonRegion label="메뉴를 불러오는 중" className="v5-nav-skel">
+                <Skeleton height={36} radius={999} className="pill-skel" />
+                <Skeleton height={36} radius={999} className="pill-skel" />
+                <Skeleton height={36} radius={999} className="pill-skel" />
+              </SkeletonRegion>
             )}
-          </div>
-        </aside>
+          </nav>
+        </div>
 
-        <section className="content-area">{children}</section>
-      </div>
-    </MeContext.Provider>
+        <div className="sidebar-section sidebar-account-box">
+          {me ? (
+            <div className="sidebar-account">
+              <div className="sidebar-avatar" aria-hidden="true">
+                {me.name.slice(0, 1)}
+              </div>
+              <div className="v5-account-text">
+                <div className="sidebar-account-name">{me.name}</div>
+                <div className="small muted v5-account-role">{me.isAdmin ? '관리자' : '직원'}</div>
+              </div>
+              <button className="button secondary sm v5-logout" type="button" onClick={() => void logout()} disabled={loggingOut}>
+                {loggingOut ? '나가는 중...' : '로그아웃'}
+              </button>
+            </div>
+          ) : session.status === 'error' ? (
+            <div className="small muted">계정을 확인하지 못했습니다.</div>
+          ) : (
+            <SkeletonRegion label="계정 확인 중" className="sidebar-account">
+              <Skeleton circle height={34} />
+              <div className="v5-account-text v5-account-skel">
+                <Skeleton height={13} width="70%" />
+                <Skeleton height={11} width="40%" />
+              </div>
+              <Skeleton height={34} width={76} radius={10} className="v5-logout-skel" />
+            </SkeletonRegion>
+          )}
+        </div>
+      </aside>
+
+      <section id={MAIN_ID} tabIndex={-1} className="content-area" aria-label="본문">
+        {me && allowed ? (
+          children
+        ) : session.status === 'error' ? (
+          <div className="v5-empty">
+            <div className="v5-empty-title">화면을 불러오지 못했습니다</div>
+            <div className="v5-empty-body">{session.message}</div>
+            <div className="v5-empty-action">
+              <button className="button sm" type="button" onClick={session.retry}>
+                다시 시도
+              </button>
+            </div>
+          </div>
+        ) : (
+          <SkeletonRegion label="화면을 불러오는 중" className="v5-page-skel">
+            <Skeleton height={26} width="34%" radius={8} />
+            <Skeleton height={14} width="58%" />
+            <div className="v5-page-skel-card">
+              <Skeleton height={14} width="30%" />
+              <Skeleton height={44} radius={10} />
+              <Skeleton height={44} radius={10} />
+            </div>
+          </SkeletonRegion>
+        )}
+      </section>
+    </div>
   )
 }
 
@@ -136,6 +191,12 @@ export function PageHeader({
 }) {
   const pathname = usePathname()
   const description = subtitle ?? findMenuByPath(pathname)?.description
+
+  // 브라우저 탭 제목도 지금 화면 이름으로(여러 탭을 열어 둘 때 구분이 쉽다).
+  useEffect(() => {
+    document.title = `${title} · 여왕개미미디어`
+  }, [title])
+
   return (
     <div className="document-head">
       <div className="document-head-top">

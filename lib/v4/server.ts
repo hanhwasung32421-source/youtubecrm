@@ -57,14 +57,17 @@ export function dbError(error: unknown, fallbackMessage = '요청을 처리하�
   return new V4HttpError(mapped.message || fallbackMessage, mapped.status)
 }
 
+// 오류 응답은 브라우저/중간 서버가 저장하지 않게 한다.
+const NO_STORE_HEADERS = { 'Cache-Control': 'no-store' }
+
 export function v4ErrorResponse(error: unknown, fallbackMessage: string) {
   if (error instanceof V4HttpError) {
-    return NextResponse.json({ error: error.message }, { status: error.status })
+    return NextResponse.json({ error: error.message }, { status: error.status, headers: NO_STORE_HEADERS })
   }
   console.error('[v4]', fallbackMessage, error)
   const mapped = mapDbError(error)
   // Postgres/JSON 원문은 절대 내려주지 않는다.
-  return NextResponse.json({ error: mapped.message || `${fallbackMessage}. 잠시 후 다시 시도해 주세요.` }, { status: mapped.status })
+  return NextResponse.json({ error: mapped.message || `${fallbackMessage}. 잠시 후 다시 시도해 주세요.` }, { status: mapped.status, headers: NO_STORE_HEADERS })
 }
 
 // Supabase(PostgREST)는 한 번에 최대 1000행만 돌려준다. 그보다 많이 필요하면 range()로 나눠 끝까지 읽어야 한다.

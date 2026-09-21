@@ -1,7 +1,10 @@
 'use client'
 
 import type { ReactNode } from 'react'
+import Link from 'next/link'
+import { formatKstFull, formatKstShort, formatRelative } from '@/lib/v5/format'
 import './pages.css'
+import './pages-r3.css'
 
 // 성장 관리 화면(성장 실험/영상 점수판/성공 공식/주간 회고)이 함께 쓰는 작은 조각들.
 // 스타일은 pages.css(.v5-theme 하위 v5p- 접두어)에만 있다.
@@ -57,13 +60,43 @@ export function LoadingLine({ text = '불러오는 중이에요…' }: { text?: 
   return <div className="v5p-loading">{text}</div>
 }
 
-export function LoadError({ message, onRetry }: { message: string; onRetry: () => void }) {
+// 로그인이 끝난 경우(401)에는 "다시 시도"가 소용없으니 로그인 화면으로 가는 링크를 준다.
+export const isLoginError = (status: number | undefined, message?: string) => status === 401 || Boolean(message && message.includes('다시 로그인해 주세요'))
+
+export function LoginLink() {
+  return (
+    <Link className="v5p-login-link" href="/v5/login">
+      다시 로그인해 주세요
+    </Link>
+  )
+}
+
+// 오류 문장 + (로그인이 끝난 경우) 로그인 링크. 인라인 오류 자리에 그대로 쓴다.
+export function ErrorText({ message, status }: { message: string; status?: number }) {
+  if (!message) return null
+  if (isLoginError(status, message)) {
+    return (
+      <>
+        <span>로그인이 끝났어요. </span>
+        <LoginLink />
+      </>
+    )
+  }
+  return <>{message}</>
+}
+
+export function LoadError({ message, onRetry, status }: { message: string; onRetry: () => void; status?: number }) {
+  const needLogin = isLoginError(status, message)
   return (
     <div className="v5p-error" role="alert">
-      <span>{message}</span>
-      <button type="button" className="button secondary sm" onClick={onRetry}>
-        다시 시도
-      </button>
+      <span>{needLogin ? '로그인이 끝났어요.' : message}</span>
+      {needLogin ? (
+        <LoginLink />
+      ) : (
+        <button type="button" className="button secondary sm" onClick={onRetry}>
+          다시 시도
+        </button>
+      )}
     </div>
   )
 }
@@ -109,4 +142,17 @@ export function FormField({
 }
 
 export const nf = new Intl.NumberFormat('ko-KR')
-export const fmtNum = (n: number | null | undefined) => (n === null || n === undefined || Number.isNaN(n) ? '-' : nf.format(n))
+// 숫자가 아니거나(NaN) 무한대(Infinity)면 "-"
+export const fmtNum = (n: number | null | undefined) => (typeof n !== 'number' || !Number.isFinite(n) ? '-' : nf.format(n))
+
+// 상대 시각("3분 전")을 보여 주고, 마우스를 올리면 정확한 한국 시간을 알려 준다.
+export function RelTime({ value, absolute }: { value: string | null | undefined; absolute?: boolean }) {
+  if (!value) return <>-</>
+  const full = formatKstFull(value)
+  if (!full) return <>-</>
+  return (
+    <time dateTime={value} title={full}>
+      {absolute ? formatKstShort(value) : formatRelative(value)}
+    </time>
+  )
+}

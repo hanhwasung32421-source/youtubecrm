@@ -1,6 +1,7 @@
 'use client'
 
 import { authedFetchJson, type AuthedJsonResult } from '@/lib/session/authed-fetch'
+import { markMutated } from '@/lib/v5/freshness'
 
 // 공용 authedFetchJson 위에 PATCH/PUT/DELETE 를 얹고, 네트워크 오류가 예외로 터지지 않게 한다.
 // 모든 함수는 절대 throw 하지 않고 { ok, status, data } 를 돌려준다(status 0 = 인터넷 연결 문제).
@@ -15,12 +16,20 @@ async function safe<T>(run: () => Promise<AuthedJsonResult<T>>): Promise<AuthedJ
   }
 }
 
-export function v5Get<T = any>(path: string, signal?: AbortSignal): Promise<AuthedJsonResult<T>> {
-  return safe(() => authedFetchJson<T>(path, { signal }))
+// signal: 화면을 떠나거나 필터를 바꾸면 이전 요청을 취소한다. fresh: 방금 저장한 뒤라 브라우저 캐시를 건너뛰고 새로 받는다.
+export function v5Get<T = any>(path: string, signal?: AbortSignal, opts: { fresh?: boolean } = {}): Promise<AuthedJsonResult<T>> {
+  return safe(() => authedFetchJson<T>(path, opts.fresh ? { signal, cache: 'reload' } : { signal }))
+}
+
+// 저장 성공 시 "방금 바뀜"을 기억해 다음 조회가 옛 캐시를 쓰지 않게 한다.
+async function mutating<T>(run: () => Promise<AuthedJsonResult<T>>): Promise<AuthedJsonResult<T>> {
+  const res = await safe(run)
+  if (res.ok) markMutated()
+  return res
 }
 
 export function v5Post<T = any>(path: string, body: unknown): Promise<AuthedJsonResult<T>> {
-  return safe(() =>
+  return mutating(() =>
     authedFetchJson<T>(path, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -30,7 +39,7 @@ export function v5Post<T = any>(path: string, body: unknown): Promise<AuthedJson
 }
 
 export function authedPatchJson<T = any>(path: string, body: unknown): Promise<AuthedJsonResult<T>> {
-  return safe(() =>
+  return mutating(() =>
     authedFetchJson<T>(path, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -40,7 +49,7 @@ export function authedPatchJson<T = any>(path: string, body: unknown): Promise<A
 }
 
 export function authedPutJson<T = any>(path: string, body: unknown): Promise<AuthedJsonResult<T>> {
-  return safe(() =>
+  return mutating(() =>
     authedFetchJson<T>(path, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -50,7 +59,7 @@ export function authedPutJson<T = any>(path: string, body: unknown): Promise<Aut
 }
 
 export function authedDeleteJson<T = any>(path: string): Promise<AuthedJsonResult<T>> {
-  return safe(() => authedFetchJson<T>(path, { method: 'DELETE' }))
+  return mutating(() => authedFetchJson<T>(path, { method: 'DELETE' }))
 }
 
 export type ApiError = { error?: string }

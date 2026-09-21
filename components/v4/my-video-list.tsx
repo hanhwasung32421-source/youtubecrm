@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { FormatPill } from '@/components/v4/ui'
+import { FormatPill, FormatToggle } from '@/components/v4/ui'
 import { deleteMyVideo, loadMyVideoMemo, patchMyVideo, type ContentType, type VideoPatch } from '@/components/v4/register-api'
 import { normalizeStockName } from '@/components/v4/register-utils'
 import { fmtNumber, fmtRelative } from '@/lib/v4/format'
@@ -114,7 +114,8 @@ export function MyVideoList({ items, newIds, stockChoices, onUpdated, onDeleted 
                   <span className="v4-reg-item-actions">
                     <button
                       type="button"
-                      className="v4-text-btn"
+                      className="v4-text-btn v4-touch"
+                      aria-label={`${item.stock_name} 영상 수정`}
                       disabled={Boolean(busyId)}
                       onClick={() => {
                         setMessage(null)
@@ -126,7 +127,8 @@ export function MyVideoList({ items, newIds, stockChoices, onUpdated, onDeleted 
                     </button>
                     <button
                       type="button"
-                      className="v4-text-btn danger"
+                      className="v4-text-btn danger v4-touch"
+                      aria-label={`${item.stock_name} 영상 삭제`}
                       disabled={Boolean(busyId)}
                       onClick={() => {
                         setMessage(null)
@@ -141,7 +143,7 @@ export function MyVideoList({ items, newIds, stockChoices, onUpdated, onDeleted 
               )}
 
               {msg ? (
-                <div className={`v4-reg-item-msg ${msg.tone}`} role="status">
+                <div className={`v4-reg-item-msg ${msg.tone}`} role={msg.tone === 'error' ? 'alert' : 'status'}>
                   {msg.text}
                 </div>
               ) : null}
@@ -246,6 +248,7 @@ function EditForm({
             className="input"
             list={listId}
             autoComplete="off"
+            spellCheck={false}
             value={stock}
             disabled={saving}
             aria-invalid={error && !normalizeStockName(stock) ? true : undefined}
@@ -262,26 +265,7 @@ function EditForm({
         </label>
         <div className="v4-reg-edit-field">
           <span id={`${listId}-fmt`}>형식</span>
-          <div className="v4-segment" role="radiogroup" aria-labelledby={`${listId}-fmt`}>
-            {(
-              [
-                ['longform', '롱폼'],
-                ['shortform', '숏폼']
-              ] as const
-            ).map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                role="radio"
-                aria-checked={type === value}
-                className={`v4-segment-item ${type === value ? 'active' : ''}`}
-                disabled={saving}
-                onClick={() => setType(value)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          <FormatToggle value={type} onChange={setType} disabled={saving} labelledBy={`${listId}-fmt`} />
         </div>
         <label className="v4-reg-edit-field memo">
           <span>메모 (선택)</span>

@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import { ShellSkeleton } from '@/components/v2/skeletons'
 import { getAccessToken } from '@/lib/session/authed-fetch'
 import { fetchMe } from '@/lib/session/me-client'
 import { getHomeHref, isAdminRoleType } from '@/lib/v2/menu'
@@ -31,5 +32,6 @@ export default function HomePage() {
     }
   }, [router])
 
-  return null
+  // 이동하는 동안 빈 화면 대신 셸 모양의 뼈대를 보여 준다(다음 화면의 로딩 뼈대와 같은 모양이라 깜빡이지 않는다).
+  return <ShellSkeleton />
 }

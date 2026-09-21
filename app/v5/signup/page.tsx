@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import { createSupabaseBrowserClient } from '@/lib/supabase/browser-client'
 import { fetchMe } from '@/lib/session/me-client'
 import { getHomeHref } from '@/lib/v5/menu'
+import { PasswordField } from '@/components/v5/password-field'
 
 type Field = 'email' | 'loginId' | 'password' | 'name' | 'birthDate' | 'phone' | 'antiBot'
 type FieldErrors = Partial<Record<Field, string>>
@@ -51,6 +52,7 @@ export default function SignupPage() {
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
 
+  const busyRef = useRef(false)
   const emailRef = useRef<HTMLInputElement | null>(null)
   const loginIdRef = useRef<HTMLInputElement | null>(null)
   const passwordRef = useRef<HTMLInputElement | null>(null)
@@ -170,7 +172,7 @@ export default function SignupPage() {
   }
 
   const onSubmit = async () => {
-    if (loading) return
+    if (loading || busyRef.current) return
     setFormError('')
     setMessage('')
 
@@ -181,6 +183,7 @@ export default function SignupPage() {
     }
     if (!validate()) return
 
+    busyRef.current = true
     setLoading(true)
     try {
       const res = await fetch('/api/auth/signup', {
@@ -246,6 +249,7 @@ export default function SignupPage() {
       setFormError(e instanceof TypeError ? NETWORK_MESSAGE : '회원가입 중 문제가 생겼습니다. 잠시 후 다시 시도해 주세요.')
       await refresh()
     } finally {
+      busyRef.current = false
       setLoading(false)
     }
   }
@@ -271,13 +275,15 @@ export default function SignupPage() {
             <label className="label" htmlFor="v5-su-email">
               이메일
             </label>
-            <div className="row">
+            <div className="row v5-email-row">
               <input
                 id="v5-su-email"
                 ref={emailRef}
                 className="input"
                 type="email"
                 autoComplete="email"
+                autoCapitalize="none"
+                spellCheck={false}
                 autoFocus
                 placeholder="name@example.com"
                 value={email}
@@ -326,12 +332,13 @@ export default function SignupPage() {
                   autoComplete="username"
                   value={loginId}
                   aria-invalid={Boolean(errors.loginId)}
+                  aria-describedby="v5-su-loginid-help"
                   onChange={(e) => {
                     setLoginId(e.target.value)
                     clearFieldError('loginId')
                   }}
                 />
-                <p className={errors.loginId ? 'v5-auth-error' : 'v5-auth-help'} role={errors.loginId ? 'alert' : undefined}>
+                <p id="v5-su-loginid-help" className={errors.loginId ? 'v5-auth-error' : 'v5-auth-help'} role={errors.loginId ? 'alert' : undefined}>
                   {errors.loginId || '로그인할 때 쓰는 아이디입니다. 2자 이상.'}
                 </p>
               </div>
@@ -340,20 +347,19 @@ export default function SignupPage() {
                 <label className="label" htmlFor="v5-su-password">
                   비밀번호
                 </label>
-                <input
+                <PasswordField
                   id="v5-su-password"
-                  ref={passwordRef}
-                  className="input"
-                  type="password"
-                  autoComplete="new-password"
+                  inputRef={passwordRef}
                   value={password}
-                  aria-invalid={Boolean(errors.password)}
-                  onChange={(e) => {
-                    setPassword(e.target.value)
+                  autoComplete="new-password"
+                  invalid={Boolean(errors.password)}
+                  describedBy="v5-su-password-help"
+                  onChange={(v) => {
+                    setPassword(v)
                     clearFieldError('password')
                   }}
                 />
-                <p className={errors.password ? 'v5-auth-error' : 'v5-auth-help'} role={errors.password ? 'alert' : undefined}>
+                <p id="v5-su-password-help" className={errors.password ? 'v5-auth-error' : 'v5-auth-help'} role={errors.password ? 'alert' : undefined}>
                   {errors.password || '6자 이상으로 정해 주세요.'}
                 </p>
               </div>
@@ -369,13 +375,14 @@ export default function SignupPage() {
                   autoComplete="name"
                   value={name}
                   aria-invalid={Boolean(errors.name)}
+                  aria-describedby={errors.name ? 'v5-su-name-err' : undefined}
                   onChange={(e) => {
                     setName(e.target.value)
                     clearFieldError('name')
                   }}
                 />
                 {errors.name ? (
-                  <p className="v5-auth-error" role="alert">
+                  <p id="v5-su-name-err" className="v5-auth-error" role="alert">
                     {errors.name}
                   </p>
                 ) : null}
@@ -391,6 +398,7 @@ export default function SignupPage() {
                   className="input"
                   value={birthDate}
                   aria-invalid={Boolean(errors.birthDate)}
+                  aria-describedby="v5-su-birth-help"
                   onChange={(e) => {
                     const next = e.target.value.replace(/[^\d]/g, '').slice(0, 8)
                     setBirthDate(next)
@@ -401,7 +409,7 @@ export default function SignupPage() {
                   inputMode="numeric"
                   autoComplete="bday"
                 />
-                <p className={errors.birthDate ? 'v5-auth-error' : 'v5-auth-help'} role={errors.birthDate ? 'alert' : undefined}>
+                <p id="v5-su-birth-help" className={errors.birthDate ? 'v5-auth-error' : 'v5-auth-help'} role={errors.birthDate ? 'alert' : undefined}>
                   {errors.birthDate || '숫자 8자리로 입력해 주세요.'}
                 </p>
               </div>
@@ -410,7 +418,7 @@ export default function SignupPage() {
                 <label className="label" htmlFor="v5-su-phone-mid">
                   전화번호
                 </label>
-                <div className="row">
+                <div className="row v5-phone-row">
                   <input className="input" style={{ maxWidth: 90, textAlign: 'center' }} value="010" disabled aria-label="전화번호 앞 3자리" />
                   <span className="muted">-</span>
                   <input
@@ -423,6 +431,7 @@ export default function SignupPage() {
                     inputMode="numeric"
                     aria-invalid={Boolean(errors.phone)}
                     aria-label="전화번호 가운데 4자리"
+                    aria-describedby="v5-su-phone-help"
                     onChange={(e) => {
                       const next = e.target.value.replace(/[^\d]/g, '').slice(0, 4)
                       setPhoneMid(next)
@@ -440,6 +449,7 @@ export default function SignupPage() {
                     inputMode="numeric"
                     aria-invalid={Boolean(errors.phone)}
                     aria-label="전화번호 마지막 4자리"
+                    aria-describedby="v5-su-phone-help"
                     onChange={(e) => {
                       const next = e.target.value.replace(/[^\d]/g, '').slice(0, 4)
                       setPhoneLast(next)
@@ -448,7 +458,7 @@ export default function SignupPage() {
                     }}
                   />
                 </div>
-                <p className={errors.phone ? 'v5-auth-error' : 'v5-auth-help'} role={errors.phone ? 'alert' : undefined}>
+                <p id="v5-su-phone-help" className={errors.phone ? 'v5-auth-error' : 'v5-auth-help'} role={errors.phone ? 'alert' : undefined}>
                   {errors.phone || '010 뒤의 번호를 4자리씩 입력해 주세요.'}
                 </p>
               </div>
@@ -474,6 +484,7 @@ export default function SignupPage() {
                     value={antiBotCode}
                     maxLength={4}
                     aria-invalid={Boolean(errors.antiBot)}
+                    aria-describedby="v5-su-antibot-help"
                     onChange={(e) => {
                       setAntiBotCode(e.target.value.replace(/[^\d]/g, ''))
                       clearFieldError('antiBot')
@@ -483,7 +494,7 @@ export default function SignupPage() {
                     autoComplete="off"
                   />
                 </div>
-                <p className={errors.antiBot ? 'v5-auth-error' : 'v5-auth-help'} role={errors.antiBot ? 'alert' : undefined} style={{ marginTop: 8 }}>
+                <p id="v5-su-antibot-help" className={errors.antiBot ? 'v5-auth-error' : 'v5-auth-help'} role={errors.antiBot ? 'alert' : undefined} style={{ marginTop: 8 }}>
                   {errors.antiBot || '왼쪽에 보이는 숫자를 오른쪽 칸에 그대로 입력해 주세요.'}
                 </p>
               </div>
@@ -491,8 +502,12 @@ export default function SignupPage() {
           ) : null}
 
           {emailChecked ? (
-            <button className="button" type="submit" disabled={loading}>
-              {loading ? '처리 중...' : '가입하기'}
+            <button className="button v5-submit" type="submit" disabled={loading} aria-busy={loading}>
+              {loading ? (
+                '처리 중...'
+              ) : (
+                '가입하기'
+              )}
             </button>
           ) : null}
 
@@ -501,7 +516,7 @@ export default function SignupPage() {
               {formError}
             </div>
           ) : null}
-          {message ? <div className="message-success small">{message}</div> : null}
+          <div aria-live="polite">{message ? <div className="message-success small">{message}</div> : null}</div>
           <div className="small muted">
             이미 계정이 있나요?{' '}
             <Link className="link" href="/v5/login">

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { FormEvent, KeyboardEvent } from 'react'
 import { v4Json } from '@/lib/v4/client'
 import type { ExperimentItem } from '@/lib/v4/sample-data'
+import { FormError } from '@/lib/v4/analysis-ui'
 import { Field } from './field'
 
 type Winner = 'a' | 'b' | 'tie'
@@ -32,6 +33,8 @@ export function ResultRecorder({
   const [endedOn, setEndedOn] = useState(item.endedOn ?? (today < item.startedOn ? item.startedOn : today))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [errorStatus, setErrorStatus] = useState(0)
+  const savingRef = useRef(false) // 아주 빠른 더블 클릭도 한 번만 저장되게
   const [submitted, setSubmitted] = useState(false)
   const [confirmReopen, setConfirmReopen] = useState(false)
   const firstRef = useRef<HTMLButtonElement | null>(null)
@@ -45,20 +48,24 @@ export function ResultRecorder({
 
   const save = async (e?: FormEvent) => {
     e?.preventDefault()
-    if (saving) return
+    if (saving || savingRef.current) return
     setSubmitted(true)
     if (!winner || endError) return
+    savingRef.current = true
     setSaving(true)
     setError('')
+    setErrorStatus(0)
     const result = await v4Json<{ item: ExperimentItem }>(
       'PATCH',
       `/api/v4/experiments/${item.id}`,
       { winner, learning: learning.trim() || null, endedOn: endedOn || today },
       '결과를 저장하지 못했어요. 잠시 후 다시 시도해 주세요.'
     )
+    savingRef.current = false
     setSaving(false)
     if (!result.ok) {
       setError(result.message)
+      setErrorStatus(result.status)
       return
     }
     onSaved(result.data.item, item.winner ? '결과를 고쳤어요.' : '결과를 기록했어요. 끝난 실험으로 옮겼어요.')
@@ -70,18 +77,22 @@ export function ResultRecorder({
       setConfirmReopen(true)
       return
     }
-    if (saving) return
+    if (saving || savingRef.current) return
+    savingRef.current = true
     setSaving(true)
     setError('')
+    setErrorStatus(0)
     const result = await v4Json<{ item: ExperimentItem }>(
       'PATCH',
       `/api/v4/experiments/${item.id}`,
       { winner: null, endedOn: null },
       '진행 중으로 되돌리지 못했어요. 잠시 후 다시 시도해 주세요.'
     )
+    savingRef.current = false
     setSaving(false)
     if (!result.ok) {
       setError(result.message)
+      setErrorStatus(result.status)
       setConfirmReopen(false)
       return
     }
@@ -149,9 +160,7 @@ export function ResultRecorder({
         </Field>
       </div>
       {error ? (
-        <div className="v4p-form-error" role="alert">
-          {error}
-        </div>
+        <FormError message={error} status={errorStatus} />
       ) : null}
       <div className="v4p-form-actions">
         <button type="submit" className="button" disabled={saving}>

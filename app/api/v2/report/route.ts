@@ -1,39 +1,57 @@
 import { NextResponse } from 'next/server'
 import { addDays, kstDayStart, kstYmd } from '@/lib/v2/dates'
-import { checklistFor, computeDiscoverability, handleRouteError, isMissingTableError, loadChecklistMap, loadStaffMap, loadVideos, requireV2Admin } from '@/lib/v2/server'
+import {
+  cachedJson,
+  checklistFor,
+  computeDiscoverability,
+  handleRouteError,
+  isMissingTableError,
+  loadChecklistMap,
+  loadStaffMap,
+  loadVideos,
+  requireV2Admin,
+  slimVideo
+} from '@/lib/v2/server'
 import { sampleReportPayload } from '@/lib/v2/sample-data'
 import type { DiscoverabilityRow, ReportPayload } from '@/lib/v2/types'
 
 const REPORT_LIMIT = 1000
+// 점수 계산과 순위 표에 쓰는 칸만 읽는다 (설명·썸네일 주소 등 긴 값은 읽지 않는다).
+const COLUMNS = 'id, title, stock_name, content_type, youtube_url, published_at, view_count, like_count, primary_owner_user_id, created_at'
+
+function timeOf(iso: string | null | undefined): number {
+  const t = iso ? new Date(iso).getTime() : NaN
+  return Number.isNaN(t) ? 0 : t
+}
 
 // 검색 성과 리포트: 영상별 발견성 점수(조회 속도 40% + 좋아요율 30% + SEO 체크리스트 완료율 30%) 리더보드
 export async function GET(request: Request) {
   try {
     const { profile, supabaseAdmin } = await requireV2Admin(request)
 
-    const videos = await loadVideos(supabaseAdmin, { userId: profile.id, isAdmin: true }, REPORT_LIMIT)
+    const videos = await loadVideos(supabaseAdmin, { userId: profile.id, isAdmin: true }, REPORT_LIMIT, COLUMNS)
     const videoIds = videos.map((v) => v.id)
 
+    // 체크리스트와 담당자 이름은 서로 기다릴 필요가 없어 한꺼번에 조회한다.
     let checklistMap
+    let staffMap: Map<string, string>
     try {
-      checklistMap = await loadChecklistMap(supabaseAdmin, videoIds)
+      ;[checklistMap, staffMap] = await Promise.all([loadChecklistMap(supabaseAdmin, videoIds), loadStaffMap(supabaseAdmin)])
     } catch (e) {
       if (isMissingTableError(e)) return NextResponse.json(sampleReportPayload())
       throw e
     }
 
-    const staffMap = await loadStaffMap(supabaseAdmin)
-
     const items: DiscoverabilityRow[] = videos
       .map((video) => {
         const checklist = checklistFor(video.id, checklistMap)
         const metrics = computeDiscoverability(video, checklist)
-        return { video, ownerName: staffMap.get(video.primary_owner_user_id) || '-', ...metrics }
+        return { video: slimVideo(video), ownerName: staffMap.get(video.primary_owner_user_id) || '-', ...metrics }
       })
       .sort((a, b) => b.score - a.score)
 
-    const sevenDaysAgo = kstDayStart(addDays(kstYmd(), -6)).toISOString()
-    const recentItems = items.filter((row) => (row.video.published_at || row.video.created_at) >= sevenDaysAgo)
+    const sevenDaysAgo = timeOf(kstDayStart(addDays(kstYmd(), -6)).toISOString())
+    const recentItems = items.filter((row) => timeOf(row.video.published_at || row.video.created_at) >= sevenDaysAgo)
     const top = recentItems[0] || items[0]
 
     const insight = top
@@ -41,7 +59,7 @@ export async function GET(request: Request) {
       : '표시할 영상이 없습니다. 영상을 등록하면 반응 점수가 계산됩니다.'
 
     const payload: ReportPayload = { items, insight, capped: videos.length >= REPORT_LIMIT }
-    return NextResponse.json(payload)
+    return cachedJson(payload)
   } catch (e) {
     return handleRouteError(e, '성과 요약을 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.')
   }

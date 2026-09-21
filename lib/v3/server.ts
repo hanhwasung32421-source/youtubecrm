@@ -151,34 +151,41 @@ export async function loadUserNames(supabaseAdmin: SupabaseAdmin): Promise<Map<s
   return new Map(((data || []) as { id: string; name: string }[]).map((row) => [row.id, row.name]))
 }
 
+// 전체 열(등록/새로고침/확인 화면용)
 const VIDEO_FIELDS =
   'id, youtube_video_id, title, stock_name, content_type, view_count, like_count, comment_count, published_at, created_at, youtube_url, thumbnail_url, primary_owner_user_id, channel_id, last_synced_at'
+
+// 분석 화면용으로 필요한 열만. 영상 수천 개를 통째로 받아 계산하는 화면이라 행 하나가 작을수록 빠르다.
+//   LIST  : 조회수 속도(viewVelocity)·목록 표시에 필요한 열
+//   RATES : LIST + 좋아요/댓글 수(참여율 계산용)
+export const VIDEO_FIELDS_LIST = 'id, title, stock_name, content_type, view_count, published_at, created_at, youtube_url, primary_owner_user_id'
+export const VIDEO_FIELDS_RATES = `${VIDEO_FIELDS_LIST}, like_count, comment_count`
 
 const PAGE_SIZE = 1000
 
 // PostgREST는 한 번에 돌려주는 행 수에 상한(보통 1000)이 있어서, limit이 그보다 크면 조용히 잘린다.
-// 1000개씩 나눠서 limit까지 이어 받는다.
-async function fetchVideoPages(supabaseAdmin: SupabaseAdmin, apply: (query: any) => any, limit: number): Promise<VideoLite[]> {
-  const rows: VideoLite[] = []
-  for (let from = 0; from < limit; from += PAGE_SIZE) {
-    const to = Math.min(from + PAGE_SIZE, limit) - 1
-    const base = apply(supabaseAdmin.from(SHARED_TABLES.videos).select(VIDEO_FIELDS))
-    const { data, error } = await base
-      .order('created_at', { ascending: false })
-      .order('id', { ascending: false })
-      .range(from, to)
-    if (error) throw error
-    const page = (data || []) as VideoLite[]
-    rows.push(...page)
-    if (page.length < to - from + 1) break
-  }
-  return rows
+// 1000개씩 나눠서 limit까지 받는다. 쪽마다 범위가 정해져 있으므로 동시에 요청해 기다리는 시간을 줄인다.
+async function fetchVideoPages(supabaseAdmin: SupabaseAdmin, apply: (query: any) => any, limit: number, fields: string): Promise<VideoLite[]> {
+  const ranges: { from: number; to: number }[] = []
+  for (let from = 0; from < limit; from += PAGE_SIZE) ranges.push({ from, to: Math.min(from + PAGE_SIZE, limit) - 1 })
+  const pages = await Promise.all(
+    ranges.map(async ({ from, to }) => {
+      const base = apply(supabaseAdmin.from(SHARED_TABLES.videos).select(fields))
+      const { data, error } = await base
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
+        .range(from, to)
+      if (error) throw error
+      return (data || []) as VideoLite[]
+    })
+  )
+  return pages.flat()
 }
 
 // 역할에 따라 범위를 좁힌 영상 목록. 관리자는 staffId로 특정 직원만 볼 수도 있다.
 export async function loadScopedVideos(
   supabaseAdmin: SupabaseAdmin,
-  opts: { isAdmin: boolean; selfUserId: string; staffId?: string | null; limit?: number; sinceIso?: string }
+  opts: { isAdmin: boolean; selfUserId: string; staffId?: string | null; limit?: number; sinceIso?: string; fields?: string }
 ): Promise<VideoLite[]> {
   return fetchVideoPages(
     supabaseAdmin,
@@ -189,13 +196,17 @@ export async function loadScopedVideos(
       else if (opts.staffId && isUuid(opts.staffId)) q = q.eq('primary_owner_user_id', opts.staffId)
       return q
     },
-    opts.limit || 2000
+    opts.limit || 2000,
+    opts.fields || VIDEO_FIELDS
   )
 }
 
 // 팀 전체 영상(중앙값 등 팀 기준값 계산용) — 역할과 무관하게 항상 전체를 본다.
-export async function loadTeamVideos(supabaseAdmin: SupabaseAdmin, opts: { limit?: number; sinceIso?: string } = {}): Promise<VideoLite[]> {
-  return fetchVideoPages(supabaseAdmin, (query) => (opts.sinceIso ? query.gte('created_at', opts.sinceIso) : query), opts.limit || 3000)
+export async function loadTeamVideos(
+  supabaseAdmin: SupabaseAdmin,
+  opts: { limit?: number; sinceIso?: string; fields?: string } = {}
+): Promise<VideoLite[]> {
+  return fetchVideoPages(supabaseAdmin, (query) => (opts.sinceIso ? query.gte('created_at', opts.sinceIso) : query), opts.limit || 3000, opts.fields || VIDEO_FIELDS)
 }
 
 // id 목록이 길면 요청 주소가 너무 길어지므로 80개씩 나눠서 가져온다.
@@ -232,6 +243,40 @@ export async function loadSnapshotCounts(supabaseAdmin: SupabaseAdmin, ids: stri
     })
   )
   return counts
+}
+
+// 영상 1개의 조회수 기록(스냅샷). 오래된 것부터 정렬해 돌려주고, 너무 많으면 가장 최근 max개만 가져온다.
+// total 은 실제 전체 개수(그래프에는 일부만 쓰더라도 "기록 N번"은 정확히 보여 주기 위함).
+export type SnapshotRow = { snapshot_at: string; view_count: number | null; like_count: number | null; comment_count: number | null }
+
+export async function loadVideoSnapshots(supabaseAdmin: SupabaseAdmin, videoId: string, max = 400): Promise<{ rows: SnapshotRow[]; total: number }> {
+  const { data, error, count } = await supabaseAdmin
+    .from(SHARED_TABLES.videoSnapshots)
+    .select('snapshot_at, view_count, like_count, comment_count', { count: 'exact' })
+    .eq('video_id', videoId)
+    .order('snapshot_at', { ascending: false })
+    .limit(max)
+  if (error) throw error
+  const rows = ((data || []) as SnapshotRow[]).reverse()
+  return { rows, total: typeof count === 'number' ? count : rows.length }
+}
+
+// ─────────────────────────────────────────────────────────────
+// 응답 캐시 헤더
+//   읽기 전용 분석 GET  : 브라우저가 15초는 그대로, 그 뒤 45초는 옛 값을 먼저 보여 주고 뒤에서 새로 받게 한다.
+//                         (Vary: Authorization — 같은 브라우저에서 다른 사람이 로그인해도 남의 화면이 보이지 않게)
+//   저장/수정/삭제 응답 : 절대 캐시하지 않는다.
+// ─────────────────────────────────────────────────────────────
+export const ANALYTICS_CACHE_CONTROL = 'private, max-age=15, stale-while-revalidate=45'
+
+export function cachedJson(body: unknown, init: { status?: number } = {}) {
+  const status = init.status ?? 200
+  const headers: Record<string, string> = status === 200 ? { 'Cache-Control': ANALYTICS_CACHE_CONTROL, Vary: 'Authorization' } : { 'Cache-Control': 'no-store' }
+  return NextResponse.json(body, { status, headers })
+}
+
+export function noStoreJson(body: unknown, init: { status?: number } = {}) {
+  return NextResponse.json(body, { status: init.status ?? 200, headers: { 'Cache-Control': 'no-store' } })
 }
 
 // 현재 활성화된(api_active=true) 유튜브 계정의 API 키를 가져온다. 통계 새로고침용.

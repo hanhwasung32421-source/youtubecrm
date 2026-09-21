@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { TABLES } from '@/lib/supabase/tables'
 import { V2_TABLES } from '@/lib/v2/tables'
-import { authedContext, handleDbError, handleRouteError, isMissingTableError, isUuid, nowIso, serverError } from '@/lib/v2/server'
+import { authedContext, handleDbError, handleRouteError, isMissingTableError, isUuid, noStoreJson, nowIso, serverError } from '@/lib/v2/server'
 import { sampleSeoChecklistsPayload } from '@/lib/v2/sample-data'
 import { SEO_CHECKLIST_FIELDS, type SeoChecklist, type SeoChecklistsPayload } from '@/lib/v2/types'
 
@@ -20,6 +20,7 @@ const patchSchema = z.object({
 })
 
 const MAX_IDS = 300
+const CHECKLIST_SELECT = 'video_id, title_has_stock, thumbnail_text_checked, description_timestamps, tags_5plus, updated_at'
 
 export async function GET(request: Request) {
   try {
@@ -48,7 +49,7 @@ export async function GET(request: Request) {
       if (videoIds.length === 0) return NextResponse.json({ items: [] } satisfies SeoChecklistsPayload)
     }
 
-    const { data, error } = await supabaseAdmin.from(V2_TABLES.seoChecklists).select('*').in('video_id', videoIds)
+    const { data, error } = await supabaseAdmin.from(V2_TABLES.seoChecklists).select(CHECKLIST_SELECT).in('video_id', videoIds)
     if (error) {
       if (isMissingTableError(error)) return NextResponse.json(sampleSeoChecklistsPayload(videoIds))
       return handleDbError(error, '체크리스트를 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.')
@@ -85,11 +86,11 @@ export async function PATCH(request: Request) {
     const { data, error } = await supabaseAdmin
       .from(V2_TABLES.seoChecklists)
       .upsert({ video_id: body.videoId, ...patchColumns, updated_at: nowIso() }, { onConflict: 'video_id' })
-      .select('*')
+      .select(CHECKLIST_SELECT)
       .single()
     if (error || !data) return handleDbError(error, '체크리스트를 저장하지 못했어요. 잠시 뒤 다시 시도해 주세요.')
 
-    return NextResponse.json({ ok: true, item: data as SeoChecklist })
+    return noStoreJson({ ok: true, item: data as SeoChecklist })
   } catch (e) {
     return handleRouteError(e, '체크리스트를 저장하지 못했어요. 잠시 뒤 다시 시도해 주세요.')
   }

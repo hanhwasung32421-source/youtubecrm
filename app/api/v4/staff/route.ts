@@ -1,6 +1,7 @@
-import { NextResponse } from 'next/server'
-import { STAFF_COLUMNS, computeKpis, computeStaffStats, getPeriodRange, parsePeriod } from '@/lib/v4/analytics'
-import { loadUsers, loadVideos, requireV4Admin, v4ErrorResponse } from '@/lib/v4/server'
+import { computeKpis, computeStaffStats, getPeriodRange, parsePeriod } from '@/lib/v4/analytics'
+import { cachedJson } from '@/lib/v4/http'
+import { loadPeriodRows, loadUsersShared } from '@/lib/v4/period-rows'
+import { requireV4Admin, v4ErrorResponse } from '@/lib/v4/server'
 
 export async function GET(request: Request) {
   try {
@@ -9,8 +10,8 @@ export async function GET(request: Request) {
     const range = getPeriodRange(parsePeriod(url.searchParams.get('period')))
 
     const [videos, { staff, map: userMap }] = await Promise.all([
-      loadVideos(supabaseAdmin, { startIso: range.startIso, endIso: range.endIso, columns: STAFF_COLUMNS }),
-      loadUsers(supabaseAdmin)
+      loadPeriodRows(supabaseAdmin, { startIso: range.startIso, endIso: range.endIso }),
+      loadUsersShared(supabaseAdmin)
     ])
 
     // 활동 직원 + (퇴사/비활성이라도) 기간 내 영상을 가진 사람은 비교 대상에 포함
@@ -23,7 +24,7 @@ export async function GET(request: Request) {
     const rows = computeStaffStats(videos, [...staff, ...extra], range.endYmd)
     const team = computeKpis(videos)
 
-    return NextResponse.json({
+    return cachedJson({
       period: range.days,
       range: { start: range.startYmd, end: range.endYmd },
       rows,

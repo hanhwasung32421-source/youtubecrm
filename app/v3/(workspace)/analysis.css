@@ -108,11 +108,11 @@
 }
 
 .v3-theme .v3a-tone-good {
-  color: #1f7a52;
+  color: #17694a;
 }
 
 .v3-theme .v3a-tone-bad {
-  color: #b8392f;
+  color: #a8322a;
 }
 
 .v3-theme .v3a-tone-neutral {
@@ -511,11 +511,6 @@
   background: rgba(47, 158, 110, 0.06);
 }
 
-.v3-theme .v3a-compare td.win::after {
-  content: ' ▲';
-  font-size: 10px;
-}
-
 /* ── 시리즈 카드 ────────────────────────────────────────────── */
 .v3-theme .v3a-series-lines {
   display: grid;
@@ -594,5 +589,563 @@
   }
   .v3-theme .v3a-series-lines {
     grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   3라운드: 읽기 쉬움 · 차트 · 로딩 뼈대 · 좁은 화면
+   ═══════════════════════════════════════════════════════════════ */
+
+/* 화면에는 안 보이고 스크린리더만 읽는 글자 */
+.v3-theme .v3a-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── 로딩 뼈대(shimmer) ─────────────────────────────────────── */
+.v3-theme .v3a-skel {
+  display: block;
+  max-width: 100%;
+  border-radius: 6px;
+  background: linear-gradient(90deg, #f1f0ed 25%, #e7e5e0 40%, #f1f0ed 60%);
+  background-size: 300% 100%;
+  animation: v3a-shimmer 1.5s ease-in-out infinite;
+}
+
+.v3-theme .v3a-skel-section {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+@keyframes v3a-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: 0 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .v3-theme .v3a-skel {
+    animation: none;
+  }
+  .v3-theme .v3a-dim,
+  .v3-theme .v3a-pick {
+    transition: none;
+  }
+}
+
+/* ── 목록 행/카드: 긴 제목은 말줄임 ───────────────────────────── */
+.v3-theme .v3a-row-title .v3-tag {
+  margin-left: 6px;
+  vertical-align: 1px;
+}
+
+.v3-theme .v3a-row-value small {
+  white-space: normal;
+  max-width: 190px;
+  margin-left: auto;
+}
+
+.v3-theme .v3a-card-title {
+  overflow-wrap: anywhere;
+}
+
+.v3-theme .v3a-card-title a {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* 데스크톱: 영상 고르기 목록이 길어져도 결과가 화면 밖으로 밀리지 않게 자체 스크롤 */
+@media (min-width: 1101px) {
+  .v3-theme .v3a-picker.tall {
+    max-height: min(70vh, 640px);
+    overflow-y: auto;
+    padding-right: 2px;
+  }
+  .v3-theme .v3a-split > .v3a-pane:last-child {
+    position: sticky;
+    top: 12px;
+  }
+}
+
+/* ── 차트 공통 ──────────────────────────────────────────────── */
+.v3-theme .v3a-figure {
+  margin: 0;
+  padding: 14px 16px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  min-width: 0;
+}
+
+.v3-theme .v3a-chart {
+  position: relative;
+  min-width: 0;
+  border-radius: 8px;
+  outline: none;
+}
+
+.v3-theme .v3a-chart:focus-visible {
+  box-shadow: 0 0 0 2px var(--primary);
+}
+
+.v3-theme .v3a-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+  touch-action: pan-y;
+}
+
+.v3-theme .v3a-gridline {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.v3-theme .v3a-axisline {
+  stroke: var(--line-strong);
+  stroke-width: 1;
+}
+
+.v3-theme .v3a-guide {
+  stroke: #9a978f;
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+}
+
+.v3-theme .v3a-axis-text {
+  font-size: 12px;
+  fill: #5f5e5a;
+  font-variant-numeric: tabular-nums;
+}
+
+.v3-theme .v3a-axis-title {
+  font-size: 12px;
+  font-weight: 600;
+  fill: #5f5e5a;
+}
+
+.v3-theme .v3a-point-label {
+  font-size: 12px;
+  font-weight: 700;
+  fill: #37352f;
+  paint-order: stroke;
+  stroke: #fff;
+  stroke-width: 3px;
+}
+
+.v3-theme .v3a-tip {
+  position: absolute;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: max-content;
+  max-width: min(280px, 80vw);
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #2b2a27;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.5;
+  pointer-events: none;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  white-space: normal;
+}
+
+.v3-theme .v3a-tip strong {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.v3-theme .v3a-tip-title {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.v3-theme .v3a-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: #5f5e5a;
+  line-height: 1.6;
+}
+
+.v3-theme .v3a-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.v3-theme .v3a-key {
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.v3-theme .v3a-key.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--primary);
+}
+
+.v3-theme .v3a-key.bar {
+  width: 16px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--primary);
+}
+
+.v3-theme .v3a-key-svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+.v3-theme .v3a-chart-empty {
+  padding: 28px 16px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--muted);
+  border: 1px dashed var(--line-strong);
+  border-radius: 10px;
+  background: var(--bg-soft);
+}
+
+/* ── 반응률 구간 막대 ───────────────────────────────────────── */
+.v3-theme .v3a-hist {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.v3-theme .v3a-hist li {
+  display: grid;
+  grid-template-columns: minmax(120px, 170px) minmax(0, 1fr) minmax(96px, auto);
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.v3-theme .v3a-hist-label {
+  min-width: 0;
+  font-weight: 600;
+}
+
+.v3-theme .v3a-hist-track {
+  display: block;
+  height: 14px;
+  border-radius: 4px;
+  background: var(--bg-soft);
+  overflow: hidden;
+}
+
+.v3-theme .v3a-hist-fill {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  background: #8fa9e8;
+}
+
+.v3-theme .v3a-hist li.top .v3a-hist-fill {
+  background: var(--primary);
+}
+
+.v3-theme .v3a-hist-value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.v3-theme .v3a-hist-value em {
+  font-style: normal;
+  font-weight: 400;
+  color: var(--muted);
+  margin-left: 4px;
+}
+
+.v3-theme .v3a-hist-top {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: #2a55b8;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* ── 롱폼 vs 숏폼 비교 표(막대 포함) ───────────────────────── */
+.v3-theme .v3a-compare th:first-child {
+  width: 38%;
+}
+
+.v3-theme .v3a-cmp-val {
+  display: block;
+}
+
+.v3-theme .v3a-win-mark {
+  display: inline-block;
+  margin-left: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #17694a;
+}
+
+.v3-theme .v3a-cmp-bar {
+  display: block;
+  height: 6px;
+  margin-top: 6px;
+  border-radius: 3px;
+  background: var(--bg-soft);
+  overflow: hidden;
+}
+
+.v3-theme .v3a-cmp-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: #b6b3ab;
+}
+
+.v3-theme .v3a-cmp-fill.win {
+  background: #2f9e6e;
+}
+
+.v3-theme .v3a-compare td.win {
+  color: #17694a;
+}
+
+/* ── 표(조회수 기록): 긴 표는 머리글 고정 + 자체 스크롤, 좁으면 카드로 ─ */
+.v3-theme .v3a-table-scroll {
+  max-height: 340px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.v3-theme .v3a-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+}
+
+.v3-theme .v3a-table th,
+.v3-theme .v3a-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.v3-theme .v3a-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-soft);
+  font-size: 12px;
+  font-weight: 700;
+  color: #5f5e5a;
+}
+
+.v3-theme .v3a-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.v3-theme .v3a-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.v3-theme .v3a-table .up-mark {
+  margin-right: 4px;
+  font-size: 10px;
+  color: #17694a;
+}
+
+.v3-theme .v3a-note-strong {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ── 좁은 화면 ──────────────────────────────────────────────── */
+@media (max-width: 720px) {
+  .v3-theme .v3a-hist li {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'label value'
+      'track track';
+    gap: 4px 10px;
+  }
+  .v3-theme .v3a-hist-label {
+    grid-area: label;
+  }
+  .v3-theme .v3a-hist-value {
+    grid-area: value;
+  }
+  .v3-theme .v3a-hist-track {
+    grid-area: track;
+  }
+  .v3-theme .v3a-hist-top {
+    display: none;
+  }
+  .v3-theme .v3a-figure {
+    padding: 12px 12px 10px;
+  }
+}
+
+@media (max-width: 560px) {
+  .v3-theme .v3a-headline {
+    font-size: 18px;
+  }
+  .v3-theme .v3a-answer {
+    padding: 14px;
+  }
+  .v3-theme .v3a-answer-action,
+  .v3-theme .v3a-answer-action .button {
+    width: 100%;
+  }
+  .v3-theme .v3a-stat-value {
+    font-size: 24px;
+  }
+
+  /* 순위 행: 제목이 두 줄까지 보이게, 값은 아래로 */
+  .v3-theme .v3a-row {
+    grid-template-columns: 22px minmax(0, 1fr);
+    row-gap: 2px;
+  }
+  .v3-theme .v3a-row-title {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+  .v3-theme .v3a-row-value {
+    grid-column: 2;
+    text-align: left;
+  }
+  .v3-theme .v3a-row-value small {
+    display: inline;
+    margin-left: 6px;
+  }
+
+  /* 형식 비교 표 → 항목마다 카드 */
+  .v3-theme .v3a-stackable thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+  }
+  .v3-theme .v3a-stackable,
+  .v3-theme .v3a-stackable tbody,
+  .v3-theme .v3a-stackable tr,
+  .v3-theme .v3a-stackable th,
+  .v3-theme .v3a-stackable td {
+    display: block;
+    width: 100%;
+  }
+  .v3-theme .v3a-stackable {
+    border: none;
+    background: none;
+  }
+  .v3-theme .v3a-stackable tr {
+    margin-bottom: 10px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--panel);
+    overflow: hidden;
+  }
+  .v3-theme .v3a-stackable tbody th {
+    background: var(--bg-soft);
+    border-bottom: 1px solid var(--line);
+    text-align: left;
+  }
+  .v3-theme .v3a-stackable td {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr);
+    align-items: start;
+    gap: 2px 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--line);
+  }
+  .v3-theme .v3a-stackable td:last-child {
+    border-bottom: none;
+  }
+  .v3-theme .v3a-stackable td::before {
+    content: attr(data-label);
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--muted);
+    padding-top: 2px;
+  }
+  .v3-theme .v3a-stackable td > * {
+    grid-column: 2;
+  }
+
+  /* 조회수 기록 표 → 카드 */
+  .v3-theme .v3a-table-scroll {
+    max-height: 420px;
+  }
+  .v3-theme .v3a-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+  }
+  .v3-theme .v3a-table,
+  .v3-theme .v3a-table tbody,
+  .v3-theme .v3a-table tr,
+  .v3-theme .v3a-table td {
+    display: block;
+    width: 100%;
+  }
+  .v3-theme .v3a-table tr {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  .v3-theme .v3a-table tbody tr:last-child {
+    border-bottom: none;
+  }
+  .v3-theme .v3a-table td {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 2px 0;
+    border-bottom: none;
+    text-align: right;
+    white-space: normal;
+  }
+  .v3-theme .v3a-table td::before {
+    content: attr(data-label);
+    font-size: 12px;
+    color: var(--muted);
+    text-align: left;
+    flex-shrink: 0;
   }
 }

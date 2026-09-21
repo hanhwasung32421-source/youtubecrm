@@ -5,10 +5,10 @@ import { PageHeader } from '@/components/v2/app-shell'
 import { ContentTypeTag } from '@/components/v2/tags'
 import { Toast, useToast } from '@/components/toast'
 import { useV2Me } from '@/components/v2/session-context'
-import { Answer, EmptyGuide, FieldError, HowTo, InlineConfirm, Kpi, KpiRow, LoadError, LoadingLine, MoreButton, SampleNote } from '@/lib/v2/analysis-ui'
-import { v2Delete, v2Get, v2Patch, v2Post } from '@/lib/v2/client'
-import { formatCount, shortText } from '@/lib/v2/format'
-import { formatKstDate } from '@/lib/v2/dates'
+import { Answer, EmptyGuide, FieldError, HowTo, InlineConfirm, Kpi, KpiRow, LoadError, MoreButton, RefreshNote, SampleNote, SkeletonList, SkeletonSummary, Stamp } from '@/lib/v2/analysis-ui'
+import { v2Delete, v2Patch, v2Post } from '@/lib/v2/client'
+import { formatCountOrDash, formatExact, shortText } from '@/lib/v2/format'
+import { useV2Query } from '@/lib/v2/swr'
 import { useRememberedState } from '@/lib/v2/use-remembered'
 import { V2_MISSING_TABLE_MESSAGE } from '@/lib/v2/tables'
 import {
@@ -23,6 +23,7 @@ import {
 } from '@/lib/v2/types'
 
 const EMPTY: OptimizationPayload = { items: [] }
+const isPayload = (data: unknown) => Array.isArray((data as { items?: unknown } | null)?.items)
 const PAGE_STEP = 15
 const VIEWS = ['todo', 'all'] as const
 const RATING_HINT: Record<number, string> = { 1: '눈에 안 띄어요', 2: '아쉬워요', 3: '보통이에요', 4: '눈에 띄어요', 5: '클릭하고 싶어요' }
@@ -66,9 +67,10 @@ function StarPicker({ value, onPick, disabled }: { value: number; onPick?: (rati
 export default function OptimizationPage() {
   const me = useV2Me()
   const { toast, showError } = useToast()
-  const [payload, setPayload] = useState<OptimizationPayload>(EMPTY)
-  const [loaded, setLoaded] = useState(false)
-  const [loadError, setLoadError] = useState('')
+  const query = useV2Query<OptimizationPayload>('/api/v2/optimization', { fallback: LOAD_ERROR, validate: isPayload })
+  const payload = query.data ?? EMPTY
+  const loaded = !query.loading
+  const loadError = query.error
   const [openId, setOpenId] = useState<string | null>(null)
   const [draftRating, setDraftRating] = useState(3)
   const [draftNote, setDraftNote] = useState('')
@@ -80,22 +82,9 @@ export default function OptimizationPage() {
   const [owner, setOwner] = useRememberedState<string>('opt.owner', '')
   const [visible, setVisible] = useState(PAGE_STEP)
   const formRef = useRef<HTMLFormElement>(null)
-
-  const load = async () => {
-    const res = await v2Get<OptimizationPayload>('/api/v2/optimization', LOAD_ERROR)
-    setLoaded(true)
-    if (!res.ok) {
-      setLoadError(res.error)
-      return
-    }
-    setLoadError('')
-    setPayload(res.data)
-  }
-
-  useEffect(() => {
-    void load()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  // 저장 버튼을 빠르게 두 번 눌러도 한 번만 보내도록 상태보다 먼저 바뀌는 표시를 함께 둔다.
+  const savingRef = useRef(false)
+  const pendingRef = useRef<Set<string>>(new Set())
 
   // 별점 입력이 열리면 현재 별점 버튼으로 바로 포커스를 옮긴다.
   useEffect(() => {
@@ -121,7 +110,7 @@ export default function OptimizationPage() {
   const top = todo[0]
 
   const patchRow = (videoId: string, fn: (row: OptimizationRow) => OptimizationRow) => {
-    setPayload((prev) => ({ ...prev, items: prev.items.map((row) => (row.video.id === videoId ? fn(row) : row)) }))
+    query.setData((prev) => ({ ...prev, items: prev.items.map((row) => (row.video.id === videoId ? fn(row) : row)) }))
   }
 
   const openReview = (row: OptimizationRow) => {
@@ -137,11 +126,12 @@ export default function OptimizationPage() {
   }
 
   const submitReview = async (row: OptimizationRow) => {
-    if (saving) return
+    if (saving || savingRef.current) return
     if (payload.sample) {
       setFormError(V2_MISSING_TABLE_MESSAGE)
       return
     }
+    savingRef.current = true
     setSaving(true)
     setFormError('')
     const res = await v2Post<{ ok?: boolean; item?: ThumbnailReview }>(
@@ -149,7 +139,9 @@ export default function OptimizationPage() {
       { videoId: row.video.id, rating: draftRating, note: draftNote.trim() || null },
       '썸네일 평가를 저장하지 못했어요. 다시 시도해 주세요.'
     )
+    savingRef.current = false
     setSaving(false)
+    query.noteStatus(res.status)
     if (!res.ok || !res.data.item) {
       setFormError(res.error || '썸네일 평가를 저장하지 못했어요. 다시 시도해 주세요.')
       return
@@ -162,30 +154,34 @@ export default function OptimizationPage() {
 
   const deleteReview = async (row: OptimizationRow) => {
     const review = row.latestReview
-    if (!review) return
+    if (!review || deletingId) return
     setDeletingId(review.id)
     const res = await v2Delete(`/api/v2/thumbnail-reviews?id=${encodeURIComponent(review.id)}`, '평가를 지우지 못했어요. 다시 시도해 주세요.')
     setDeletingId(null)
+    query.noteStatus(res.status)
     if (!res.ok) {
       showError(res.error)
       return
     }
     // 이전에 남긴 평가가 있으면 그것이 다시 최신이 되므로 서버 값으로 맞춘다.
-    await load()
+    query.reload()
   }
 
   // 체크리스트 칸: 누르면 바로 바뀌고, 저장에 실패하면 원래대로 되돌린다.
   const toggleCheck = async (row: OptimizationRow, field: SeoChecklistField) => {
     const key = `${row.video.id}:${field}`
-    if (pendingChecks.has(key)) return
+    if (pendingChecks.has(key) || pendingRef.current.has(key)) return
     if (payload.sample) {
       showError(V2_MISSING_TABLE_MESSAGE)
       return
     }
+    pendingRef.current.add(key)
     const next = !row.checklist[field]
     patchRow(row.video.id, (r) => ({ ...r, checklist: { ...r.checklist, [field]: next } }))
     setPendingChecks((prev) => new Set(prev).add(key))
     const res = await v2Patch('/api/v2/seo-checklists', { videoId: row.video.id, patch: { [field]: next } }, '체크리스트를 저장하지 못했어요. 다시 시도해 주세요.')
+    query.noteStatus(res.status)
+    pendingRef.current.delete(key)
     setPendingChecks((prev) => {
       const copy = new Set(prev)
       copy.delete(key)
@@ -204,10 +200,16 @@ export default function OptimizationPage() {
       <PageHeader title="영상 점검" subtitle="제목·설명·썸네일이 검색에 잘 걸리는지 확인하고, 고칠 곳이 많은 영상부터 보여줍니다." />
       <Toast toast={toast} />
       <SampleNote show={payload.sample} />
-      {loaded && loadError ? <LoadError message={loadError} onRetry={() => void load()} /> : null}
+      {(loaded && loadError) || query.expired ? <LoadError message={loadError} expired={query.expired} onRetry={query.reload} /> : null}
+      <RefreshNote show={query.refreshing} />
 
       {!loaded ? (
-        <LoadingLine />
+        <>
+          <SkeletonSummary />
+          <div className="panel">
+            <SkeletonList rows={4} />
+          </div>
+        </>
       ) : payload.items.length === 0 ? (
         loadError ? null : (
           <EmptyGuide title={me.isAdmin ? '점검할 영상이 아직 없어요' : '아직 등록한 영상이 없어요'} href="/v2/register" action="영상 등록하러 가기">
@@ -275,20 +277,32 @@ export default function OptimizationPage() {
                   return (
                     <div className="list-item" key={row.video.id}>
                       <div className="row-between" style={{ alignItems: 'flex-start', gap: 12 }}>
-                        <div style={{ minWidth: 0 }}>
+                        <div style={{ minWidth: 0, flex: 1 }}>
                           <div className="v2-card-title">
-                            <span>{row.video.title || '(제목 수집 대기)'}</span>
+                            <span className="v2a-clamp2" title={row.video.title || ''}>
+                              {row.video.youtube_url ? (
+                                <a href={row.video.youtube_url} target="_blank" rel="noreferrer noopener">
+                                  {row.video.title || '(제목 수집 대기)'}
+                                </a>
+                              ) : (
+                                row.video.title || '(제목 수집 대기)'
+                              )}
+                            </span>
                             <ContentTypeTag contentType={row.video.content_type} />
                           </div>
                           <div className="v2-card-meta" style={{ marginTop: 6 }}>
                             <span>{row.video.stock_name}</span>
                             {me.isAdmin && row.video.owner_name ? <span>담당 {row.video.owner_name}</span> : null}
-                            <span>발행 {formatKstDate(row.video.published_at)}</span>
-                            <span title={`${(row.video.view_count ?? 0).toLocaleString('ko-KR')}회`}>조회 {formatCount(row.video.view_count)}회</span>
+                            <span>
+                              발행 <Stamp iso={row.video.published_at} />
+                            </span>
+                            <span title={row.video.view_count == null ? '아직 조회수를 가져오지 못했어요' : `${formatExact(row.video.view_count)}회`}>
+                              조회 {row.video.view_count == null ? '-' : `${formatCountOrDash(row.video.view_count)}회`}
+                            </span>
                           </div>
                         </div>
-                        <span className={`pill ${problems.length === 0 ? 'success' : problems.length >= 3 ? 'danger' : 'warning'}`}>
-                          {problems.length === 0 ? '문제 없음' : `고칠 곳 ${problems.length}개`}
+                        <span className={`pill ${problems.length === 0 ? 'success' : problems.length >= 3 ? 'danger' : 'warning'}`} style={{ flex: 'none' }}>
+                          {problems.length === 0 ? '✓ 문제 없음' : `${problems.length >= 3 ? '▼ ' : ''}고칠 곳 ${problems.length}개`}
                         </span>
                       </div>
 

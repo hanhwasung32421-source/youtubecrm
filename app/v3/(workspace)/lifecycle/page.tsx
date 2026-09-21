@@ -2,17 +2,32 @@
 
 import '../analysis.css'
 import '@/lib/v3/interact.css'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { PageHeader } from '@/components/v3/app-shell'
 import { Toast, useToast } from '@/components/toast'
 import { Tag } from '@/components/v3/ui'
-import { LineGrowthChart, type GrowthPoint } from '@/components/v3/charts'
 import { useV3Me } from '@/components/v3/auth-guard'
 import { v3Request } from '@/lib/v3/api-client'
-import { useLatest } from '@/lib/v3/interact'
 import { usePref } from '@/lib/v3/prefs'
-import { formatCompactNumber, formatDateTime, formatNumber } from '@/lib/v3/format'
-import { AnswerCard, EmptyBlock, ErrorBlock, HowTo, LoadingBlock, MoreButton, useShowMore, type Tone } from '../analysis-parts'
+import { invalidateV3, useV3Data } from '@/lib/v3/use-v3-data'
+import { formatCompactNumber, formatDays, formatKstDateTime, formatNumber } from '@/lib/v3/format'
+import {
+  AnswerCard,
+  AnswerSkeleton,
+  ChartSkeleton,
+  EmptyBlock,
+  ErrorBlock,
+  HowTo,
+  MoreButton,
+  RefreshFailed,
+  RelTime,
+  Skel,
+  SkeletonShell,
+  useShowMore,
+  withLoginLink,
+  type Tone
+} from '../analysis-parts'
+import { GrowthChart, type GrowthPoint } from '../analysis-charts'
 
 type ListItem = {
   id: string
@@ -22,22 +37,20 @@ type ListItem = {
   viewCount: number | null
   publishedAt: string | null
   youtubeUrl: string | null
-  snapshotCount: number
+  // 기록 개수를 세지 않은 영상(목록 뒤쪽)은 null
+  snapshotCount: number | null
 }
 
 type ListResponse = { items: ListItem[]; staffOptions: { id: string; name: string }[] }
 
-type Snapshot = { snapshotAt: string; viewCount: number; likeCount: number; commentCount: number; day: number }
+type Snapshot = { snapshotAt: string; viewCount: number; likeCount: number; commentCount: number; day: number; gain?: number | null }
 
 type DetailResponse = {
   video: { id: string; title: string; stockName: string | null; contentType: string; youtubeUrl: string | null; publishedAt: string | null; viewCount: number | null; lastSyncedAt: string | null }
   snapshots: Snapshot[]
+  totalSnapshots?: number
+  sampled?: boolean
   enough: boolean
-}
-
-function formatSpan(days: number): string {
-  if (days >= 1) return `${days.toFixed(1)}일`
-  return `${Math.max(Math.round(days * 24), 1)}시간`
 }
 
 // 최근 기록 구간의 증가 속도를 "올린 뒤 평균 속도"와 비교해 한 문장으로 답한다.
@@ -48,17 +61,17 @@ function summarizeGrowth(snapshots: Snapshot[]): { tone: Tone; headline: string;
   const span = last.day - prev.day
   const avgRate = last.viewCount / Math.max(last.day, 1)
 
-  if (span < 0.25) {
+  if (!Number.isFinite(span) || span < 0.25) {
     return {
       tone: 'neutral',
-      headline: `마지막 두 기록의 간격이 ${formatSpan(span)}뿐이라 아직 ‘크는 중인지’ 말하기 어려워요.`,
+      headline: `마지막 두 기록의 간격이 ${formatDays(Number.isFinite(span) ? span : 0)}뿐이라 아직 ‘크는 중인지’ 말하기 어려워요.`,
       detail: '하루쯤 지난 뒤 통계를 다시 새로고침하면 정확히 알려드려요.'
     }
   }
 
   const recentRate = Math.max(gain, 0) / span
   const ratio = avgRate > 0 ? recentRate / avgRate : 0
-  const gained = `마지막 기록 이후 ${formatSpan(span)} 동안 조회수가 ${formatNumber(Math.max(gain, 0))}회 늘었어요.`
+  const gained = `마지막 기록 이후 ${formatDays(span)} 동안 조회수가 ${formatNumber(Math.max(gain, 0))}회 늘었어요.`
   const detail = `올린 뒤 평균은 하루 ${formatNumber(Math.round(avgRate))}회, 최근에는 하루 ${formatNumber(Math.round(recentRate))}회 속도예요.`
 
   if (ratio >= 0.7) return { tone: 'good', headline: `아직 잘 크고 있는 영상이에요. ${gained}`, detail }
@@ -76,80 +89,88 @@ type SyncResponse = {
 
 type SyncNotice = { tone: 'good' | 'warn' | 'neutral'; text: string; failures: string[] }
 
+// 실제 화면과 같은 모양의 뼈대(왼쪽 목록 + 오른쪽 답·그래프)
+function LifecycleSkeleton() {
+  return (
+    <SkeletonShell label="영상 목록을 불러오는 중이에요…">
+      <div className="v3a-split" aria-hidden>
+        <div className="v3a-pane">
+          <Skel w={130} h={18} />
+          <Skel h={36} r={8} />
+          <Skel w="90%" h={12} />
+          <div className="v3a-picker">
+            {Array.from({ length: 6 }, (_, i) => (
+              <div className="v3a-pick" key={i}>
+                <Skel w={`${88 - (i % 3) * 14}%`} h={14} />
+                <Skel w="60%" h={12} />
+              </div>
+            ))}
+          </div>
+        </div>
+        <DetailSkeleton />
+      </div>
+    </SkeletonShell>
+  )
+}
+
+function DetailSkeleton() {
+  return (
+    <div className="v3a-pane" aria-hidden>
+      <Skel w="62%" h={20} />
+      <Skel w="48%" h={12} />
+      <AnswerSkeleton />
+      <ChartSkeleton height={270} />
+    </div>
+  )
+}
+
 export default function LifecyclePage() {
   const me = useV3Me()
   const { toast, showError } = useToast()
-  const showErrorRef = useLatest(showError)
   // 마지막에 고른 직원 필터를 기억한다(관리자). 저장된 값을 읽은 뒤(ready)에 첫 목록을 불러온다.
   const [staffId, setStaffId, prefReady] = usePref('lifecycle:staff')
-  const [list, setList] = useState<ListResponse | null>(null)
-  const [listError, setListError] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [detail, setDetail] = useState<DetailResponse | null>(null)
-  const [detailError, setDetailError] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
+  const syncLock = useRef(false)
   const [syncNotice, setSyncNotice] = useState<SyncNotice | null>(null)
   const [query, setQuery] = useState('')
-  const detailSeq = useRef(0)
-  const listSeq = useRef(0)
+  const resultRef = useRef<HTMLDivElement>(null)
 
-  const loadList = useCallback(
-    async (filter: string) => {
-      const seq = ++listSeq.current
-      const qs = filter ? `?staffId=${encodeURIComponent(filter)}` : ''
-      const res = await v3Request<ListResponse>(`/api/v3/lifecycle${qs}`, {}, '영상 목록을 불러오지 못했어요.')
-      if (seq !== listSeq.current) return
-      if (!res.ok) {
-        setListError(res.error)
-        showErrorRef.current(res.error || '영상 목록을 불러오지 못했어요.')
-        return
-      }
-      // 저장해 둔 직원이 더는 목록에 없으면(퇴사 등) 전체 팀으로 되돌린다.
-      if (filter && !res.data.staffOptions.some((s) => s.id === filter)) {
-        setStaffId('')
-        return
-      }
-      setListError(null)
-      setList(res.data)
-      // 현재 고른 영상이 목록에 없으면(직원 필터 변경 등) 가장 최근 영상으로 바꾼다.
-      setSelectedId((prev) => (prev && res.data.items.some((i) => i.id === prev) ? prev : res.data.items[0]?.id ?? null))
-    },
-    [showErrorRef, setStaffId]
-  )
+  const listUrl = prefReady ? `/api/v3/lifecycle${staffId ? `?staffId=${encodeURIComponent(staffId)}` : ''}` : null
+  const list = useV3Data<ListResponse>(listUrl, { scope: me?.crmUserId, fallback: '영상 목록을 불러오지 못했어요.' })
+  const detailUrl = selectedId ? `/api/v3/lifecycle?videoId=${encodeURIComponent(selectedId)}` : null
+  const detail = useV3Data<DetailResponse>(detailUrl, { scope: me?.crmUserId, fallback: '조회수 기록을 불러오지 못했어요.' })
+  const listData = list.data
+  const reloadList = list.reload
+  const reloadDetail = detail.reload
 
-  const loadDetail = useCallback(
-    async (videoId: string) => {
-      const seq = ++detailSeq.current
-      const res = await v3Request<DetailResponse>(`/api/v3/lifecycle?videoId=${encodeURIComponent(videoId)}`, {}, '조회수 기록을 불러오지 못했어요.')
-      if (seq !== detailSeq.current) return
-      if (!res.ok) {
-        setDetailError(res.error)
-        showErrorRef.current(res.error || '조회수 기록을 불러오지 못했어요.')
-        return
-      }
-      setDetailError(null)
-      setDetail(res.data)
-    },
-    [showErrorRef]
-  )
-
+  // 목록이 바뀌면(필터 변경·새로고침) 고른 영상이 아직 있는지 확인하고, 없으면 가장 최근 영상으로 바꾼다.
+  // 저장해 둔 직원이 더는 목록에 없으면(퇴사 등) 전체 팀으로 되돌린다.
   useEffect(() => {
-    if (prefReady) void loadList(staffId)
-  }, [staffId, prefReady, loadList])
+    if (!listData) return
+    if (staffId && !listData.staffOptions.some((s) => s.id === staffId)) {
+      setStaffId('')
+      return
+    }
+    setSelectedId((prev) => (prev && listData.items.some((i) => i.id === prev) ? prev : listData.items[0]?.id ?? null))
+  }, [listData, staffId, setStaffId])
 
-  useEffect(() => {
-    if (selectedId) void loadDetail(selectedId)
-    else setDetail(null)
-  }, [selectedId, loadDetail])
+  const refreshAll = async () => {
+    // 조회수가 바뀌면 급상승·참여·비교 화면의 계산도 달라지므로 그쪽 저장본도 함께 비운다.
+    invalidateV3('/api/v3/lifecycle', '/api/v3/viral', '/api/v3/engagement', '/api/v3/format-series')
+    await Promise.all([reloadList(true), selectedId ? reloadDetail(true) : Promise.resolve(null)])
+  }
 
   // 여러 영상 새로고침: 기록이 가장 오래된 영상부터 10개. 결과는 사라지지 않는 안내 상자로 보여준다.
   const syncAll = async () => {
-    if (syncing) return
+    if (syncLock.current) return
+    syncLock.current = true
     setSyncing(true)
     setSyncNotice(null)
     const res = await v3Request<SyncResponse>('/api/v3/lifecycle/sync', { method: 'POST', body: staffId ? { staffId } : {} }, '조회수를 새로고침하지 못했어요.')
     if (!res.ok) {
       setSyncNotice({ tone: 'warn', text: res.error || '조회수를 새로고침하지 못했어요.', failures: [] })
+      syncLock.current = false
       setSyncing(false)
       return
     }
@@ -163,18 +184,20 @@ export default function LifecyclePage() {
       if (remaining > 0) parts.push(`아직 ${formatNumber(remaining)}개가 남았어요. 버튼을 한 번 더 누르면 이어서 기록해요.`)
       setSyncNotice({ tone: failures.length > 0 ? 'warn' : 'good', text: parts.join(' '), failures })
     }
-    await loadList(staffId)
-    if (selectedId) await loadDetail(selectedId)
+    await refreshAll()
+    syncLock.current = false
     setSyncing(false)
   }
 
   const syncOne = async () => {
-    if (!selectedId || syncing) return
+    if (!selectedId || syncLock.current) return
+    syncLock.current = true
     setSyncing(true)
     setSyncNotice(null)
     const res = await v3Request<SyncResponse>('/api/v3/lifecycle/sync', { method: 'POST', body: { videoId: selectedId } }, '조회수를 새로고침하지 못했어요.')
     if (!res.ok) {
       showError(res.error || '조회수를 새로고침하지 못했어요.')
+      syncLock.current = false
       setSyncing(false)
       return
     }
@@ -182,22 +205,33 @@ export default function LifecyclePage() {
     const row = res.data.results[0]
     if (row?.skipped) showError('방금 기록한 영상이에요. 몇 분 뒤에 다시 눌러 주세요.')
     else if (row && !row.ok) showError(row.error || '이 영상은 새로고침하지 못했어요.')
-    await loadDetail(selectedId)
-    await loadList(staffId)
+    await refreshAll()
+    syncLock.current = false
     setSyncing(false)
   }
 
+  // 검색은 이미 받아 둔 목록을 화면에서 거르기만 한다(서버에 다시 묻지 않는다).
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    const items = list?.items || []
+    const items = listData?.items || []
     if (!q) return items
     return items.filter((i) => i.title.toLowerCase().includes(q) || (i.stockName || '').toLowerCase().includes(q))
-  }, [list, query])
+  }, [listData, query])
   const more = useShowMore(filtered, 8, 10)
 
-  const shownDetail = detail && detail.video.id === selectedId ? detail : null
-  const points: GrowthPoint[] = (shownDetail?.snapshots || []).map((s) => ({ day: s.day, views: s.viewCount, snapshotAt: s.snapshotAt }))
-  const growth = shownDetail && shownDetail.enough ? summarizeGrowth(shownDetail.snapshots) : null
+  const pick = (id: string) => {
+    setSelectedId(id)
+    // 좁은 화면에서는 목록 아래에 결과가 있으므로, 고르면 결과 쪽으로 부드럽게 내려 준다.
+    if (typeof window !== 'undefined' && window.matchMedia('(max-width: 1100px)').matches) {
+      const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      window.requestAnimationFrame(() => resultRef.current?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' }))
+    }
+  }
+
+  const shownDetail = detail.data && detail.data.video.id === selectedId ? detail.data : null
+  const points: GrowthPoint[] = useMemo(() => (shownDetail?.snapshots || []).map((s) => ({ day: s.day, views: s.viewCount, snapshotAt: s.snapshotAt })), [shownDetail])
+  const growth = shownDetail && shownDetail.enough && shownDetail.snapshots.length >= 2 ? summarizeGrowth(shownDetail.snapshots) : null
+  const totalSnapshots = shownDetail ? shownDetail.totalSnapshots ?? shownDetail.snapshots.length : 0
 
   const header = (
     <PageHeader
@@ -206,10 +240,10 @@ export default function LifecyclePage() {
       subtitle="영상을 올린 뒤 조회수가 어떻게 늘어나는지 봅니다."
       actions={
         <div className="row">
-          {me?.isAdmin && list?.staffOptions?.length ? (
+          {me?.isAdmin && listData?.staffOptions?.length ? (
             <select className="select" aria-label="보는 범위" value={staffId} onChange={(e) => setStaffId(e.target.value)}>
               <option value="">전체 팀</option>
-              {list.staffOptions.map((s) => (
+              {listData.staffOptions.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.name}
                 </option>
@@ -233,7 +267,7 @@ export default function LifecyclePage() {
   const noticeEl = syncNotice ? (
     <div className={`v3i-notice ${syncNotice.tone === 'neutral' ? '' : syncNotice.tone}`} role="status">
       <div>
-        <div>{syncNotice.text}</div>
+        <div>{withLoginLink(syncNotice.text)}</div>
         {syncNotice.failures.length > 0 ? (
           <ul>
             {syncNotice.failures.slice(0, 5).map((f) => (
@@ -249,18 +283,18 @@ export default function LifecyclePage() {
     </div>
   ) : null
 
-  if (!list) {
+  if (!listData) {
     return (
       <>
         {header}
         <Toast toast={toast} />
         {noticeEl}
-        {listError ? <ErrorBlock message={listError} onRetry={() => void loadList(staffId)} /> : <LoadingBlock>영상 목록을 불러오는 중이에요…</LoadingBlock>}
+        {list.error ? <ErrorBlock message={list.error} status={list.status} onRetry={() => void reloadList(true)} /> : <LifecycleSkeleton />}
       </>
     )
   }
 
-  if (list.items.length === 0) {
+  if (listData.items.length === 0) {
     return (
       <>
         {header}
@@ -278,12 +312,17 @@ export default function LifecyclePage() {
       {header}
       <Toast toast={toast} />
       {noticeEl ? <div style={{ marginBottom: 16 }}>{noticeEl}</div> : null}
+      {list.error ? (
+        <div style={{ marginBottom: 16 }}>
+          <RefreshFailed message={list.error} status={list.status} onRetry={() => void reloadList(true)} />
+        </div>
+      ) : null}
 
-      <div className="v3a-split">
+      <div className={`v3a-split ${list.stale ? 'v3a-dim' : ''}`} aria-busy={list.stale || list.refreshing}>
         {/* 왼쪽: 영상 고르기 */}
         <div className="v3a-pane">
           <h2 className="v3a-pane-title">
-            영상 고르기 <span className="v3a-count">{formatNumber(list.items.length)}</span>
+            영상 고르기 <span className="v3a-count">{formatNumber(listData.items.length)}</span>
           </h2>
           <input className="input v3a-search" type="search" aria-label="영상 검색" placeholder="제목이나 종목으로 찾기 (예: 삼성전자)" value={query} onChange={(e) => setQuery(e.target.value)} />
           <p className="v3a-field-help">조회수 기록은 ‘새로고침’을 누를 때마다 하나씩 쌓여요. 기록이 2개 이상이어야 그래프가 그려져요.</p>
@@ -295,15 +334,20 @@ export default function LifecyclePage() {
               </button>
             </div>
           ) : (
-            <div className="v3a-picker">
+            <div className="v3a-picker tall">
               {more.visible.map((item) => (
-                <button key={item.id} type="button" className={`v3a-pick ${selectedId === item.id ? 'selected' : ''}`} onClick={() => setSelectedId(item.id)} aria-pressed={selectedId === item.id}>
+                <button key={item.id} type="button" className={`v3a-pick ${selectedId === item.id ? 'selected' : ''}`} onClick={() => pick(item.id)} aria-pressed={selectedId === item.id} title={item.title}>
                   <span className="v3a-pick-title">{item.title}</span>
                   <span className="v3a-pick-meta">
                     <span>{item.contentType === 'shortform' ? '숏폼' : '롱폼'}</span>
                     {item.stockName ? <span>{item.stockName}</span> : null}
-                    <span>조회수 {formatCompactNumber(item.viewCount)}</span>
-                    <span>{item.snapshotCount >= 2 ? `기록 ${item.snapshotCount}번` : `기록 ${item.snapshotCount}번 (부족)`}</span>
+                    <span title={`${formatNumber(item.viewCount)}회`}>조회수 {formatCompactNumber(item.viewCount)}</span>
+                    {item.publishedAt ? (
+                      <span>
+                        <RelTime value={item.publishedAt} />
+                      </span>
+                    ) : null}
+                    {item.snapshotCount === null ? null : <span>{item.snapshotCount >= 2 ? `기록 ${item.snapshotCount}번` : `기록 ${item.snapshotCount}번 (부족)`}</span>}
                   </span>
                 </button>
               ))}
@@ -313,11 +357,16 @@ export default function LifecyclePage() {
         </div>
 
         {/* 오른쪽: 선택한 영상의 답 */}
-        <div className="v3a-pane">
-          {detailError && !shownDetail ? (
-            <ErrorBlock message={detailError} onRetry={() => selectedId && void loadDetail(selectedId)} />
+        <div className="v3a-pane" ref={resultRef}>
+          {detail.error && !shownDetail ? (
+            <ErrorBlock message={detail.error} status={detail.status} onRetry={() => void reloadDetail(true)} />
           ) : !shownDetail ? (
-            <LoadingBlock>조회수 기록을 불러오는 중이에요…</LoadingBlock>
+            <>
+              <span className="v3a-sr" role="status">
+                조회수 기록을 불러오는 중이에요…
+              </span>
+              <DetailSkeleton />
+            </>
           ) : (
             <>
               <div className="v3a-video-head">
@@ -332,9 +381,11 @@ export default function LifecyclePage() {
                   <Tag tone={shownDetail.video.contentType === 'shortform' ? 'violet' : 'blue'}>{shownDetail.video.contentType === 'shortform' ? '숏폼' : '롱폼'}</Tag>
                 </h2>
                 <div className="v3a-video-meta">
-                  {shownDetail.video.stockName || '종목 미상'} · 지금 조회수 {formatNumber(shownDetail.video.viewCount)}회 · 마지막 새로고침 {formatDateTime(shownDetail.video.lastSyncedAt)}
+                  {shownDetail.video.stockName || '종목 미상'} · 지금 조회수 {formatNumber(shownDetail.video.viewCount)}회 · 마지막 새로고침 <RelTime value={shownDetail.video.lastSyncedAt} fallback="아직 없음" />
                 </div>
               </div>
+
+              {detail.error ? <RefreshFailed message={detail.error} status={detail.status} onRetry={() => void reloadDetail(true)} /> : null}
 
               {growth ? (
                 <AnswerCard
@@ -342,51 +393,75 @@ export default function LifecyclePage() {
                   headline={growth.headline}
                   detail={growth.detail}
                   action={
-                    <button className="button secondary" disabled={syncing} onClick={syncOne}>
+                    <button type="button" className="button secondary" disabled={syncing} onClick={() => void syncOne()}>
                       {syncing ? '새로고침 중…' : '이 영상 새로고침'}
                     </button>
                   }
                 />
               ) : (
                 <AnswerCard
-                  headline={
-                    shownDetail.snapshots.length === 0
-                      ? '아직 조회수 기록이 없어서 그래프를 그릴 수 없어요.'
-                      : '조회수 기록이 1번뿐이라 아직 그래프를 그릴 수 없어요.'
-                  }
+                  headline={totalSnapshots === 0 ? '아직 조회수 기록이 없어서 그래프를 그릴 수 없어요.' : '조회수 기록이 1번뿐이라 아직 그래프를 그릴 수 없어요.'}
                   detail="새로고침을 누르면 지금 조회수가 기록돼요. 하루쯤 지나 한 번 더 누르면 얼마나 늘었는지 보여드려요."
                   action={
-                    <button className="button" disabled={syncing} onClick={syncOne}>
+                    <button type="button" className="button" disabled={syncing} onClick={() => void syncOne()}>
                       {syncing ? '새로고침 중…' : '지금 조회수 기록하기'}
                     </button>
                   }
                 />
               )}
 
-              {shownDetail.enough ? <LineGrowthChart points={points} /> : null}
+              {shownDetail.enough ? <GrowthChart points={points} /> : null}
 
               {shownDetail.snapshots.length > 0 ? (
-                <HowTo title="기록을 표로 보기">
-                  <table className="v3-print-table">
-                    <thead>
-                      <tr>
-                        <th>기록한 날</th>
-                        <th className="num">올린 뒤</th>
-                        <th className="num">조회수</th>
-                        <th className="num">이전 기록보다</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {shownDetail.snapshots.map((s, i) => (
-                        <tr key={s.snapshotAt}>
-                          <td>{formatDateTime(s.snapshotAt)}</td>
-                          <td className="num">{s.day.toFixed(1)}일</td>
-                          <td className="num">{formatNumber(s.viewCount)}</td>
-                          <td className="num">{i === 0 ? '—' : `+${formatNumber(Math.max(s.viewCount - shownDetail.snapshots[i - 1].viewCount, 0))}`}</td>
+                <HowTo title={`기록을 표로 보기 (${formatNumber(totalSnapshots)}번)`}>
+                  {shownDetail.sampled ? <p className="v3a-note-strong">기록이 많아서 그 가운데 {formatNumber(shownDetail.snapshots.length)}개만 보여드려요. 가장 최근 기록이 맨 위에 있어요.</p> : null}
+                  <div className="v3a-table-scroll" tabIndex={0} role="region" aria-label="조회수 기록 표">
+                    <table className="v3a-table">
+                      <thead>
+                        <tr>
+                          <th scope="col">기록한 시각</th>
+                          <th scope="col" className="num">
+                            올린 뒤
+                          </th>
+                          <th scope="col" className="num">
+                            조회수
+                          </th>
+                          <th scope="col" className="num">
+                            이전 기록보다
+                          </th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {[...shownDetail.snapshots].reverse().map((s) => (
+                          <tr key={s.snapshotAt}>
+                            <td data-label="기록한 시각" title={s.snapshotAt}>
+                              {formatKstDateTime(s.snapshotAt)}
+                            </td>
+                            <td data-label="올린 뒤" className="num">
+                              {formatDays(s.day)}
+                            </td>
+                            <td data-label="조회수" className="num">
+                              {formatNumber(s.viewCount)}
+                            </td>
+                            <td data-label="이전 기록보다" className="num">
+                              {s.gain === null || s.gain === undefined ? (
+                                '—'
+                              ) : s.gain > 0 ? (
+                                <>
+                                  <span className="up-mark" aria-hidden>
+                                    ▲
+                                  </span>
+                                  {formatNumber(s.gain)}
+                                </>
+                              ) : (
+                                '변화 없음'
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </HowTo>
               ) : null}
 

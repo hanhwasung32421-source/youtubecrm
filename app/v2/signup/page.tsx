@@ -3,8 +3,10 @@
 import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { PasswordField } from '@/components/v2/password-field'
+import { setCachedV2Me } from '@/components/v2/session-context'
 import { createSupabaseBrowserClient } from '@/lib/supabase/browser-client'
-import { fetchMe } from '@/lib/session/me-client'
+import { clearMeCache, fetchMe } from '@/lib/session/me-client'
 import { V2_HOME_HREF } from '@/lib/v2/menu'
 
 type FieldKey = 'loginId' | 'password' | 'name' | 'birthDate' | 'phone' | 'antiBot'
@@ -52,6 +54,9 @@ export default function SignupPage() {
   }
 
   useEffect(() => {
+    // 새로 가입하는 사람에게 이전 사용자의 메모리 캐시가 보이지 않게 한다.
+    clearMeCache()
+    setCachedV2Me(null)
     void refresh()
   }, [])
 
@@ -258,17 +263,17 @@ export default function SignupPage() {
                   }
                 }}
                 aria-invalid={emailCheckError ? true : undefined}
-                aria-describedby="v2-su-email-help"
+                aria-describedby={emailCheckError ? "v2-su-email-help v2-su-email-error" : "v2-su-email-help"}
                 autoFocus
               />
               <button className="button secondary nowrap" type="button" disabled={loading} onClick={() => void checkEmailDuplicate()}>
-                {loading ? '확인 중...' : emailChecked ? '확인됨 ✓' : '중복확인'}
+                {loading ? '확인 중…' : emailChecked ? '확인됨 ✓' : '중복확인'}
               </button>
             </div>
             <div className="v2-field-help" id="v2-su-email-help">
               이미 가입한 이메일인지 확인해요. Enter를 눌러도 됩니다.
             </div>
-            {emailCheckError ? <div className="v2-field-error">{emailCheckError}</div> : null}
+            {emailCheckError ? <div className="v2-field-error" id="v2-su-email-error" role="alert">{emailCheckError}</div> : null}
           </div>
 
           {emailChecked ? (
@@ -282,6 +287,9 @@ export default function SignupPage() {
                   ref={loginIdRef}
                   className="input"
                   autoComplete="username"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
                   value={loginId}
                   readOnly={loading}
                   onChange={(e) => {
@@ -289,32 +297,27 @@ export default function SignupPage() {
                     clearFieldError('loginId')
                   }}
                   aria-invalid={fieldErrors.loginId ? true : undefined}
+                  aria-describedby={fieldErrors.loginId ? 'v2-su-loginid-help v2-su-loginId-error' : 'v2-su-loginid-help'}
                 />
-                <div className="v2-field-help">로그인할 때 이메일 대신 쓸 수 있는 이름이에요. (2자 이상)</div>
-                {fieldErrors.loginId ? <div className="v2-field-error">{fieldErrors.loginId}</div> : null}
+                <div className="v2-field-help" id="v2-su-loginid-help">로그인할 때 이메일 대신 쓸 수 있는 이름이에요. (2자 이상)</div>
+                {fieldErrors.loginId ? <div className="v2-field-error" id="v2-su-loginId-error" role="alert">{fieldErrors.loginId}</div> : null}
               </div>
 
-              <div className="field">
-                <label className="label" htmlFor="v2-su-password">
-                  비밀번호
-                </label>
-                <input
-                  id="v2-su-password"
-                  ref={passwordRef}
-                  className="input"
-                  type="password"
-                  autoComplete="new-password"
-                  value={password}
-                  readOnly={loading}
-                  onChange={(e) => {
-                    setPassword(e.target.value)
-                    clearFieldError('password')
-                  }}
-                  aria-invalid={fieldErrors.password ? true : undefined}
-                />
-                <div className="v2-field-help">6자 이상으로 만들어 주세요.</div>
-                {fieldErrors.password ? <div className="v2-field-error">{fieldErrors.password}</div> : null}
-              </div>
+              <PasswordField
+                id="v2-su-password"
+                label="비밀번호"
+                value={password}
+                onChange={(v) => {
+                  setPassword(v)
+                  clearFieldError('password')
+                }}
+                autoComplete="new-password"
+                inputRef={passwordRef}
+                readOnly={loading}
+                invalid={Boolean(fieldErrors.password)}
+                help="6자 이상으로 만들어 주세요."
+                error={fieldErrors.password}
+              />
 
               <div className="field">
                 <label className="label" htmlFor="v2-su-name">
@@ -332,8 +335,9 @@ export default function SignupPage() {
                     clearFieldError('name')
                   }}
                   aria-invalid={fieldErrors.name ? true : undefined}
+                  aria-describedby={fieldErrors.name ? 'v2-su-name-error' : undefined}
                 />
-                {fieldErrors.name ? <div className="v2-field-error">{fieldErrors.name}</div> : null}
+                {fieldErrors.name ? <div className="v2-field-error" id="v2-su-name-error" role="alert">{fieldErrors.name}</div> : null}
               </div>
 
               <div className="field">
@@ -356,27 +360,28 @@ export default function SignupPage() {
                   inputMode="numeric"
                   autoComplete="off"
                   aria-invalid={fieldErrors.birthDate ? true : undefined}
+                  aria-describedby={fieldErrors.birthDate ? 'v2-su-birth-help v2-su-birthDate-error' : 'v2-su-birth-help'}
                 />
-                <div className="v2-field-help">숫자 8자리만 적어 주세요.</div>
-                {fieldErrors.birthDate ? <div className="v2-field-error">{fieldErrors.birthDate}</div> : null}
+                <div className="v2-field-help" id="v2-su-birth-help">숫자 8자리만 적어 주세요.</div>
+                {fieldErrors.birthDate ? <div className="v2-field-error" id="v2-su-birthDate-error" role="alert">{fieldErrors.birthDate}</div> : null}
               </div>
 
               <div className="field">
                 <label className="label" htmlFor="v2-su-phone-mid">
                   전화번호
                 </label>
-                <div className="row">
-                  <input className="input" style={{ maxWidth: 90, textAlign: 'center' }} value="010" disabled aria-label="전화번호 앞자리" />
-                  <span className="muted">-</span>
+                <div className="v2-phone" role="group" aria-label="전화번호">
+                  <input className="input v2-phone-prefix" value="010" disabled aria-label="전화번호 앞자리" />
+                  <span className="muted" aria-hidden="true">-</span>
                   <input
                     id="v2-su-phone-mid"
                     ref={phoneMidRef}
-                    className="input"
-                    style={{ maxWidth: 120, textAlign: 'center' }}
+                    className="input v2-phone-part"
                     value={phoneMid}
                     maxLength={4}
                     inputMode="numeric"
                     autoComplete="off"
+                    enterKeyHint="next"
                     readOnly={loading}
                     aria-label="전화번호 가운데 4자리"
                     aria-invalid={fieldErrors.phone ? true : undefined}
@@ -387,11 +392,10 @@ export default function SignupPage() {
                       if (next.length === 4) phoneLastRef.current?.focus()
                     }}
                   />
-                  <span className="muted">-</span>
+                  <span className="muted" aria-hidden="true">-</span>
                   <input
                     ref={phoneLastRef}
-                    className="input"
-                    style={{ maxWidth: 120, textAlign: 'center' }}
+                    className="input v2-phone-part"
                     value={phoneLast}
                     maxLength={4}
                     inputMode="numeric"
@@ -408,22 +412,21 @@ export default function SignupPage() {
                   />
                 </div>
                 <div className="v2-field-help">010은 미리 들어 있어요. 뒤의 8자리만 적어 주세요.</div>
-                {fieldErrors.phone ? <div className="v2-field-error">{fieldErrors.phone}</div> : null}
+                {fieldErrors.phone ? <div className="v2-field-error" id="v2-su-phone-error" role="alert">{fieldErrors.phone}</div> : null}
               </div>
 
               <div className="field">
                 <label className="label" htmlFor="v2-su-antibot">
                   자동가입방지
                 </label>
-                <div className="row">
-                  <div className="card-value" aria-label={`보이는 숫자 ${challengeCode.split('').join(' ')}`}>
+                <div className="v2-antibot">
+                  <div className="card-value v2-antibot-code" role="img" aria-label={`보이는 숫자 ${challengeCode.split('').join(' ')}`}>
                     {challengeCode}
                   </div>
                   <input
                     id="v2-su-antibot"
                     ref={antiBotRef}
-                    className="input"
-                    style={{ maxWidth: 140, textAlign: 'center' }}
+                    className="input v2-antibot-input"
                     value={antiBotCode}
                     maxLength={4}
                     readOnly={loading}
@@ -435,17 +438,24 @@ export default function SignupPage() {
                     inputMode="numeric"
                     autoComplete="off"
                     aria-invalid={fieldErrors.antiBot ? true : undefined}
+                    aria-describedby={fieldErrors.antiBot ? 'v2-su-antibot-help v2-su-antiBot-error' : 'v2-su-antibot-help'}
                   />
                   <button className="button secondary nowrap" type="button" disabled={loading} onClick={() => void refresh()}>
                     새로 만들기
                   </button>
                 </div>
-                <div className="v2-field-help">왼쪽에 보이는 숫자 4자리를 그대로 적어 주세요.</div>
-                {fieldErrors.antiBot ? <div className="v2-field-error">{fieldErrors.antiBot}</div> : null}
+                <div className="v2-field-help" id="v2-su-antibot-help">왼쪽에 보이는 숫자 4자리를 그대로 적어 주세요.</div>
+                {fieldErrors.antiBot ? <div className="v2-field-error" id="v2-su-antiBot-error" role="alert">{fieldErrors.antiBot}</div> : null}
               </div>
 
-              <button className="button" type="submit" disabled={loading}>
-                {loading ? '처리 중...' : '가입하기'}
+              <button className="button v2-submit" type="submit" disabled={loading}>
+                {loading ? (
+                  <>
+                    <span className="v2-spin" aria-hidden="true" /> 처리 중…
+                  </>
+                ) : (
+                  '가입하기'
+                )}
               </button>
             </>
           ) : null}

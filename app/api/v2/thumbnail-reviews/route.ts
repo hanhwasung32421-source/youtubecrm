@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { TABLES } from '@/lib/supabase/tables'
 import { V2_TABLES } from '@/lib/v2/tables'
-import { authedContext, forbidden, handleDbError, handleRouteError, isUuid } from '@/lib/v2/server'
+import { authedContext, forbidden, handleDbError, handleRouteError, isUuid, noStoreJson } from '@/lib/v2/server'
 import type { ThumbnailReview } from '@/lib/v2/types'
 
 // 썸네일 클릭률 자가평가(1~5점) — 제목·썸네일 최적화 보드에서 사용.
@@ -38,7 +38,7 @@ export async function POST(request: Request) {
       .single()
     if (error || !data) return handleDbError(error, '썸네일 평가를 저장하지 못했어요. 잠시 뒤 다시 시도해 주세요.')
 
-    return NextResponse.json({ ok: true, item: data as ThumbnailReview })
+    return noStoreJson({ ok: true, item: data as ThumbnailReview })
   } catch (e) {
     return handleRouteError(e, '썸네일 평가를 저장하지 못했어요. 잠시 뒤 다시 시도해 주세요.')
   }
@@ -53,12 +53,12 @@ export async function DELETE(request: Request) {
 
     const { data: existing, error: loadError } = await supabaseAdmin.from(V2_TABLES.thumbnailReviews).select('id, reviewed_by').eq('id', id).maybeSingle()
     if (loadError) return handleDbError(loadError, '평가를 지우지 못했어요. 잠시 뒤 다시 시도해 주세요.')
-    if (!existing) return NextResponse.json({ ok: true })
+    if (!existing) return noStoreJson({ ok: true })
     if (!isAdmin && existing.reviewed_by !== profile.id) return forbidden('본인이 남긴 평가만 지울 수 있어요.')
 
     const { error } = await supabaseAdmin.from(V2_TABLES.thumbnailReviews).delete().eq('id', id)
     if (error) return handleDbError(error, '평가를 지우지 못했어요. 잠시 뒤 다시 시도해 주세요.')
-    return NextResponse.json({ ok: true })
+    return noStoreJson({ ok: true })
   } catch (e) {
     return handleRouteError(e, '평가를 지우지 못했어요. 잠시 뒤 다시 시도해 주세요.')
   }

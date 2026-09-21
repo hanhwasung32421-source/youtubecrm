@@ -6,7 +6,9 @@ import { BulkRegister } from '@/components/v4/bulk-register'
 import { useV4Me } from '@/components/v4/me-context'
 import { MyVideoList, type MyVideo } from '@/components/v4/my-video-list'
 import { DAILY_TARGET, fetchTodayCount, registerVideo, type ContentType } from '@/components/v4/register-api'
-import { EmptyState } from '@/components/v4/ui'
+import { EmptyState, FormatToggle } from '@/components/v4/ui'
+import { ListSkeleton } from '@/components/v4/skeleton'
+import { analyzePaste, looksLikeStockName, toBulkText } from '@/components/v4/paste-detect'
 import {
   extractVideoId,
   isShortsUrl,
@@ -46,6 +48,11 @@ export default function VideoRegisterPage() {
   const [showHints, setShowHints] = useState(false)
   const [status, setStatus] = useState<Status>(null)
   const [autoShortNote, setAutoShortNote] = useState(false)
+  // 붙여넣기 안내: 제목이 같이 붙었을 때 / 주소가 여러 개일 때
+  const [pasteNote, setPasteNote] = useState('')
+  const [stockSuggest, setStockSuggest] = useState('')
+  const [bulkSuggest, setBulkSuggest] = useState<{ text: string; count: number } | null>(null)
+  const [bulkSeed, setBulkSeed] = useState<{ id: number; text: string } | null>(null)
 
   const [items, setItems] = useState<MyVideo[]>([])
   const [loaded, setLoaded] = useState(false)
@@ -147,6 +154,16 @@ export default function VideoRegisterPage() {
     }
   }
 
+  // "여러 개 붙여넣기"로 바꾸면서 방금 붙여넣은 글을 그대로 옮겨 준다.
+  const carryToBulk = () => {
+    if (!bulkSuggest) return
+    setBulkSeed((prev) => ({ id: (prev?.id || 0) + 1, text: bulkSuggest.text }))
+    setBulkSuggest(null)
+    setYoutubeUrl('')
+    setStatus(null)
+    switchMode('bulk')
+  }
+
   const applyUrl = (raw: string) => {
     const cleaned = normalizeYoutubeUrl(raw)
     setYoutubeUrl(cleaned || raw.trim())
@@ -165,14 +182,27 @@ export default function VideoRegisterPage() {
   const onPasteUrl = (e: React.ClipboardEvent<HTMLInputElement>) => {
     const text = e.clipboardData.getData('text')
     if (!text) return
-    // 여러 줄이 한꺼번에 붙여졌다면 "여러 개 붙여넣기"를 권한다.
-    if (text.split(/\r?\n/).filter((line) => line.trim()).length > 1) {
+    const info = analyzePaste(text)
+    setPasteNote('')
+    setStockSuggest('')
+
+    // 주소가 둘 이상 = 여러 개를 한꺼번에 붙여넣은 것 → "여러 개 붙여넣기"를 권하고, 클릭 한 번에 글을 옮겨 준다.
+    if (info.kind === 'multi') {
       e.preventDefault()
-      setStatus({ tone: 'error', text: '여러 개를 한 번에 붙여넣으셨네요.', detail: '위의 "여러 개 붙여넣기"를 누르면 한 번에 등록할 수 있어요' })
+      setStatus(null)
+      setBulkSuggest({ text: toBulkText(text), count: info.urls.length })
       return
     }
+    setBulkSuggest(null)
+    // 주소가 없는 글은 그대로 두고(직접 고쳐 쓰는 중일 수 있어요), 나머지는 주소만 뽑아 넣는다.
+    if (info.kind === 'none') return
+
     e.preventDefault()
     const cleaned = applyUrl(text)
+    if (info.kind === 'single-with-text') {
+      setPasteNote('제목은 빼고 주소만 넣었어요. 제목은 유튜브에서 자동으로 채워져요.')
+      if (!stockName.trim() && looksLikeStockName(info.leftover)) setStockSuggest(info.leftover)
+    }
     // 주소가 제대로 들어왔으면 바로 종목 칸으로 → 붙여넣기 · 종목 입력 · Enter 만으로 끝
     if (cleaned && isYoutubeUrl(cleaned)) {
       setShowHints(false)
@@ -226,6 +256,9 @@ export default function VideoRegisterPage() {
       setMemo('')
       setShowHints(false)
       setAutoShortNote(false)
+      setPasteNote('')
+      setStockSuggest('')
+      setBulkSuggest(null)
       urlRef.current?.focus()
       void loadMine()
     } finally {
@@ -280,11 +313,11 @@ export default function VideoRegisterPage() {
         }
       />
 
-      <div className="v4-mode-tabs" role="tablist" aria-label="등록 방법">
-        <button type="button" role="tab" aria-selected={mode === 'single'} className={`v4-mode-tab ${mode === 'single' ? 'active' : ''}`} onClick={() => switchMode('single')}>
+      <div className="v4-mode-tabs" role="group" aria-label="등록 방법">
+        <button type="button" aria-pressed={mode === 'single'} className={`v4-mode-tab ${mode === 'single' ? 'active' : ''}`} onClick={() => switchMode('single')}>
           하나씩 등록
         </button>
-        <button type="button" role="tab" aria-selected={mode === 'bulk'} className={`v4-mode-tab ${mode === 'bulk' ? 'active' : ''}`} onClick={() => switchMode('bulk')}>
+        <button type="button" aria-pressed={mode === 'bulk'} className={`v4-mode-tab ${mode === 'bulk' ? 'active' : ''}`} onClick={() => switchMode('bulk')}>
           여러 개 붙여넣기
         </button>
       </div>
@@ -307,8 +340,13 @@ export default function VideoRegisterPage() {
               ref={urlRef}
               className="input v4-reg-url"
               inputMode="url"
+              type="text"
               autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="none"
               spellCheck={false}
+              enterKeyHint="next"
+              aria-describedby="v4-reg-url-hint"
               placeholder="여기에 영상 주소를 붙여넣으세요"
               value={youtubeUrl}
               readOnly={submitting}
@@ -317,6 +355,9 @@ export default function VideoRegisterPage() {
                 setYoutubeUrl(e.target.value)
                 setStatus(null)
                 setAutoShortNote(false)
+                setPasteNote('')
+                setStockSuggest('')
+                setBulkSuggest(null)
               }}
               onPaste={onPasteUrl}
               onBlur={() => {
@@ -327,6 +368,18 @@ export default function VideoRegisterPage() {
                 }
               }}
               onKeyDown={(e) => {
+                // Esc: 주소 칸을 비우고 안내도 지운다 (잘못 붙여넣었을 때 빨리 다시 시작)
+                if (e.key === 'Escape' && (youtubeUrl || bulkSuggest || pasteNote)) {
+                  e.preventDefault()
+                  setYoutubeUrl('')
+                  setStatus(null)
+                  setShowHints(false)
+                  setAutoShortNote(false)
+                  setPasteNote('')
+                  setStockSuggest('')
+                  setBulkSuggest(null)
+                  return
+                }
                 if (e.key === 'Enter' && !e.nativeEvent.isComposing && !stockName.trim()) {
                   // 종목을 아직 안 적었다면 등록 대신 종목 칸으로 이동
                   e.preventDefault()
@@ -334,13 +387,48 @@ export default function VideoRegisterPage() {
                 }
               }}
             />
-            <div className="v4-hint-slot">
+            {bulkSuggest ? (
+              <div className="v4-suggest" role="status">
+                <span>
+                  주소가 <strong>{bulkSuggest.count}개</strong> 들어 있어요. 한 번에 등록할까요?
+                </span>
+                <span className="v4-suggest-actions">
+                  <button type="button" className="button v4-mini v4-touch" onClick={carryToBulk}>
+                    여러 개 붙여넣기로 바꾸기
+                  </button>
+                  <button type="button" className="button secondary v4-mini v4-touch" onClick={() => setBulkSuggest(null)}>
+                    하나만 쓸게요
+                  </button>
+                </span>
+              </div>
+            ) : null}
+            <div className="v4-hint-slot" id="v4-reg-url-hint">
               {showHints && !youtubeUrl.trim() ? (
                 <span className="v4-hint warn">유튜브 주소를 붙여넣어 주세요.</span>
               ) : showHints && urlInvalid ? (
                 <span className="v4-hint warn">유효하지 않은 주소예요. youtube.com 또는 youtu.be 로 시작하는 영상 주소를 넣어 주세요.</span>
               ) : duplicate ? (
                 <span className="v4-hint warn">이미 등록된 영상이에요. 다시 등록하면 종목·형식이 지금 입력한 값으로 바뀝니다.</span>
+              ) : pasteNote ? (
+                <span className="v4-hint">
+                  {pasteNote}
+                  {stockSuggest ? (
+                    <>
+                      {' '}
+                      <button
+                        type="button"
+                        className="v4-text-btn v4-touch"
+                        onClick={() => {
+                          setStockName(stockSuggest)
+                          setStockSuggest('')
+                          submitRef.current?.focus()
+                        }}
+                      >
+                        &lsquo;{stockSuggest}&rsquo;를 종목명으로 쓰기
+                      </button>
+                    </>
+                  ) : null}
+                </span>
               ) : autoShortNote ? (
                 <span className="v4-hint">쇼츠 주소라서 형식을 숏폼으로 바꿨어요.</span>
               ) : null}
@@ -358,6 +446,9 @@ export default function VideoRegisterPage() {
                 className="input"
                 list="v4-reg-stock-list"
                 autoComplete="off"
+                autoCorrect="off"
+                spellCheck={false}
+                enterKeyHint="done"
                 placeholder="예: 삼성전자"
                 value={stockName}
                 readOnly={submitting}
@@ -378,26 +469,7 @@ export default function VideoRegisterPage() {
               <span className="label" id="v4-reg-format-label">
                 형식
               </span>
-              <div className="v4-segment" role="radiogroup" aria-labelledby="v4-reg-format-label">
-                {(
-                  [
-                    ['longform', '롱폼'],
-                    ['shortform', '숏폼']
-                  ] as const
-                ).map(([value, label]) => (
-                  <button
-                    key={value}
-                    type="button"
-                    role="radio"
-                    aria-checked={contentType === value}
-                    className={`v4-segment-item ${contentType === value ? 'active' : ''}`}
-                    disabled={submitting}
-                    onClick={() => changeFormat(value)}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
+              <FormatToggle value={contentType} onChange={changeFormat} disabled={submitting} labelledBy="v4-reg-format-label" />
             </div>
 
             <button ref={submitRef} className="button v4-reg-submit" type="submit" disabled={submitting}>
@@ -424,20 +496,23 @@ export default function VideoRegisterPage() {
 
           <details className="v4-more">
             <summary>메모 추가 (선택)</summary>
-            <input className="input" value={memo} readOnly={submitting} placeholder="예: 실적 발표 · 급등 이슈" onChange={(e) => setMemo(e.target.value)} />
+            <label className="v4-sr" htmlFor="v4-reg-memo">
+              메모
+            </label>
+            <input id="v4-reg-memo" className="input" autoComplete="off" value={memo} readOnly={submitting} placeholder="예: 실적 발표 · 급등 이슈" onChange={(e) => setMemo(e.target.value)} />
           </details>
 
-          <div className={`v4-reg-status ${status ? status.tone : ''}`} role="status" aria-live="polite">
+          <div className={`v4-reg-status ${status ? status.tone : ''}`} aria-live="polite" aria-atomic="true">
             {status ? (
-              <>
+              <span role={status.tone === 'error' ? 'alert' : undefined}>
                 <strong>
                   {status.tone === 'ok' ? '✓ ' : ''}
                   {status.text}
                 </strong>
                 {status.detail ? <span className="v4-reg-status-detail"> — {status.detail}</span> : null}
-              </>
+              </span>
             ) : (
-              <span className="muted">주소 붙여넣기 → 종목 입력 → Enter. 형식은 마지막에 고른 것으로 기억돼요.</span>
+              <span className="muted">주소 붙여넣기 → 종목 입력 → Enter. 형식은 마지막에 고른 것으로 기억돼요. (Esc: 주소 지우기)</span>
             )}
           </div>
         </form>
@@ -445,7 +520,7 @@ export default function VideoRegisterPage() {
 
       {bulkOpened ? (
         <div hidden={mode !== 'bulk'}>
-          <BulkRegister defaultFormat={contentType} stockChoices={stockChoices} existingIds={existingIds} onFinished={onBulkFinished} />
+          <BulkRegister seed={bulkSeed} defaultFormat={contentType} stockChoices={stockChoices} existingIds={existingIds} onFinished={onBulkFinished} />
         </div>
       ) : null}
 
@@ -479,7 +554,7 @@ export default function VideoRegisterPage() {
         ) : null}
 
         {!loaded ? (
-          <div className="small muted">불러오는 중…</div>
+          <ListSkeleton rows={5} />
         ) : loadError ? (
           <EmptyState
             title="목록을 불러오지 못했어요"

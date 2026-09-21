@@ -4,9 +4,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { PageHeader } from '@/components/v5/app-shell'
 import { Badge } from '@/components/v5/widget'
 import { Toast, useToast } from '@/components/toast'
-import { authedDeleteJson, authedPatchJson, errorText, v5Get, v5Post } from '@/lib/v5/client'
-import { AnswerBanner, EmptyBlock, FormField, LoadError, LoadingLine, SampleNote, fmtNum } from '@/lib/v5/page-parts'
-import { ConfirmDelete, FormDrawer, usePref } from '@/lib/v5/ui'
+import { authedDeleteJson, authedPatchJson, errorText, v5Post } from '@/lib/v5/client'
+import { AnswerBanner, EmptyBlock, ErrorText, FormField, LoadError, RelTime, SampleNote, fmtNum } from '@/lib/v5/page-parts'
+import { CardGridSkeleton } from '@/lib/v5/skeleton'
+import { useV5Query } from '@/lib/v5/swr'
+import { ConfirmDelete, FormDrawer, usePref, useSingleFlight } from '@/lib/v5/ui'
 import { VideoPicker, type PickedVideo } from '@/lib/v5/video-picker'
 import type { PlaybookEntry } from '@/lib/v5/types'
 
@@ -55,7 +57,7 @@ function FormulaCard({
     <article className="v5p-pb-card">
       <div className="v5p-pb-head">
         {rank ? <span className="v5-rank-badge top">{rank}</span> : null}
-        <h3 className="v5p-pb-title">{entry.title}</h3>
+        <h3 className="v5p-pb-title" title={entry.title}>{entry.title}</h3>
       </div>
       <p className="v5p-pb-when">
         <span className="v5p-card-key">이럴 때 써요</span>
@@ -89,12 +91,14 @@ function FormulaCard({
       ) : null}
       {error ? (
         <div className="v5p-field-error" role="alert">
-          {error}
+          <ErrorText message={error} />
         </div>
       ) : null}
       <div className="v5p-pb-foot">
-        <span className="small muted">
-          {fmtNum(entry.usage_count)}번 사용{entry.author_name ? ` · ${entry.author_name}` : ''}
+        <span className="small muted v5p-pb-meta">
+          <span className="v5p-num">{fmtNum(entry.usage_count)}번 사용</span>
+          {entry.author_name ? <span className="v5p-ell"> · {entry.author_name}</span> : null}
+          <span> · <RelTime value={entry.created_at} /></span>
         </span>
         {canUse ? (
           <button className="button xs secondary" type="button" disabled={busy} onClick={onUse} title="이 공식으로 영상을 만들었다면 눌러서 기록해요">
@@ -116,11 +120,13 @@ function FormulaCard({
 
 export default function PlaybookPage() {
   const { toast, showSuccess } = useToast()
-  const [items, setItems] = useState<PlaybookEntry[]>([])
-  const [sample, setSample] = useState(false)
-  const [loaded, setLoaded] = useState(false)
-  const [refreshing, setRefreshing] = useState(false)
-  const [loadError, setLoadError] = useState('')
+  const q = useV5Query<{ sample?: boolean; items: PlaybookEntry[]; truncated?: boolean }>('/api/v5/playbook', { errorFallback: '성공 공식을 불러오지 못했어요.' })
+  const { update: updateData, reload } = q
+  const items = useMemo(() => q.data?.items || [], [q.data])
+  const sample = Boolean(q.data?.sample)
+  const once = useSingleFlight()
+  // 저장 결과를 화면과 캐시에 함께 반영한다.
+  const setItems = useCallback((fn: (prev: PlaybookEntry[]) => PlaybookEntry[]) => updateData((d) => ({ ...d, items: fn(d.items || []) })), [updateData])
   const [sort, setSort, sortReady] = usePref<SortMode>('v5.playbook.sort', 'usage', (v): v is SortMode => v === 'usage' || v === 'recent')
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -135,27 +141,14 @@ export default function PlaybookPage() {
   const [cardError, setCardError] = useState<{ id: string; text: string } | null>(null)
   const [query, setQuery] = useState('')
   const flashTimer = useRef<number | null>(null)
+  const usingRef = useRef(false)
 
-  const load = useCallback(async () => {
-    setRefreshing(true)
-    setLoadError('')
-    const res = await v5Get<{ sample: boolean; items: PlaybookEntry[] }>('/api/v5/playbook')
-    if (res.ok) {
-      setItems(res.data.items || [])
-      setSample(Boolean(res.data.sample))
-      setLoaded(true)
-    } else {
-      setLoadError(errorText(res, '성공 공식을 불러오지 못했어요.'))
-    }
-    setRefreshing(false)
-  }, [])
-
+  // 화면을 떠날 때 남은 타이머 정리
   useEffect(() => {
-    void load()
     return () => {
       if (flashTimer.current) window.clearTimeout(flashTimer.current)
     }
-  }, [load])
+  }, [])
 
   // 사용 횟수가 있는 공식 중 상위 3개.
   const top = useMemo(() => items.filter((e) => e.usage_count > 0).sort((a, b) => b.usage_count - a.usage_count).slice(0, 3), [items])
@@ -222,7 +215,8 @@ export default function PlaybookPage() {
     })
   }
 
-  const onSubmit = async () => {
+  const onSubmit = () =>
+    once(async () => {
     setSubmitted(true)
     setFormError('')
     if (Object.keys(validate(form)).length > 0) return
@@ -250,10 +244,12 @@ export default function PlaybookPage() {
     } finally {
       setSaving(false)
     }
-  }
+    }, 'submit')
 
   const onUse = async (id: string) => {
-    if (busyId) return
+    // ref 로 막으므로 같은 순간의 두 번째 클릭도 무시된다(state 는 다음 그림에서야 바뀐다).
+    if (usingRef.current) return
+    usingRef.current = true
     setBusyId(id)
     setCardError(null)
     // 눌렀다는 게 바로 보이도록 먼저 올려 두고, 서버가 알려 주는 실제 값으로 맞춘다. 실패하면 되돌린다.
@@ -270,15 +266,18 @@ export default function PlaybookPage() {
       setCardError({ id, text: errorText(res, '기록하지 못했어요. 잠시 뒤 다시 눌러 주세요.') })
     }
     setBusyId(null)
+    usingRef.current = false
   }
 
   const onDelete = async (id: string) => {
-    setBusyId(id)
-    setCardError(null)
-    const res = await authedDeleteJson(`/api/v5/playbook/${id}`)
-    if (res.ok) setItems((prev) => prev.filter((e) => e.id !== id))
-    else setCardError({ id, text: errorText(res, '지우지 못했어요. 잠시 뒤 다시 해 주세요.') })
-    setBusyId(null)
+    await once(async () => {
+      setBusyId(id)
+      setCardError(null)
+      const res = await authedDeleteJson(`/api/v5/playbook/${id}`)
+      if (res.ok) setItems((prev) => prev.filter((e) => e.id !== id))
+      else setCardError({ id, text: errorText(res, '지우지 못했어요. 잠시 뒤 다시 해 주세요.') })
+      setBusyId(null)
+    }, `del-${id}`)
   }
 
   const renderCard = (entry: PlaybookEntry, rank?: number) => (
@@ -297,7 +296,7 @@ export default function PlaybookPage() {
     />
   )
 
-  const ready = loaded && sortReady
+  const ready = Boolean(q.data) && sortReady
 
   return (
     <>
@@ -313,11 +312,11 @@ export default function PlaybookPage() {
 
       <SampleNote show={sample} />
 
-      {loadError ? <LoadError message={loadError} onRetry={() => void load()} /> : null}
-      {!ready && !loadError ? <LoadingLine /> : null}
+      {q.error ? <LoadError message={q.error} status={q.status} onRetry={reload} /> : null}
+      {!ready && !q.error ? <CardGridSkeleton /> : null}
 
       {ready ? (
-        <div className={refreshing ? 'v5p-refreshing' : undefined}>
+        <div className={q.validating ? 'v5p-refreshing' : undefined} aria-busy={q.validating}>
           {items.length === 0 ? (
             <EmptyBlock
               title="아직 성공 공식이 없어요"
@@ -393,7 +392,7 @@ export default function PlaybookPage() {
         >
           {formError ? (
             <div className="v5p-error" role="alert" style={{ marginTop: 0 }}>
-              {formError}
+              <ErrorText message={formError} />
             </div>
           ) : null}
           <FormField label="공식 이름" required error={showErr('title')} htmlFor="v5p-pb-title">

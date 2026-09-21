@@ -86,21 +86,69 @@ export function viewVelocity(video: Pick<VideoLite, 'view_count' | 'published_at
   return views / days
 }
 
-export function median(values: number[]): number {
+// NaN/Infinity 가 섞여 들어와도 평균·중앙값이 망가지지 않게 유한한 값만 쓴다.
+const finiteOnly = (values: number[]) => values.filter((v) => Number.isFinite(v))
+
+export function median(input: number[]): number {
+  const values = finiteOnly(input)
   if (values.length === 0) return 0
   const sorted = [...values].sort((a, b) => a - b)
   const mid = Math.floor(sorted.length / 2)
   return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
 }
 
-export function average(values: number[]): number {
+export function average(input: number[]): number {
+  const values = finiteOnly(input)
   if (values.length === 0) return 0
   return values.reduce((a, b) => a + b, 0) / values.length
 }
 
 export function pctChange(current: number, previous: number): number | null {
-  if (!previous) return null
-  return ((current - previous) / Math.abs(previous)) * 100
+  if (!previous || !Number.isFinite(previous) || !Number.isFinite(current)) return null
+  const result = ((current - previous) / Math.abs(previous)) * 100
+  return Number.isFinite(result) ? result : null
+}
+
+// ISO 문자열을 밀리초로. (형식이 달라도 안전하게 비교하려고 문자열 비교를 쓰지 않는다)
+export function timeMs(iso: string | null | undefined): number {
+  if (!iso) return NaN
+  return new Date(iso).getTime()
+}
+
+// ─────────────────────────────────────────────────────────────
+// 좋아요 vs 댓글 지형도 점 계산
+//   raw 값(like, comment: 조회수 대비 %)과, 관측 최댓값 대비 0~100 위치(x, y)를 함께 돌려준다.
+//   tone: 댓글 쪽이 상대적으로 활발하면 'violet', 아니면 'blue'
+// ─────────────────────────────────────────────────────────────
+export type ScatterRow = {
+  id: string
+  label: string
+  like: number
+  comment: number
+  x: number
+  y: number
+  tone: 'blue' | 'violet'
+}
+
+export function buildScatter(videos: VideoLite[], cap = 400): ScatterRow[] {
+  const withViews = videos.filter((v) => Number(v.view_count || 0) > 0)
+  const maxLike = Math.max(...withViews.map((v) => likeRatePct(v) || 0), 0.5)
+  const maxComment = Math.max(...withViews.map((v) => commentRatePct(v) || 0), 0.2)
+  return withViews.slice(0, cap).map((v) => {
+    const like = likeRatePct(v) || 0
+    const comment = commentRatePct(v) || 0
+    const x = (like / maxLike) * 100
+    const y = (comment / maxComment) * 100
+    return {
+      id: v.id,
+      label: v.title || v.stock_name || '(제목 없음)',
+      like,
+      comment,
+      x: Number.isFinite(x) ? x : 0,
+      y: Number.isFinite(y) ? y : 0,
+      tone: y > x ? 'violet' : 'blue'
+    }
+  })
 }
 
 // ─────────────────────────────────────────────────────────────

@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { getKstYmd } from '@/lib/attendance/time'
 import { firstIssueMessage } from '@/lib/v4/errors'
 import { getSampleGoal } from '@/lib/v4/sample-data'
+import { noStoreJson } from '@/lib/v4/http'
 import { dbError, loadUsers, readJson, requireV4Admin, requireV4User, v4ErrorResponse, type V4Context } from '@/lib/v4/server'
 import { MISSING_TABLE_MESSAGE, V4_TABLES, isMissingTableError } from '@/lib/v4/tables'
 
@@ -76,7 +77,7 @@ export async function POST(request: Request) {
     const ctx = await requireV4Admin(request)
     const parsed = goalInputSchema.safeParse(await readJson(request))
     if (!parsed.success) {
-      return NextResponse.json({ error: firstIssueMessage(parsed.error) }, { status: 400 })
+      return noStoreJson({ error: firstIssueMessage(parsed.error) }, { status: 400 })
     }
     const input = parsed.data
     const userId = input.userId || null
@@ -93,7 +94,7 @@ export async function POST(request: Request) {
     try {
       existing = await findGoal(ctx, input.month, userId)
     } catch (e) {
-      if (isMissingTableError(e)) return NextResponse.json({ error: MISSING_TABLE_MESSAGE }, { status: 409 })
+      if (isMissingTableError(e)) return noStoreJson({ error: MISSING_TABLE_MESSAGE }, { status: 409 })
       throw dbError(e)
     }
 
@@ -111,9 +112,9 @@ export async function POST(request: Request) {
       if (raced) result = await updateExisting(raced.id)
     }
     if (result.error) throw dbError(result.error)
-    if (!result.data) return NextResponse.json({ error: '목표를 찾을 수 없어요. 화면을 새로 열어 다시 시도해 주세요.' }, { status: 404 })
+    if (!result.data) return noStoreJson({ error: '목표를 찾을 수 없어요. 화면을 새로 열어 다시 시도해 주세요.' }, { status: 404 })
 
-    return NextResponse.json({ item: mapGoal(result.data) })
+    return noStoreJson({ item: mapGoal(result.data) })
   } catch (e) {
     return v4ErrorResponse(e, '성장 목표 저장 실패')
   }
@@ -125,19 +126,19 @@ export async function DELETE(request: Request) {
     const ctx = await requireV4Admin(request)
     const url = new URL(request.url)
     const month = monthSchema.safeParse(url.searchParams.get('month'))
-    if (!month.success) return NextResponse.json({ error: firstIssueMessage(month.error, '월을 확인해 주세요.') }, { status: 400 })
+    if (!month.success) return noStoreJson({ error: firstIssueMessage(month.error, '월을 확인해 주세요.') }, { status: 400 })
     const userParam = url.searchParams.get('userId')
     if (userParam && !z.uuid().safeParse(userParam).success) {
-      return NextResponse.json({ error: '직원을 다시 선택해 주세요.' }, { status: 400 })
+      return noStoreJson({ error: '직원을 다시 선택해 주세요.' }, { status: 400 })
     }
     let q = ctx.supabaseAdmin.from(V4_TABLES.growthGoals).delete().eq('month', month.data)
     q = userParam ? q.eq('user_id', userParam) : q.is('user_id', null)
     const { error } = await q
     if (error) {
-      if (isMissingTableError(error)) return NextResponse.json({ error: MISSING_TABLE_MESSAGE }, { status: 409 })
+      if (isMissingTableError(error)) return noStoreJson({ error: MISSING_TABLE_MESSAGE }, { status: 409 })
       throw dbError(error)
     }
-    return NextResponse.json({ ok: true })
+    return noStoreJson({ ok: true })
   } catch (e) {
     return v4ErrorResponse(e, '성장 목표 삭제 실패')
   }

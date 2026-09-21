@@ -1,5 +1,4 @@
-import { NextResponse } from 'next/server'
-import { ApiFail, apiError, authenticate, cleanText, loadVideosByIds, readJson, requireUuid, type Profile, type SupabaseAdmin } from '@/lib/v3/server'
+import { ApiFail, apiError, authenticate, cleanText, loadVideosByIds, noStoreJson, readJson, requireUuid, type Profile, type SupabaseAdmin } from '@/lib/v3/server'
 import { V3_TABLES } from '@/lib/v3/tables'
 
 // 급상승 영상의 "확인했어요" 기록. 영상 1개에는 확인 기록이 1개만 남는다(다시 누르면 메모/시간만 바뀜).
@@ -68,7 +67,7 @@ async function saveAck(request: Request, mode: 'upsert' | 'edit') {
       if (error) throw error
     }
 
-    return NextResponse.json({ ok: true, ack: { actionNote, at: mode === 'edit' && existing[0] ? existing[0].created_at : nowIso, byName: profile.name } })
+    return noStoreJson({ ok: true, ack: { actionNote, at: mode === 'edit' && existing[0] ? existing[0].created_at : nowIso, byName: profile.name } })
   } catch (e) {
     return apiError(e, '확인 표시를 저장하지 못했어요.', { reference: '영상을 찾을 수 없어요. 화면을 새로 고친 뒤 다시 시도해 주세요.' })
   }
@@ -97,7 +96,7 @@ export async function DELETE(request: Request) {
     const { error } = await supabaseAdmin.from(V3_TABLES.viralSignalAcks).delete().eq('video_id', videoId)
     if (error) throw error
 
-    return NextResponse.json({ ok: true })
+    return noStoreJson({ ok: true })
   } catch (e) {
     return apiError(e, '확인 취소에 실패했어요.')
   }

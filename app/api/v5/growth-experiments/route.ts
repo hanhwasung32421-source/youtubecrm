@@ -3,7 +3,7 @@ import { EXPERIMENT_SELECT, experimentInputSchema, mapExperiments, type Experime
 import { SAMPLE_EXPERIMENTS } from '@/lib/v5/sample-data'
 import { V5_TABLES } from '@/lib/v5/tables'
 import { todayYmd } from '@/lib/v5/format'
-import { badRequest, countMissingVideos, fetchAllPages, getSession, handleRouteError, isMissingTableError, missingTableResponse, readJson } from '@/lib/v5/api'
+import { badRequest, countMissingVideos, fetchAllPages, getSession, handleRouteError, isMissingTableError, jsonCached, jsonNoStore, missingTableResponse, readJson } from '@/lib/v5/api'
 
 export async function GET(request: Request) {
   try {
@@ -35,7 +35,7 @@ export async function GET(request: Request) {
     }
 
     const items = await mapExperiments(supabaseAdmin, all.rows, session)
-    return NextResponse.json({ sample: false, items, truncated: all.truncated })
+    return jsonCached({ sample: false, items, truncated: all.truncated })
   } catch (e) {
     return handleRouteError(e, '성장 실험 목록을 불러오지 못했어요.')
   }
@@ -84,7 +84,7 @@ export async function POST(request: Request) {
     }
 
     const [item] = await mapExperiments(supabaseAdmin, [data as ExperimentRow], session)
-    return NextResponse.json({ item })
+    return jsonNoStore({ item })
   } catch (e) {
     return handleRouteError(e, '실험을 저장하지 못했어요. 잠시 뒤 다시 해 주세요.')
   }

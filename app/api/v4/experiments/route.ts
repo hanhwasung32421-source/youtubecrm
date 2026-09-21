@@ -11,6 +11,7 @@ import {
   type ExperimentRow
 } from '@/lib/v4/experiments'
 import { getSampleExperiments } from '@/lib/v4/sample-data'
+import { noStoreJson } from '@/lib/v4/http'
 import { dbError, readJson, requireV4User, v4ErrorResponse } from '@/lib/v4/server'
 import { MISSING_TABLE_MESSAGE, V4_TABLES, isMissingTableError } from '@/lib/v4/tables'
 
@@ -51,7 +52,7 @@ export async function POST(request: Request) {
     const ctx = await requireV4User(request)
     const parsed = experimentCreateSchema.safeParse(await readJson(request))
     if (!parsed.success) {
-      return NextResponse.json({ error: firstIssueMessage(parsed.error) }, { status: 400 })
+      return noStoreJson({ error: firstIssueMessage(parsed.error) }, { status: 400 })
     }
     const input = parsed.data
 
@@ -62,7 +63,7 @@ export async function POST(request: Request) {
       endedOn = today < input.startedOn ? input.startedOn : today
     }
     if (endedOn && endedOn < input.startedOn) {
-      return NextResponse.json({ error: '종료일은 시작일보다 빠를 수 없어요.' }, { status: 400 })
+      return noStoreJson({ error: '종료일은 시작일보다 빠를 수 없어요.' }, { status: 400 })
     }
     await assertLinkableVideo(ctx, input.videoId)
 
@@ -85,13 +86,13 @@ export async function POST(request: Request) {
 
     if (error) {
       if (isMissingTableError(error)) {
-        return NextResponse.json({ error: MISSING_TABLE_MESSAGE }, { status: 409 })
+        return noStoreJson({ error: MISSING_TABLE_MESSAGE }, { status: 409 })
       }
       throw dbError(error)
     }
 
     const [item] = await mapExperiments(ctx, [data as ExperimentRow])
-    return NextResponse.json({ item })
+    return noStoreJson({ item })
   } catch (e) {
     return v4ErrorResponse(e, '실험 등록 실패')
   }

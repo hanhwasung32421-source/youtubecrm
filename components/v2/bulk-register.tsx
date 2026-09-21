@@ -5,6 +5,7 @@ import { authedPatchJson } from '@/lib/v2/client'
 import { authedPostJson } from '@/lib/session/authed-fetch'
 import { CONTENT_TYPES, CONTENT_TYPE_LABELS, type ContentType } from '@/lib/v2/types'
 import { friendlyRegisterError, parseBulkText, youtubeVideoId } from './register-utils'
+import { Segmented } from './segmented'
 
 const CONCURRENCY = 2
 
@@ -24,6 +25,8 @@ type RowView = {
 }
 
 type Props = {
+  initialText?: string
+  notice?: string
   defaultType: ContentType
   stockChips: string[]
   registeredIds: Set<string>
@@ -31,6 +34,8 @@ type Props = {
   onFinished: () => void
   onClose: () => void
 }
+
+const TYPE_OPTIONS = CONTENT_TYPES.map((type) => ({ value: type, label: CONTENT_TYPE_LABELS[type] }))
 
 function toWatchUrl(url: string) {
   const id = youtubeVideoId(url)
@@ -41,8 +46,8 @@ function shortUrl(url: string) {
   return url.replace(/^https?:\/\/(www\.)?/i, '')
 }
 
-export function BulkRegister({ defaultType, stockChips, registeredIds, onRegistered, onFinished, onClose }: Props) {
-  const [text, setText] = useState('')
+export function BulkRegister({ initialText = '', notice, defaultType, stockChips, registeredIds, onRegistered, onFinished, onClose }: Props) {
+  const [text, setText] = useState(initialText)
   const [commonStock, setCommonStock] = useState('')
   const [baseType, setBaseType] = useState<ContentType>(defaultType)
   const [edits, setEdits] = useState<Record<string, RowEdit>>({})
@@ -190,6 +195,11 @@ export function BulkRegister({ defaultType, stockChips, registeredIds, onRegiste
       </div>
 
       <div className="v2-register-form">
+        {notice ? (
+          <div className="v2-hint quiet" role="status">
+            {notice}
+          </div>
+        ) : null}
         <div className="field">
           <label className="label" htmlFor="v2-bulk-text">
             주소 목록
@@ -201,6 +211,8 @@ export function BulkRegister({ defaultType, stockChips, registeredIds, onRegiste
             rows={6}
             spellCheck={false}
             autoComplete="off"
+            autoCapitalize="none"
+            autoCorrect="off"
             placeholder={'https://youtu.be/abc123 삼성전자\nhttps://www.youtube.com/shorts/xyz789 SK하이닉스'}
             value={text}
             disabled={running}
@@ -218,6 +230,8 @@ export function BulkRegister({ defaultType, stockChips, registeredIds, onRegiste
               className="input"
               placeholder="종목명이 없는 줄에 이 종목이 들어가요"
               autoComplete="off"
+              spellCheck={false}
+              list="v2-bulk-stock-list"
               value={commonStock}
               disabled={running}
               onChange={(e) => setCommonStock(e.target.value)}
@@ -227,22 +241,15 @@ export function BulkRegister({ defaultType, stockChips, registeredIds, onRegiste
             <span className="label" id="v2-bulk-type-label">
               기본 형식
             </span>
-            <div className="v2-seg" role="group" aria-labelledby="v2-bulk-type-label">
-              {CONTENT_TYPES.map((type) => (
-                <button
-                  key={type}
-                  type="button"
-                  className={`v2-seg-btn ${baseType === type ? 'active' : ''}`}
-                  aria-pressed={baseType === type}
-                  disabled={running}
-                  onClick={() => setBaseType(type)}
-                >
-                  {CONTENT_TYPE_LABELS[type]}
-                </button>
-              ))}
-            </div>
+            <Segmented value={baseType} onChange={setBaseType} options={TYPE_OPTIONS} labelledBy="v2-bulk-type-label" disabled={running} />
           </div>
         </div>
+
+        <datalist id="v2-bulk-stock-list">
+          {stockChips.map((name) => (
+            <option key={name} value={name} />
+          ))}
+        </datalist>
 
         {stockChips.length > 0 ? (
           <div className="v2-recent">
@@ -270,34 +277,36 @@ export function BulkRegister({ defaultType, stockChips, registeredIds, onRegiste
             {parsed.duplicates > 0 ? <div className="v2-hint quiet">같은 영상이 여러 번 붙어 있어서 {parsed.duplicates}개는 뺐어요.</div> : null}
 
             <div className="v2-bulk-table-wrap" ref={tableRef}>
-              <table className="v2-bulk-table">
-                <thead>
-                  <tr>
-                    <th scope="col">#</th>
-                    <th scope="col">정리된 주소</th>
-                    <th scope="col">종목</th>
-                    <th scope="col">형식</th>
-                    <th scope="col">상태</th>
-                    <th scope="col" aria-label="빼기" />
+              <table className="v2-bulk-table" role="table" aria-label="등록할 영상 목록">
+                <thead role="rowgroup">
+                  <tr role="row">
+                    <th scope="col" role="columnheader">#</th>
+                    <th scope="col" role="columnheader">정리된 주소</th>
+                    <th scope="col" role="columnheader">종목</th>
+                    <th scope="col" role="columnheader">형식</th>
+                    <th scope="col" role="columnheader">상태</th>
+                    <th scope="col" role="columnheader" aria-label="빼기" />
                   </tr>
                 </thead>
-                <tbody>
+                <tbody role="rowgroup">
                   {rows.map((row, i) => {
                     const result = results[row.key]
                     const locked = running || result?.status === 'done'
                     return (
-                      <tr key={row.key} className={result?.status === 'done' ? 'is-done' : result?.status === 'failed' ? 'is-failed' : ''}>
-                        <td className="v2-mono">{i + 1}</td>
-                        <td className="v2-bulk-url" title={row.url}>
+                      <tr key={row.key} role="row" className={result?.status === 'done' ? 'is-done' : result?.status === 'failed' ? 'is-failed' : ''}>
+                        <td role="cell" className="v2-mono v2-c-num">{i + 1}</td>
+                        <td role="cell" className="v2-bulk-url v2-c-url" title={row.url}>
                           {shortUrl(row.url)}
                         </td>
-                        <td>
+                        <td role="cell" className="v2-c-stock">
                           <input
                             className={`input compact v2-bulk-stock ${!row.stock && !result ? 'need' : ''}`}
                             data-bulk-stock
                             aria-label={`${i + 1}번 종목명`}
                             placeholder={commonStock.trim() || '종목명'}
                             autoComplete="off"
+                            spellCheck={false}
+                            enterKeyHint="next"
                             list="v2-bulk-stock-list"
                             value={edits[row.key]?.stock ?? row.stock}
                             disabled={locked}
@@ -310,7 +319,7 @@ export function BulkRegister({ defaultType, stockChips, registeredIds, onRegiste
                             }}
                           />
                         </td>
-                        <td>
+                        <td role="cell" className="v2-c-type">
                           <select
                             className="select compact v2-bulk-type"
                             aria-label={`${i + 1}번 형식`}
@@ -326,10 +335,10 @@ export function BulkRegister({ defaultType, stockChips, registeredIds, onRegiste
                           </select>
                           {row.autoShorts && !edits[row.key]?.type ? <span className="v2-bulk-auto"> 자동</span> : null}
                         </td>
-                        <td>
+                        <td role="cell" className="v2-c-st">
                           <RowStatus row={row} result={result} />
                         </td>
-                        <td>
+                        <td role="cell" className="v2-c-rm">
                           <button
                             type="button"
                             className="v2-icon-btn"
@@ -346,15 +355,10 @@ export function BulkRegister({ defaultType, stockChips, registeredIds, onRegiste
                   })}
                 </tbody>
               </table>
-              <datalist id="v2-bulk-stock-list">
-                {stockChips.map((name) => (
-                  <option key={name} value={name} />
-                ))}
-              </datalist>
             </div>
 
             {needInput.length > 0 && !running ? (
-              <div className="v2-hint">
+              <div className="v2-hint" role="status">
                 {needUrlCount > 0 ? `주소를 알아볼 수 없는 ${needUrlCount}줄은 건너뛰어요. ` : ''}
                 {needStockCount > 0 ? `종목명이 비어 있는 ${needStockCount}줄은 종목을 적으면 등록할 수 있어요.` : ''}
               </div>
@@ -374,7 +378,7 @@ export function BulkRegister({ defaultType, stockChips, registeredIds, onRegiste
               </button>
             </div>
 
-            <div className="v2-status" aria-live="polite">
+            <div className="v2-status" aria-live="polite" aria-atomic="true">
               {showSummary ? (
                 running ? (
                   <span className="v2-hint quiet">

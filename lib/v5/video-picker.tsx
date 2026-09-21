@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { v5Get, errorText } from '@/lib/v5/client'
-import { formatDate } from '@/lib/v5/format'
+import { formatDayShort } from '@/lib/v5/format'
+import { ErrorText } from '@/lib/v5/page-parts'
 
 // 영상 고르기(실험 대상 영상 / 플레이북 예시 영상).
 // 하루 60~90편씩 쌓이므로 전체 목록을 받지 않고, 종목명·제목으로 서버에서 찾는다(입력 후 0.3초 뒤).
@@ -30,19 +31,36 @@ export function VideoPicker({
   const [options, setOptions] = useState<Option[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [errorStatus, setErrorStatus] = useState(0)
   const seq = useRef(0)
+  const controllerRef = useRef<AbortController | null>(null)
   const selectedIds = new Set(selected.map((v) => v.id))
   const single = max === 1
 
   const search = useCallback(async (q: string) => {
     const mine = ++seq.current
+    // 더 새로운 검색이 시작되면 이전 요청은 취소한다(느린 응답이 나중에 도착해 목록을 덮어쓰는 일도 막는다).
+    controllerRef.current?.abort()
+    const controller = new AbortController()
+    controllerRef.current = controller
     setLoading(true)
     setError('')
-    const res = await v5Get<{ items: Option[] }>(`/api/v5/videos?q=${encodeURIComponent(q)}`)
-    if (mine !== seq.current) return // 더 새로운 검색이 있으면 이 결과는 버린다
+    const res = await v5Get<{ items: Option[] }>(`/api/v5/videos?q=${encodeURIComponent(q)}`, controller.signal)
+    if (mine !== seq.current || controller.signal.aborted) return
     if (res.ok) setOptions(res.data.items || [])
-    else setError(errorText(res, '영상 목록을 불러오지 못했어요.'))
+    else {
+      setError(errorText(res, '영상 목록을 불러오지 못했어요.'))
+      setErrorStatus(res.status)
+    }
     setLoading(false)
+  }, [])
+
+  // 서랍을 닫으면(언마운트) 진행 중인 검색을 취소한다.
+  useEffect(() => {
+    return () => {
+      seq.current += 1
+      controllerRef.current?.abort()
+    }
   }, [])
 
   useEffect(() => {
@@ -91,10 +109,12 @@ export function VideoPicker({
       <div className={`v5p-picker ${loading ? 'busy' : ''}`} role="group" aria-label="영상 목록">
         {error ? (
           <div className="v5p-pick-empty">
-            {error}{' '}
-            <button type="button" className="button xs secondary" onClick={() => void search(query.trim())}>
-              다시 시도
-            </button>
+            <ErrorText message={error} status={errorStatus} />{' '}
+            {errorStatus === 401 ? null : (
+              <button type="button" className="button xs secondary" onClick={() => void search(query.trim())}>
+                다시 시도
+              </button>
+            )}
           </div>
         ) : null}
         {!error && !loading && options.length === 0 ? <div className="v5p-pick-empty">{query ? '찾는 영상이 없어요.' : emptyHint || '아직 등록된 영상이 없어요.'}</div> : null}
@@ -117,7 +137,7 @@ export function VideoPicker({
               <span className="v5p-pick-title">
                 {v.title || '(제목 없음)'}
                 <span className="v5p-pick-sub">
-                  {v.created_at ? ` · ${formatDate(v.created_at).slice(5)}` : ''}
+                  {v.created_at ? ` · ${formatDayShort(v.created_at)}` : ''}
                   {v.owner_name ? ` · ${v.owner_name}` : ''}
                 </span>
               </span>

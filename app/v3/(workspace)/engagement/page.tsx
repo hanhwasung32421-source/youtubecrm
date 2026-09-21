@@ -1,18 +1,32 @@
 'use client'
 
 import '../analysis.css'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect } from 'react'
 import { PageHeader } from '@/components/v3/app-shell'
-import { Toast, useToast } from '@/components/toast'
 import { Section, Tag } from '@/components/v3/ui'
-import { HistogramBars, ScatterGrid, type ScatterPoint } from '@/components/v3/charts'
 import { useV3Me } from '@/components/v3/auth-guard'
-import { v3Request } from '@/lib/v3/api-client'
-import { useLatest } from '@/lib/v3/interact'
 import { usePref } from '@/lib/v3/prefs'
-import { formatNumber, formatPct } from '@/lib/v3/format'
+import { useV3Data } from '@/lib/v3/use-v3-data'
+import { formatCompactNumber, formatNumber, formatPct } from '@/lib/v3/format'
 import { pctChange } from '@/lib/v3/engagement'
-import { AnswerCard, EmptyBlock, ErrorBlock, HowTo, LoadingBlock, StatCard, StatGrid, describeChange } from '../analysis-parts'
+import {
+  AnswerCard,
+  AnswerSkeleton,
+  EmptyBlock,
+  ErrorBlock,
+  HowTo,
+  RefreshFailed,
+  RowsSkeleton,
+  SectionSkeleton,
+  Skel,
+  SkeletonShell,
+  StatCard,
+  StatGrid,
+  StatsSkeleton,
+  describeChange,
+  per100
+} from '../analysis-parts'
+import { HistogramChart, ScatterChart, type ScatterDot } from '../analysis-charts'
 
 type EngagementResponse = {
   summary: string
@@ -24,8 +38,8 @@ type EngagementResponse = {
     thisWeekAvgEngagementPct: { current: number; previous?: number }
   }
   distribution: { key: string; label: string; count: number }[]
-  scatter: ScatterPoint[]
-  topComment: { id: string; label: string; sub?: string; value: number; youtubeUrl: string | null }[]
+  scatter: ScatterDot[]
+  topComment: { id: string; label: string; sub?: string; value: number; viewCount?: number; youtubeUrl: string | null }[]
   staffOptions: { id: string; name: string }[]
   staffIdFilter: string | null
 }
@@ -39,44 +53,42 @@ const BUCKET_LABELS: Record<string, string> = {
   '8+': '8% 이상 · 매우 좋음'
 }
 
+// 실제 화면과 같은 모양의 뼈대(답 → 숫자 3개 → 순위 → 막대)
+function EngagementSkeleton() {
+  return (
+    <SkeletonShell label="참여 현황을 불러오는 중이에요…">
+      <AnswerSkeleton />
+      <StatsSkeleton count={3} />
+      <SectionSkeleton>
+        <RowsSkeleton rows={5} />
+      </SectionSkeleton>
+      <SectionSkeleton titleWidth={260}>
+        <div className="v3a-figure" aria-hidden>
+          {Array.from({ length: 5 }, (_, i) => (
+            <div key={i} style={{ display: 'grid', gridTemplateColumns: '120px 1fr 70px', gap: 12, alignItems: 'center', marginBottom: 10 }}>
+              <Skel h={13} />
+              <Skel h={14} w={`${88 - i * 14}%`} />
+              <Skel h={13} />
+            </div>
+          ))}
+        </div>
+      </SectionSkeleton>
+    </SkeletonShell>
+  )
+}
+
 export default function EngagementPage() {
   const me = useV3Me()
-  const { toast, showError } = useToast()
-  const showErrorRef = useLatest(showError)
-  const [data, setData] = useState<EngagementResponse | null>(null)
-  const [loadError, setLoadError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
   // 마지막에 고른 직원 필터를 기억한다(관리자). 저장된 값을 읽은 뒤(ready)에 첫 요청을 보낸다.
   const [staffId, setStaffId, prefReady] = usePref('engagement:staff')
-  const loadSeq = useRef(0)
+  const url = prefReady ? `/api/v3/engagement${staffId ? `?staffId=${encodeURIComponent(staffId)}` : ''}` : null
+  const res = useV3Data<EngagementResponse>(url, { scope: me?.crmUserId, fallback: '참여 현황을 불러오지 못했어요.' })
+  const { data, reload } = res
 
-  const load = useCallback(
-    async (filter: string) => {
-      const seq = ++loadSeq.current
-      setLoading(true)
-      const qs = filter ? `?staffId=${encodeURIComponent(filter)}` : ''
-      const res = await v3Request<EngagementResponse>(`/api/v3/engagement${qs}`, {}, '참여 현황을 불러오지 못했어요.')
-      if (seq !== loadSeq.current) return
-      setLoading(false)
-      if (!res.ok) {
-        setLoadError(res.error)
-        showErrorRef.current(res.error || '참여 현황을 불러오지 못했어요.')
-        return
-      }
-      // 저장해 둔 직원이 더는 목록에 없으면 전체 팀으로 되돌린다.
-      if (filter && !res.data.staffOptions.some((s) => s.id === filter)) {
-        setStaffId('')
-        return
-      }
-      setLoadError(null)
-      setData(res.data)
-    },
-    [showErrorRef, setStaffId]
-  )
-
+  // 저장해 둔 직원이 더는 목록에 없으면 전체 팀으로 되돌린다.
   useEffect(() => {
-    if (prefReady) void load(staffId)
-  }, [staffId, prefReady, load])
+    if (data && staffId && !data.staffOptions.some((s) => s.id === staffId)) setStaffId('')
+  }, [data, staffId, setStaffId])
 
   const isAdmin = !!me?.isAdmin
   const staffName = data?.staffOptions.find((s) => s.id === staffId)?.name
@@ -106,8 +118,7 @@ export default function EngagementPage() {
     return (
       <>
         {header}
-        <Toast toast={toast} />
-        {loadError ? <ErrorBlock message={loadError} onRetry={() => void load(staffId)} /> : <LoadingBlock>참여 현황을 불러오는 중이에요…</LoadingBlock>}
+        {res.error ? <ErrorBlock message={res.error} status={res.status} onRetry={() => void reload(true)} /> : <EngagementSkeleton />}
       </>
     )
   }
@@ -116,7 +127,6 @@ export default function EngagementPage() {
     return (
       <>
         {header}
-        <Toast toast={toast} />
         <EmptyBlock title={`아직 ${scope} 반응을 분석할 영상이 없어요`} actionHref="/v3/register" actionLabel="영상 등록하러 가기">
           영상을 등록하고 유튜브 조회수가 잡히면, 좋아요·댓글 반응이 어떤지 여기에 보여드려요. (조회수가 0인 영상은 계산에서 빠져요)
         </EmptyBlock>
@@ -135,103 +145,111 @@ export default function EngagementPage() {
   let headline: string
   let tone: 'good' | 'bad' | 'neutral' = 'neutral'
   if (thisWeekCount > 0) {
-    headline = `이번 주 영상은 보는 사람 100명 중 약 ${thisWeek.current.toFixed(1)}명이 좋아요나 댓글로 반응했어요.`
+    headline = `이번 주 영상은 보는 사람 100명 중 약 ${per100(thisWeek.current)}이 좋아요나 댓글로 반응했어요.`
     if (weekChange !== null) {
       tone = change.tone
       headline += ` ${change.text}.`
     }
   } else {
-    headline = `이번 주에 올린 영상이 아직 없어요. 지금까지 영상 전체로는 보는 사람 100명 중 약 ${overall.toFixed(1)}명이 반응했어요.`
+    headline = `이번 주에 올린 영상이 아직 없어요. 지금까지 영상 전체로는 보는 사람 100명 중 약 ${per100(overall)}이 반응했어요.`
   }
 
   const buckets = data.distribution.map((b) => ({ ...b, label: BUCKET_LABELS[b.key] || b.label }))
   const biggest = [...data.distribution].sort((a, b) => b.count - a.count)[0]
   const bucketSentence =
-    biggest && biggest.count > 0
-      ? `${scope} 영상 중 ${formatNumber(biggest.count)}개(${Math.round((biggest.count / data.videoCount) * 100)}%)가 ‘${BUCKET_LABELS[biggest.key] || biggest.label}’ 구간에 모여 있어요.`
+    biggest && biggest.count > 0 && data.videoCount > 0
+      ? `${scope} 영상 중 ${formatNumber(biggest.count)}개(${formatPct((biggest.count / data.videoCount) * 100, 0)})가 ‘${BUCKET_LABELS[biggest.key] || biggest.label}’ 구간에 모여 있어요.`
       : null
+
+  const deltaText = thisWeekCount > 0 && weekChange !== null ? `${change.arrow} ${change.text}`.trim() : thisWeekCount > 0 ? '지난주 영상이 없어 비교하지 않았어요' : '이번 주 영상 없음'
 
   return (
     <>
       {header}
-      <Toast toast={toast} />
 
-      <div className={`v3a-stack ${loading ? 'v3a-dim' : ''}`}>
-        <AnswerCard
-          tone={tone}
-          eyebrow={`${scope} 반응 요약`}
-          headline={headline}
-          detail={best ? `댓글 반응이 가장 뜨거운 영상: “${best.label}”` : '조회수 100회 이상 영상이 생기면 댓글이 뜨거운 영상도 알려드려요.'}
-          action={
-            best ? (
-              <a className="button secondary" href="#v3a-top-comment">
-                뜨거운 영상 보기
-              </a>
-            ) : null
-          }
-        />
-
-        <StatGrid>
-          <StatCard
-            label="이번 주 반응률"
-            value={thisWeekCount > 0 ? formatPct(thisWeek.current, 2) : '—'}
-            hint="이번 주 올린 영상에서 조회수 대비 좋아요+댓글이 차지하는 비율이에요. 높을수록 반응이 좋아요."
-            delta={thisWeekCount > 0 && weekChange !== null ? change.text : thisWeekCount > 0 ? '지난주 영상이 없어 비교하지 않았어요' : '이번 주 영상 없음'}
-            tone={thisWeekCount > 0 ? change.tone : 'neutral'}
+      <div className="v3a-stack" aria-busy={res.stale || res.refreshing}>
+        {res.error ? <RefreshFailed message={res.error} status={res.status} onRetry={() => void reload(true)} /> : null}
+        <div className={`v3a-stack ${res.stale ? 'v3a-dim' : ''}`}>
+          <AnswerCard
+            tone={tone}
+            eyebrow={`${scope} 반응 요약`}
+            headline={headline}
+            detail={best ? `댓글 반응이 가장 뜨거운 영상: “${best.label}”` : '조회수 100회 이상 영상이 생기면 댓글이 뜨거운 영상도 알려드려요.'}
+            action={
+              best ? (
+                <a className="button secondary" href="#v3a-top-comment">
+                  뜨거운 영상 보기
+                </a>
+              ) : null
+            }
           />
-          <StatCard label="전체 평균 반응률" value={formatPct(overall, 2)} hint="지금까지 영상 전체의 평균이에요. 이번 주 값과 비교해 보세요." />
-          <StatCard
-            label="댓글 반응률"
-            value={formatPct(data.kpis.avgCommentRatePct.current, 2)}
-            hint="조회수 대비 댓글 비율이에요. 댓글은 좋아요보다 남기기 어려워서, 높으면 팬이 생기고 있다는 신호예요."
-          />
-        </StatGrid>
-        <p className="v3a-note">분석 대상: 조회수가 있는 영상 {formatNumber(data.videoCount)}개 (조회수 0인 영상은 제외)</p>
 
-        <span id="v3a-top-comment" />
-        <Section title="댓글 반응이 특히 뜨거운 영상 Top 5" description="조회수 대비 댓글이 많은 영상이에요 (조회수 100회 이상). 이런 영상은 후속편이나 같은 종목 영상을 만들기 좋아요.">
-          {data.topComment.length === 0 ? (
-            <EmptyBlock title="아직 보여드릴 영상이 없어요">조회수가 100회를 넘는 영상이 생기면 댓글 반응이 뜨거운 순서대로 5개를 보여드려요.</EmptyBlock>
-          ) : (
-            <div className="v3a-list">
-              {data.topComment.map((row, index) => (
-                <div className="v3a-row" key={row.id}>
-                  <span className="v3-rank">{index + 1}</span>
-                  <div className="v3a-row-title" title={row.label}>
-                    {row.youtubeUrl ? (
-                      <a className="v3-link" href={row.youtubeUrl} target="_blank" rel="noreferrer">
-                        {row.label}
-                      </a>
-                    ) : (
-                      row.label
-                    )}
-                    {row.sub ? <Tag tone="blue">{row.sub}</Tag> : null}
+          <StatGrid>
+            <StatCard
+              label="이번 주 반응률"
+              value={thisWeekCount > 0 ? formatPct(thisWeek.current, 2) : '—'}
+              hint="이번 주 올린 영상에서 조회수 대비 좋아요+댓글이 차지하는 비율이에요. 높을수록 반응이 좋아요."
+              delta={deltaText}
+              tone={thisWeekCount > 0 ? change.tone : 'neutral'}
+            />
+            <StatCard label="전체 평균 반응률" value={formatPct(overall, 2)} hint="지금까지 영상 전체의 평균이에요. 이번 주 값과 비교해 보세요." />
+            <StatCard
+              label="댓글 반응률"
+              value={formatPct(data.kpis.avgCommentRatePct.current, 2)}
+              hint="조회수 대비 댓글 비율이에요. 댓글은 좋아요보다 남기기 어려워서, 높으면 팬이 생기고 있다는 신호예요."
+            />
+          </StatGrid>
+          <p className="v3a-note">분석 대상: 조회수가 있는 영상 {formatNumber(data.videoCount)}개 (조회수 0인 영상은 제외)</p>
+
+          <span id="v3a-top-comment" />
+          <Section title="댓글 반응이 특히 뜨거운 영상 Top 5" description="조회수 대비 댓글이 많은 영상이에요 (조회수 100회 이상). 이런 영상은 후속편이나 같은 종목 영상을 만들기 좋아요.">
+            {data.topComment.length === 0 ? (
+              <EmptyBlock title="아직 보여드릴 영상이 없어요">조회수가 100회를 넘는 영상이 생기면 댓글 반응이 뜨거운 순서대로 5개를 보여드려요.</EmptyBlock>
+            ) : (
+              <div className="v3a-list">
+                {data.topComment.map((row, index) => (
+                  <div className="v3a-row" key={row.id}>
+                    <span className="v3-rank">{index + 1}</span>
+                    <div className="v3a-row-title" title={row.label}>
+                      {row.youtubeUrl ? (
+                        <a className="v3-link" href={row.youtubeUrl} target="_blank" rel="noreferrer">
+                          {row.label}
+                        </a>
+                      ) : (
+                        row.label
+                      )}
+                      {row.sub ? <Tag tone="blue">{row.sub}</Tag> : null}
+                    </div>
+                    <div className="v3a-row-value">
+                      {formatPct(row.value, 2)}
+                      <small>
+                        {row.viewCount ? `조회수 ${formatCompactNumber(row.viewCount)}회 · ` : ''}100명 중 약 {per100(row.value)}이 댓글
+                      </small>
+                    </div>
                   </div>
-                  <div className="v3a-row-value">
-                    {formatPct(row.value, 2)}
-                    <small>100명 중 약 {row.value.toFixed(1)}명이 댓글</small>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </Section>
+                ))}
+              </div>
+            )}
+          </Section>
 
-        <Section title="영상 대부분은 반응이 어느 정도인가요?" description={bucketSentence || '영상마다 반응률을 구해 구간별로 몇 개씩 있는지 보여줘요.'}>
-          <HistogramBars buckets={buckets} />
-        </Section>
+          <Section title="영상 대부분은 반응이 어느 정도인가요?" description={bucketSentence || '영상마다 반응률을 구해 구간별로 몇 개씩 있는지 보여줘요.'}>
+            <HistogramChart buckets={buckets} />
+          </Section>
 
-        <HowTo title="좋아요와 댓글을 영상별로 자세히 보기 (선택)">
-          <p>점 하나가 영상 하나예요. 오른쪽일수록 좋아요가 많고, 위쪽일수록 댓글이 많아요. 보라색 점은 좋아요보다 댓글이 상대적으로 활발한 영상이에요. 점 위에 마우스를 올리면 제목이 보여요.</p>
-          <ScatterGrid points={data.scatter} />
-        </HowTo>
+          <HowTo title="좋아요와 댓글을 영상별로 자세히 보기 (선택)">
+            <p>
+              점 하나가 영상 하나예요. 오른쪽일수록 좋아요가 많고, 위쪽일수록 댓글이 많아요. 주황색 마름모(◆)는 좋아요보다 댓글이 상대적으로 활발한 영상이에요. 점 위에 마우스를 올리거나 그래프를 클릭한 뒤 화살표 키를 누르면 영상 제목과 정확한 값이 보여요.
+            </p>
+            <ScatterChart points={data.scatter} />
+          </HowTo>
 
-        <HowTo>
-          <p>반응률 = (좋아요 + 댓글) ÷ 조회수 × 100</p>
-          <p>댓글 반응률 = 댓글 ÷ 조회수 × 100</p>
-          <p>이번 주 = 최근 7일 안에 등록한 영상, 지난주 = 그 이전 7일 안에 등록한 영상이에요.</p>
-          <p>구간별 개수는 영상마다 구한 반응률을 0~1%, 1~2%, 2~4%, 4~8%, 8% 이상으로 나눠 센 값이에요.</p>
-        </HowTo>
+          <HowTo>
+            <p>반응률 = (좋아요 + 댓글) ÷ 조회수 × 100</p>
+            <p>댓글 반응률 = 댓글 ÷ 조회수 × 100</p>
+            <p>이번 주 = 최근 7일 안에 등록한 영상, 지난주 = 그 이전 7일 안에 등록한 영상이에요.</p>
+            <p>구간별 개수는 영상마다 구한 반응률을 0~1%, 1~2%, 2~4%, 4~8%, 8% 이상으로 나눠 센 값이에요.</p>
+          </HowTo>
+        </div>
       </div>
     </>
   )

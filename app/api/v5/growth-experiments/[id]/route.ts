@@ -1,8 +1,7 @@
-import { NextResponse } from 'next/server'
 import { EXPERIMENT_SELECT, experimentPatchSchema, mapExperiments, type ExperimentRow } from '@/lib/v5/experiments'
 import { V5_TABLES } from '@/lib/v5/tables'
 import { todayYmd } from '@/lib/v5/format'
-import { badRequest, canEditRow, countMissingVideos, forbidden, getSession, handleRouteError, isMissingTableError, missingTableResponse, notFound, readJson, uuidSchema } from '@/lib/v5/api'
+import { badRequest, canEditRow, countMissingVideos, forbidden, getSession, handleRouteError, isMissingTableError, jsonNoStore, missingTableResponse, notFound, readJson, uuidSchema } from '@/lib/v5/api'
 
 // 캔버스 카드는 상태만 바꾸는 경우가 잦으므로 부분 수정을 허용한다.
 // 작성자 본인 또는 관리자만 수정/삭제할 수 있다.
@@ -69,7 +68,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     if (!data) return notFound('실험 카드를 찾을 수 없어요. 이미 지워졌을 수 있어요.')
 
     const [item] = await mapExperiments(supabaseAdmin, [data as ExperimentRow], session)
-    return NextResponse.json({ item })
+    return jsonNoStore({ item })
   } catch (e) {
     return handleRouteError(e, '실험을 저장하지 못했어요. 잠시 뒤 다시 해 주세요.')
   }
@@ -83,7 +82,7 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
     const { supabaseAdmin } = session
 
     const existing = await loadOwnedExperiment(supabaseAdmin, id)
-    if (!existing) return NextResponse.json({ ok: true, alreadyGone: true }) // 이미 지워졌다면 목적은 달성된 것
+    if (!existing) return jsonNoStore({ ok: true, alreadyGone: true }) // 이미 지워졌다면 목적은 달성된 것
     if (!canEditRow(session, existing.created_by)) return forbidden('본인이 만든 실험만 지울 수 있어요.')
 
     const { error } = await supabaseAdmin.from(V5_TABLES.growthExperiments).delete().eq('id', id)
@@ -91,7 +90,7 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
       if (isMissingTableError(error)) return missingTableResponse()
       throw error
     }
-    return NextResponse.json({ ok: true })
+    return jsonNoStore({ ok: true })
   } catch (e) {
     return handleRouteError(e, '실험을 지우지 못했어요. 잠시 뒤 다시 해 주세요.')
   }

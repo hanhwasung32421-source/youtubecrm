@@ -20,6 +20,24 @@ export function missingTableResponse() {
   return NextResponse.json({ error: V5_MISSING_TABLE_MESSAGE }, { status: 409 })
 }
 
+// 조회 전용 분석 응답(점수판/성공 공식/실험 목록): 브라우저가 15초는 그대로 쓰고, 45초 동안은 먼저 보여 주며 뒤에서 새로 받는다.
+// 로그인한 사람마다 내용이 다르므로 private + Vary: Authorization(다른 계정에게 남의 응답이 보이면 안 된다).
+export const READ_CACHE_CONTROL = 'private, max-age=15, stale-while-revalidate=45'
+
+export function jsonCached(body: unknown, init: ResponseInit = {}) {
+  const res = NextResponse.json(body, init)
+  res.headers.set('Cache-Control', READ_CACHE_CONTROL)
+  res.headers.set('Vary', 'Authorization')
+  return res
+}
+
+// 저장/수정/삭제 응답은 절대 캐시하지 않는다(방금 바꾼 내용이 옛 값으로 보이면 안 된다).
+export function jsonNoStore(body: unknown, init: ResponseInit = {}) {
+  const res = NextResponse.json(body, init)
+  res.headers.set('Cache-Control', 'no-store')
+  return res
+}
+
 export function badRequest(message: string) {
   return NextResponse.json({ error: message }, { status: 400 })
 }

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { DocRow, DocTable, type DocColumn } from '@/components/v3/ui'
+import { SegmentedType } from '@/components/v3/segmented'
 import { MAX_BULK_ROWS, parseBulk, shortUrl } from './bulk-parse'
 import { registerVideo, type ContentType } from './register-api'
 
@@ -23,22 +23,15 @@ type Row =
       result?: Result
     }
 
-const COLUMNS: DocColumn[] = [
-  { key: 'no', label: '#', width: '32px' },
-  { key: 'url', label: '정리된 주소', width: 'minmax(0, 1.3fr)' },
-  { key: 'stock', label: '종목', width: 'minmax(0, 1fr)' },
-  { key: 'type', label: '형식', width: '92px' },
-  { key: 'status', label: '상태', width: 'minmax(0, 1.1fr)' },
-  { key: 'remove', label: '', width: '28px' }
-]
+// 표 모양(넓은 화면)과 카드 모양(좁은 화면)은 CSS(.v3-brow)가 바꾼다. 마크업은 하나.
 
 const CONCURRENCY = 2
 
-function typeLabel(type: ContentType) {
-  return type === 'shortform' ? '숏폼' : '롱폼'
-}
-
 export function BulkRegister({
+  active,
+  seed,
+  stockListId,
+  touchOnly,
   contentType,
   onChooseType,
   recentStocks,
@@ -47,6 +40,10 @@ export function BulkRegister({
   onBatchDone,
   disabled
 }: {
+  active: boolean // 여러 개 모드가 화면에 보이는 중인지(숨겨져도 붙여넣은 내용은 그대로 둔다)
+  seed: { text: string; n: number } | null // 하나씩 등록 칸에서 옮겨 온 붙여넣기 내용
+  stockListId: string
+  touchOnly: { current: boolean }
   contentType: ContentType
   onChooseType: (type: ContentType) => void
   recentStocks: string[]
@@ -62,11 +59,18 @@ export function BulkRegister({
   const [results, setResults] = useState<Record<string, Result>>({})
   const [running, setRunning] = useState(false)
   const stopRef = useRef(false)
+  const runningRef = useRef(false) // 클릭이 겹쳐도 묶음 등록이 두 번 시작되지 않게
   const textRef = useRef<HTMLTextAreaElement | null>(null)
 
+  // 화면에 나타날 때마다 붙여넣기 칸에 커서(휴대폰은 키보드가 가리므로 옮기지 않는다)
   useEffect(() => {
-    textRef.current?.focus()
-  }, [])
+    if (active && !touchOnly.current) textRef.current?.focus()
+  }, [active, touchOnly])
+
+  // 하나씩 등록 칸에서 여러 주소를 붙여넣어 옮겨 온 경우 그 내용을 채운다.
+  useEffect(() => {
+    if (seed) setText(seed.text)
+  }, [seed])
 
   const parsed = useMemo(() => parseBulk(text), [text])
   const common = commonStock.replace(/\s+/g, ' ').trim()
@@ -117,7 +121,8 @@ export function BulkRegister({
 
   // 한 줄이 실패해도 멈추지 않고, 동시에 2개까지만 보내 유튜브 사용량을 아낀다.
   const runBatch = async (targets: typeof valid) => {
-    if (targets.length === 0 || running) return
+    if (targets.length === 0 || runningRef.current) return
+    runningRef.current = true
     stopRef.current = false
     setRunning(true)
     for (const row of targets) setResult(row.videoId, { state: 'queued' })
@@ -149,6 +154,7 @@ export function BulkRegister({
     try {
       await Promise.all(Array.from({ length: Math.min(CONCURRENCY, targets.length) }, worker))
     } finally {
+      runningRef.current = false
       setRunning(false)
       await onBatchDone(okIds)
     }
@@ -159,7 +165,9 @@ export function BulkRegister({
     setOverrides({})
     setRemoved(new Set())
     setResults({})
-    window.setTimeout(() => textRef.current?.focus(), 0)
+    window.setTimeout(() => {
+      if (!touchOnly.current) textRef.current?.focus()
+    }, 0)
   }
 
   const focusNextStock = (index: number) => {
@@ -180,12 +188,16 @@ export function BulkRegister({
           className="textarea v3-bulk-text"
           rows={5}
           spellCheck={false}
+          autoComplete="off"
+          autoCapitalize="none"
+          autoCorrect="off"
+          aria-describedby="v3-bulk-text-hint"
           value={text}
           readOnly={locked}
           placeholder={'한 줄에 영상 하나씩, 주소 뒤에 종목을 적어요.\nhttps://youtu.be/AbCdEfGhIjK 삼성전자\nhttps://www.youtube.com/shorts/LmNoPqRsTuV SK하이닉스'}
           onChange={(e) => setText(e.target.value)}
         />
-        <div className="v3-reg-hint">종목은 빼도 돼요. 빠진 줄에는 아래 공통 종목이 들어갑니다. 한 번에 {MAX_BULK_ROWS}개까지 가능해요.</div>
+        <div id="v3-bulk-text-hint" className="v3-reg-hint">종목은 빼도 돼요. 빠진 줄에는 아래 공통 종목이 들어갑니다. 한 번에 {MAX_BULK_ROWS}개까지 가능해요.</div>
       </div>
 
       <div className="v3-reg-row v3-bulk-common">
@@ -195,6 +207,11 @@ export function BulkRegister({
             id="v3-bulk-common"
             className="input"
             autoComplete="off"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            enterKeyHint="done"
+            list={stockListId}
             placeholder="종목이 없는 줄에 넣을 종목"
             value={commonStock}
             readOnly={locked}
@@ -203,24 +220,19 @@ export function BulkRegister({
         </div>
         <div className="field">
           <span className="label" id="v3-bulk-type-label">기본 형식</span>
-          <div className="v3-seg" role="group" aria-labelledby="v3-bulk-type-label">
-            {(['longform', 'shortform'] as const).map((type) => (
-              <button key={type} type="button" aria-pressed={contentType === type} disabled={locked} onClick={() => onChooseType(type)}>
-                {typeLabel(type)}
-              </button>
-            ))}
-          </div>
+          <SegmentedType value={contentType} onChange={onChooseType} disabled={locked} labelledBy="v3-bulk-type-label" />
         </div>
       </div>
 
       {recentStocks.length > 0 ? (
-        <div className="v3-reg-chips" aria-label="최근 쓴 종목">
-          <span className="v3-reg-chips-label">최근 종목</span>
+        <div className="v3-reg-chips" role="group" aria-label="최근 쓴 종목">
+          <span className="v3-reg-chips-label" aria-hidden>최근 종목</span>
           {recentStocks.map((name) => (
             <button
               type="button"
               key={name}
               className={`v3-tag blue v3-tag-button ${commonStock.trim() === name ? 'active' : ''}`}
+              aria-pressed={commonStock.trim() === name}
               disabled={locked}
               onClick={() => setCommonStock(commonStock.trim() === name ? '' : name)}
             >
@@ -231,7 +243,7 @@ export function BulkRegister({
       ) : null}
 
       {parsed.duplicates > 0 || skippedToday > 0 || parsed.overflow > 0 ? (
-        <div className="v3-reg-hint warn v3-bulk-notes">
+        <div className="v3-reg-hint warn v3-bulk-notes" role="status">
           {parsed.duplicates > 0 ? <span>같은 영상 {parsed.duplicates}개는 한 번만 넣었어요.</span> : null}
           {skippedToday > 0 ? <span>오늘 이미 등록한 영상 {skippedToday}개는 뺐어요.</span> : null}
           {parsed.overflow > 0 ? <span>{MAX_BULK_ROWS}개를 넘는 {parsed.overflow}줄은 다음에 붙여넣어 주세요.</span> : null}
@@ -240,43 +252,55 @@ export function BulkRegister({
 
       {rows.length > 0 ? (
         <>
-          <DocTable columns={COLUMNS}>
+          <div className="data-table v3-btable">
+            <div className="data-table-header v3-brow v3-bhead" aria-hidden>
+              <div className="v3-bc-no">#</div>
+              <div className="v3-bc-url">정리된 주소</div>
+              <div className="v3-bc-stock">종목</div>
+              <div className="v3-bc-type">형식</div>
+              <div className="v3-bc-state">상태</div>
+              <div className="v3-bc-remove" />
+            </div>
             {rows.map((row, index) => {
               if (row.kind === 'invalid') {
                 return (
-                  <DocRow columns={COLUMNS} key={row.key}>
-                    <div className="small muted">{index + 1}</div>
-                    <div className="v3-cell-sub" title={row.raw} style={{ gridColumn: 'span 3' }}>{row.raw}</div>
-                    <div className="v3-bulk-state bad">유효하지 않은 주소</div>
-                    <div />
-                  </DocRow>
+                  <div className="data-table-row v3-brow v3-brow-invalid" key={row.key}>
+                    <div className="v3-bc-no small muted">{index + 1}</div>
+                    <div className="v3-bc-raw v3-cell-sub" title={row.raw}>{row.raw}</div>
+                    <div className="v3-bc-state v3-bulk-state bad">유효하지 않은 주소</div>
+                  </div>
                 )
               }
               const state = row.result?.state
               const editable = !locked && state !== 'done' && state !== 'queued' && state !== 'running'
               return (
-                <DocRow columns={COLUMNS} key={row.key} className={state === 'done' ? 'v3-bulk-done' : undefined}>
-                  <div className="small muted">{index + 1}</div>
-                  <div className="v3-cell-sub" title={row.url}>{shortUrl(row.videoId)}</div>
-                  <div>
+                <div className={`data-table-row v3-brow ${state === 'done' ? 'v3-bulk-done' : ''}`} key={row.key}>
+                  <div className="v3-bc-no small muted">{index + 1}</div>
+                  <div className="v3-bc-url v3-cell-sub" title={row.url}>{shortUrl(row.videoId)}</div>
+                  <div className="v3-bc-stock">
                     <input
                       className="input"
                       data-bulk-stock={index}
                       aria-label={`${index + 1}번 종목`}
                       autoComplete="off"
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
+                      enterKeyHint="next"
+                      list={stockListId}
                       placeholder={common || '종목 입력'}
                       value={row.stockInput}
                       readOnly={!editable}
                       onChange={(e) => patchOverride(row.videoId, { stock: e.target.value })}
                       onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
+                        if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
                           e.preventDefault()
                           focusNextStock(index)
                         }
                       }}
                     />
                   </div>
-                  <div>
+                  <div className="v3-bc-type">
                     <select
                       className="select"
                       aria-label={`${index + 1}번 형식`}
@@ -288,7 +312,7 @@ export function BulkRegister({
                       <option value="shortform">숏폼</option>
                     </select>
                   </div>
-                  <div className={`v3-bulk-state ${state === 'done' ? 'ok' : state === 'failed' ? 'bad' : !state && !row.stock ? 'warn' : ''}`} title={row.result?.error}>
+                  <div className={`v3-bc-state v3-bulk-state ${state === 'done' ? 'ok' : state === 'failed' ? 'bad' : !state && !row.stock ? 'warn' : ''}`} title={row.result?.error}>
                     {state === 'done'
                       ? '완료'
                       : state === 'running'
@@ -301,7 +325,7 @@ export function BulkRegister({
                               ? '대기'
                               : '종목 입력 필요'}
                   </div>
-                  <div>
+                  <div className="v3-bc-remove">
                     {state === 'done' || state === 'queued' || state === 'running' || locked ? null : (
                       <button
                         type="button"
@@ -314,10 +338,10 @@ export function BulkRegister({
                       </button>
                     )}
                   </div>
-                </DocRow>
+                </div>
               )
             })}
-          </DocTable>
+          </div>
 
           <div className="v3-bulk-actions">
             <div className="v3-bulk-summary" role="status" aria-live="polite">

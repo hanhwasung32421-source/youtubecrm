@@ -64,6 +64,25 @@ export function unauthorizedResponse(e: unknown) {
   return NextResponse.json({ error: message }, { status: 401 })
 }
 
+// ---- 응답 캐시 ----
+// 조회(GET) 분석 응답은 15초 동안 브라우저가 그대로 쓰고, 그 뒤 45초는 옛 값을 먼저 쓰며 뒤에서 새로 받는다.
+// 로그인한 사람마다 내용이 다르므로 private + Vary: Authorization 으로 다른 사람의 응답이 섞이지 않게 한다.
+export const ANALYTICS_CACHE_CONTROL = 'private, max-age=15, stale-while-revalidate=45'
+
+export function cachedJson<T>(body: T, init?: ResponseInit) {
+  const res = NextResponse.json(body, init)
+  res.headers.set('Cache-Control', ANALYTICS_CACHE_CONTROL)
+  res.headers.set('Vary', 'Authorization')
+  return res
+}
+
+// 저장·삭제 응답은 절대 캐시하지 않는다.
+export function noStoreJson<T>(body: T, init?: ResponseInit) {
+  const res = NextResponse.json(body, init)
+  res.headers.set('Cache-Control', 'no-store')
+  return res
+}
+
 const HANGUL = /[가-힣]/
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -188,13 +207,36 @@ export async function loadRecentStocks(supabaseAdmin: SupabaseAdmin, days = 7): 
 export async function loadVideos(
   supabaseAdmin: SupabaseAdmin,
   scope: { userId: string; isAdmin: boolean },
-  limit = 200
+  limit = 200,
+  columns: string = VIDEO_SELECT
 ): Promise<VideoLite[]> {
-  let query = supabaseAdmin.from(TABLES.videos).select(VIDEO_SELECT).order('created_at', { ascending: false }).limit(limit)
+  let query = supabaseAdmin.from(TABLES.videos).select(columns).order('created_at', { ascending: false }).limit(limit)
   if (!scope.isAdmin) query = query.eq('primary_owner_user_id', scope.userId)
   const { data, error } = await query
   if (error) throw error
   return ((data || []) as any[]).map((row) => ({ ...row, content_type: row.content_type as ContentType }))
+}
+
+// 화면이 쓰지 않는 긴 글(설명 등)과 잘 안 쓰는 칸은 비워서 응답을 작게 만든다. (칸 이름은 그대로라 옛 화면도 그대로 동작)
+export function slimVideo(v: Partial<VideoLite> & { id: string }, extra: Partial<VideoLite> = {}): VideoLite {
+  return {
+    id: v.id,
+    title: v.title ?? null,
+    description: null,
+    stock_name: v.stock_name ?? '',
+    content_type: (v.content_type as ContentType) ?? 'longform',
+    youtube_url: v.youtube_url ?? null,
+    thumbnail_url: null,
+    published_at: v.published_at ?? null,
+    duration_seconds: null,
+    view_count: v.view_count ?? null,
+    like_count: v.like_count ?? null,
+    comment_count: null,
+    primary_owner_user_id: v.primary_owner_user_id ?? '',
+    created_at: v.created_at ?? '',
+    last_synced_at: null,
+    ...extra
+  }
 }
 
 // .in() 에 아이디가 수백 개 들어가면 URL이 너무 길어지므로 나눠서 조회한다.
@@ -204,11 +246,13 @@ function chunkIds(ids: string[], size = 100): string[][] {
   return chunks
 }
 
+const CHECKLIST_SELECT = 'video_id, title_has_stock, thumbnail_text_checked, description_timestamps, tags_5plus, updated_at'
+
 export async function loadChecklistMap(supabaseAdmin: SupabaseAdmin, videoIds: string[]): Promise<Map<string, SeoChecklist>> {
   const map = new Map<string, SeoChecklist>()
   const results = await Promise.all(
     chunkIds(videoIds).map(async (ids) => {
-      const { data, error } = await supabaseAdmin.from(V2_TABLES.seoChecklists).select('*').in('video_id', ids)
+      const { data, error } = await supabaseAdmin.from(V2_TABLES.seoChecklists).select(CHECKLIST_SELECT).in('video_id', ids)
       if (error) throw error
       return (data || []) as SeoChecklist[]
     })

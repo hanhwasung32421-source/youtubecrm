@@ -1,16 +1,35 @@
 'use client'
 
 import '../analysis.css'
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { PageHeader } from '@/components/v3/app-shell'
 import { Toast, useToast } from '@/components/toast'
 import { SampleBanner, Section, Tag } from '@/components/v3/ui'
+import { useV3Me } from '@/components/v3/auth-guard'
 import { v3Request } from '@/lib/v3/api-client'
-import { ConfirmButton, FieldError, InlineEditor, Req, useLatest } from '@/lib/v3/interact'
+import { ConfirmButton, FieldError, InlineEditor, Req } from '@/lib/v3/interact'
+import { invalidateV3, useV3Data } from '@/lib/v3/use-v3-data'
 import { formatCompactNumber, formatNumber, formatPct } from '@/lib/v3/format'
 import { pctChange } from '@/lib/v3/engagement'
 import { SAMPLE_STOCK_NAMES } from '@/lib/v3/sample-data'
-import { AnswerCard, EmptyBlock, ErrorBlock, HowTo, LoadingBlock, MoreButton, describeChange, useShowMore, type Tone } from '../analysis-parts'
+import {
+  AnswerCard,
+  AnswerSkeleton,
+  CardsSkeleton,
+  EmptyBlock,
+  ErrorBlock,
+  HowTo,
+  MoreButton,
+  RefreshFailed,
+  SectionSkeleton,
+  Skel,
+  SkeletonShell,
+  describeChange,
+  useShowMore,
+  withLoginLink,
+  type Tone
+} from '../analysis-parts'
+import { CompareTable, type CompareRowData } from '../analysis-charts'
 
 type FormatStat = { label: string; contentType: string; count: number; avgEngagementPct: number; avgVelocity: number; totalViews: number }
 
@@ -81,9 +100,12 @@ function seriesVerdict(s: SeriesRow, engChange: number | null, velChange: number
 }
 
 export default function SeriesPage() {
-  const { toast, showSuccess, showError } = useToast()
-  const [data, setData] = useState<FormatSeriesResponse | null>(null)
-  const [loadError, setLoadError] = useState<string | null>(null)
+  const me = useV3Me()
+  const { toast, showSuccess } = useToast()
+  const res = useV3Data<FormatSeriesResponse>('/api/v3/format-series', { scope: me?.crmUserId, fallback: '비교 결과를 불러오지 못했어요.' })
+  const { data, reload, mutate } = res
+  // 버튼을 빠르게 두 번 눌러도 저장이 한 번만 나가게 하는 즉시 잠금
+  const lock = useRef(false)
 
   // 새 시리즈 폼
   const [showForm, setShowForm] = useState(false)
@@ -113,22 +135,11 @@ export default function SeriesPage() {
       return next
     })
 
-  const showErrorRef = useLatest(showError)
-  const load = useCallback(async () => {
-    const res = await v3Request<FormatSeriesResponse>('/api/v3/format-series', {}, '비교 결과를 불러오지 못했어요.')
-    if (!res.ok) {
-      // 이미 화면이 떠 있으면 그대로 두고 알림만 띄운다(화면이 사라졌다 나타나며 튀지 않게).
-      setLoadError(res.error)
-      showErrorRef.current(res.error || '비교 결과를 불러오지 못했어요.')
-      return
-    }
-    setLoadError(null)
-    setData(res.data)
-  }, [showErrorRef])
-
-  useEffect(() => {
-    void load()
-  }, [load])
+  // 저장/수정/삭제 뒤에는 저장해 둔 옛 값을 버리고 서버의 최신 값을 다시 받는다.
+  const refresh = async () => {
+    invalidateV3('/api/v3/format-series')
+    await reload(true)
+  }
 
   useEffect(() => {
     if (showForm) nameRef.current?.focus()
@@ -148,39 +159,42 @@ export default function SeriesPage() {
 
   const createSeries = async (e?: FormEvent) => {
     e?.preventDefault()
-    if (creating) return
+    if (creating || lock.current) return
     setAttempted(true)
     setFormError(null)
     if (!name.trim()) {
       nameRef.current?.focus()
       return
     }
+    lock.current = true
     setCreating(true)
-    const res = await v3Request<{ moved?: number }>(
+    const out = await v3Request<{ moved?: number }>(
       '/api/v3/series',
       { method: 'POST', body: { name: name.trim(), stockName: stockName.trim() || undefined, videoIds: selectedIds } },
       '시리즈를 만들지 못했어요.'
     )
+    lock.current = false
     setCreating(false)
-    if (!res.ok) {
-      setFormError(res.error)
+    if (!out.ok) {
+      setFormError(out.error)
       nameRef.current?.focus()
       return
     }
     // 새 카드가 목록에 바로 나타나므로 "만들었어요" 알림은 생략. 다른 시리즈에서 옮겨온 경우만 알려 준다.
-    if (res.data?.moved) showSuccess(`영상 ${res.data.moved}개를 다른 시리즈에서 옮겨 왔어요.`)
+    if (out.data?.moved) showSuccess(`영상 ${out.data.moved}개를 다른 시리즈에서 옮겨 왔어요.`)
     setName('')
     setStockName('')
     setSelectedIds([])
     setVideoQuery('')
     setAttempted(false)
-    await load()
+    await refresh()
     nameRef.current?.focus()
   }
 
   const addToSeries = async (s: SeriesRow) => {
     const videoId = addPickers[s.id]
-    if (!videoId || busyKey) return
+    if (!videoId || busyKey || lock.current) return
+    lock.current = true
     setBusyKey(`add:${s.id}`)
     setCardError(s.id, null)
     const res = await v3Request<{ moved?: boolean; already?: boolean; fromSeriesName?: string }>(
@@ -188,6 +202,7 @@ export default function SeriesPage() {
       { method: 'POST', body: { videoId } },
       '영상을 추가하지 못했어요.'
     )
+    lock.current = false
     setBusyKey(null)
     if (!res.ok) {
       setCardError(s.id, res.error)
@@ -196,28 +211,29 @@ export default function SeriesPage() {
     if (res.data?.moved) showSuccess(`“${res.data.fromSeriesName || '다른 시리즈'}”에서 이 시리즈로 옮겼어요.`)
     setAddPickers((prev) => ({ ...prev, [s.id]: '' }))
     setOpenMembers((prev) => ({ ...prev, [s.id]: true }))
-    await load()
+    await refresh()
     document.getElementById(`v3-series-add-${s.id}`)?.focus()
   }
 
   const removeMember = async (s: SeriesRow, member: { id: string; title: string }) => {
-    if (busyKey) return
+    if (busyKey || lock.current) return
+    lock.current = true
     setBusyKey(`rm:${s.id}:${member.id}`)
     setCardError(s.id, null)
     // 먼저 화면에서 빼고, 실패하면 되돌린다.
-    setData((prev) =>
-      prev ? { ...prev, series: prev.series.map((x) => (x.id === s.id ? { ...x, members: x.members.filter((m) => m.id !== member.id), videoCount: Math.max(x.videoCount - 1, 0) } : x)) } : prev
-    )
+    mutate((prev) => ({ ...prev, series: prev.series.map((x) => (x.id === s.id ? { ...x, members: x.members.filter((m) => m.id !== member.id), videoCount: Math.max(x.videoCount - 1, 0) } : x)) }))
     const res = await v3Request(`/api/v3/series/${s.id}/members`, { method: 'DELETE', body: { videoId: member.id } }, '영상을 빼지 못했어요.')
+    lock.current = false
     setBusyKey(null)
     if (!res.ok) {
-      setData((prev) =>
-        prev ? { ...prev, series: prev.series.map((x) => (x.id === s.id && !x.members.some((m) => m.id === member.id) ? { ...x, members: [...x.members, member], videoCount: x.videoCount + 1 } : x)) } : prev
-      )
+      mutate((prev) => ({
+        ...prev,
+        series: prev.series.map((x) => (x.id === s.id && !x.members.some((m) => m.id === member.id) ? { ...x, members: [...x.members, member], videoCount: x.videoCount + 1 } : x))
+      }))
       setCardError(s.id, res.error)
       return
     }
-    await load()
+    await refresh()
   }
 
   const renameSeries = async (s: SeriesRow, value: string) => {
@@ -225,23 +241,29 @@ export default function SeriesPage() {
       setRenamingId(null)
       return
     }
+    if (lock.current) return
+    lock.current = true
     setRenameSaving(true)
     setRenameError(null)
     const res = await v3Request(`/api/v3/series/${s.id}`, { method: 'PATCH', body: { name: value } }, '이름을 바꾸지 못했어요.')
+    lock.current = false
     setRenameSaving(false)
     if (!res.ok) {
       setRenameError(res.error)
       return
     }
-    setData((prev) => (prev ? { ...prev, series: prev.series.map((x) => (x.id === s.id ? { ...x, name: value } : x)) } : prev))
+    mutate((prev) => ({ ...prev, series: prev.series.map((x) => (x.id === s.id ? { ...x, name: value } : x)) }))
     setRenamingId(null)
-    await load()
+    await refresh()
   }
 
   const deleteSeries = async (s: SeriesRow) => {
+    if (lock.current) return
+    lock.current = true
     setBusyKey(`del:${s.id}`)
     setCardError(s.id, null)
     const res = await v3Request(`/api/v3/series/${s.id}`, { method: 'DELETE' }, '시리즈를 삭제하지 못했어요.')
+    lock.current = false
     setBusyKey(null)
     // 이미 지워진 시리즈(404)도 목록에서는 사라져야 하므로 새로 불러온다.
     if (!res.ok && res.status !== 404) {
@@ -249,7 +271,7 @@ export default function SeriesPage() {
       return
     }
     showSuccess(`“${s.name}” 시리즈를 삭제했어요. 영상은 그대로 남아 있어요.`)
-    await load()
+    await refresh()
   }
 
   // 종목을 입력했다면 그 종목 영상이 위로 오도록, 검색어가 있으면 걸러서 보여준다.
@@ -271,7 +293,27 @@ export default function SeriesPage() {
       <>
         {header}
         <Toast toast={toast} />
-        {loadError ? <ErrorBlock message={loadError} onRetry={() => void load()} /> : <LoadingBlock>비교 결과를 불러오는 중이에요…</LoadingBlock>}
+        {res.error ? (
+          <ErrorBlock message={res.error} status={res.status} onRetry={() => void reload(true)} />
+        ) : (
+          <SkeletonShell label="비교 결과를 불러오는 중이에요…">
+            <AnswerSkeleton />
+            <SectionSkeleton titleWidth={150}>
+              <div className="v3-chart-card" aria-hidden>
+                {Array.from({ length: 4 }, (_, i) => (
+                  <div key={i} style={{ display: 'grid', gridTemplateColumns: '38% 1fr 1fr', gap: 16, padding: '8px 0' }}>
+                    <Skel h={14} w="70%" />
+                    <Skel h={14} w="50%" />
+                    <Skel h={14} w="50%" />
+                  </div>
+                ))}
+              </div>
+            </SectionSkeleton>
+            <SectionSkeleton titleWidth={90}>
+              <CardsSkeleton count={2} />
+            </SectionSkeleton>
+          </SkeletonShell>
+        )}
       </>
     )
   }
@@ -279,8 +321,35 @@ export default function SeriesPage() {
   const { longform: lf, shortform: sf } = data.formatStats
   const formatAnswer = summarizeFormats(lf, sf)
   const noVideos = lf.count === 0 && sf.count === 0
-  const engWinner = lf.count > 0 && sf.count > 0 && lf.avgEngagementPct !== sf.avgEngagementPct ? (lf.avgEngagementPct > sf.avgEngagementPct ? 'longform' : 'shortform') : null
-  const velWinner = lf.count > 0 && sf.count > 0 && lf.avgVelocity !== sf.avgVelocity ? (lf.avgVelocity > sf.avgVelocity ? 'longform' : 'shortform') : null
+  const both = lf.count > 0 && sf.count > 0
+  // 표의 한 줄 = 하나의 지표. 막대와 ▲ 글자로 더 높은 쪽을 알려 준다(색만으로 구분하지 않는다).
+  const compareRows: CompareRowData[] = [
+    { key: 'count', label: '영상 수', hint: '', long: { text: `${formatNumber(lf.count)}개`, value: lf.count }, short: { text: `${formatNumber(sf.count)}개`, value: sf.count }, compare: false },
+    {
+      key: 'eng',
+      label: '시청자 반응률',
+      hint: '조회수 대비 좋아요+댓글 비율',
+      long: { text: lf.count ? formatPct(lf.avgEngagementPct, 2) : '—', value: lf.count ? lf.avgEngagementPct : null },
+      short: { text: sf.count ? formatPct(sf.avgEngagementPct, 2) : '—', value: sf.count ? sf.avgEngagementPct : null },
+      compare: both
+    },
+    {
+      key: 'vel',
+      label: '하루 평균 조회수',
+      hint: '올린 뒤 하루에 평균 몇 번 보였는지',
+      long: { text: lf.count ? `${formatNumber(Math.round(lf.avgVelocity))}회` : '—', value: lf.count ? lf.avgVelocity : null },
+      short: { text: sf.count ? `${formatNumber(Math.round(sf.avgVelocity))}회` : '—', value: sf.count ? sf.avgVelocity : null },
+      compare: both
+    },
+    {
+      key: 'views',
+      label: '총 조회수',
+      hint: '모든 영상의 조회수를 더한 값',
+      long: { text: `${formatCompactNumber(lf.totalViews)}회`, value: lf.totalViews, title: `${formatNumber(lf.totalViews)}회` },
+      short: { text: `${formatCompactNumber(sf.totalViews)}회`, value: sf.totalViews, title: `${formatNumber(sf.totalViews)}회` },
+      compare: false
+    }
+  ]
   const movable = data.movableVideos || []
 
   return (
@@ -288,7 +357,8 @@ export default function SeriesPage() {
       {header}
       <Toast toast={toast} />
 
-      <div className="v3a-stack">
+      <div className={`v3a-stack ${res.stale ? 'v3a-dim' : ''}`} aria-busy={res.refreshing}>
+        {res.error ? <RefreshFailed message={res.error} status={res.status} onRetry={() => void reload(true)} /> : null}
         <SampleBanner show={data.sample} />
 
         {noVideos ? (
@@ -299,47 +369,8 @@ export default function SeriesPage() {
           <>
             {formatAnswer ? <AnswerCard tone={formatAnswer.tone} eyebrow="롱폼 vs 숏폼" headline={formatAnswer.headline} detail={formatAnswer.detail} /> : null}
 
-            <Section title="롱폼 vs 숏폼" description="영상이 몇 개인지가 아니라, 시청자가 얼마나 반응하고 조회수가 얼마나 빨리 느는지를 비교해요. ▲는 더 좋은 쪽이에요.">
-              <table className="v3a-compare">
-                <thead>
-                  <tr>
-                    <th />
-                    <th>롱폼</th>
-                    <th>숏폼</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <th scope="row">영상 수</th>
-                    <td>{formatNumber(lf.count)}개</td>
-                    <td>{formatNumber(sf.count)}개</td>
-                  </tr>
-                  <tr>
-                    <th scope="row">
-                      시청자 반응률
-                      <small>조회수 대비 좋아요+댓글 비율</small>
-                    </th>
-                    <td className={engWinner === 'longform' ? 'win' : undefined}>{lf.count ? formatPct(lf.avgEngagementPct, 2) : '—'}</td>
-                    <td className={engWinner === 'shortform' ? 'win' : undefined}>{sf.count ? formatPct(sf.avgEngagementPct, 2) : '—'}</td>
-                  </tr>
-                  <tr>
-                    <th scope="row">
-                      하루 평균 조회수
-                      <small>올린 뒤 하루에 평균 몇 번 보였는지</small>
-                    </th>
-                    <td className={velWinner === 'longform' ? 'win' : undefined}>{lf.count ? `${formatNumber(Math.round(lf.avgVelocity))}회` : '—'}</td>
-                    <td className={velWinner === 'shortform' ? 'win' : undefined}>{sf.count ? `${formatNumber(Math.round(sf.avgVelocity))}회` : '—'}</td>
-                  </tr>
-                  <tr>
-                    <th scope="row">
-                      총 조회수
-                      <small>모든 영상의 조회수를 더한 값</small>
-                    </th>
-                    <td title={formatNumber(lf.totalViews)}>{formatCompactNumber(lf.totalViews)}회</td>
-                    <td title={formatNumber(sf.totalViews)}>{formatCompactNumber(sf.totalViews)}회</td>
-                  </tr>
-                </tbody>
-              </table>
+            <Section title="롱폼 vs 숏폼" description="영상이 몇 개인지가 아니라, 시청자가 얼마나 반응하고 조회수가 얼마나 빨리 느는지를 비교해요. ‘▲ 더 높아요’가 붙은 쪽이 더 좋은 쪽이에요. 막대가 길수록 값이 커요.">
+              <CompareTable rows={compareRows} />
             </Section>
           </>
         )}
@@ -392,7 +423,7 @@ export default function SeriesPage() {
                     }}
                     placeholder="예: 삼성전자 실적 브리핑 시리즈"
                   />
-                  <FieldError id="v3-series-name-err">{nameError || formError}</FieldError>
+                  <FieldError id="v3-series-name-err">{nameError || withLoginLink(formError)}</FieldError>
                 </div>
                 <div className="field">
                   <label className="label" htmlFor="v3-series-stock">
@@ -519,14 +550,14 @@ export default function SeriesPage() {
                           시청자 반응률
                           <strong>{formatPct(s.avgEngagementPct, 2)}</strong>
                           <span className={`v3a-tone-${engText.tone}`}>
-                            {engChange === null ? '비교할 기준 영상이 없어요' : `${engText.text} (${formatPct(s.baselineEngagementPct, 2)})`}
+                            {engChange === null ? '비교할 기준 영상이 없어요' : `${engText.arrow} ${engText.text} (${formatPct(s.baselineEngagementPct, 2)})`}
                           </span>
                         </div>
                         <div className="v3a-series-line">
                           하루 평균 조회수
                           <strong>{formatNumber(Math.round(s.avgVelocity))}회</strong>
                           <span className={`v3a-tone-${velText.tone}`}>
-                            {velChange === null ? '비교할 기준 영상이 없어요' : `${velText.text} (${formatNumber(Math.round(s.baselineVelocity))}회)`}
+                            {velChange === null ? '비교할 기준 영상이 없어요' : `${velText.arrow} ${velText.text} (${formatNumber(Math.round(s.baselineVelocity))}회)`}
                           </span>
                         </div>
                       </div>
@@ -609,7 +640,7 @@ export default function SeriesPage() {
                     ) : !s.canEdit && !data.sample ? (
                       <p className="v3i-inline-note">{s.createdByName ? `${s.createdByName}님이 만든 시리즈라서 볼 수만 있어요.` : '만든 사람이 없는 시리즈라서 관리자만 고칠 수 있어요.'}</p>
                     ) : null}
-                    <FieldError>{cardErrors[s.id]}</FieldError>
+                    <FieldError>{withLoginLink(cardErrors[s.id])}</FieldError>
                   </div>
                 )
               })}

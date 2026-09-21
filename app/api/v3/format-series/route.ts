@@ -1,6 +1,16 @@
-import { NextResponse } from 'next/server'
 import { average, CONTENT_TYPE_LABELS, engagementRatePct, summarizeByFormat, type VideoLite, viewVelocity } from '@/lib/v3/engagement'
-import { apiError, authenticate, isMissingTableError, isUuid, loadScopedVideos, loadTeamVideos, loadUserNames, loadVideosByIds } from '@/lib/v3/server'
+import {
+  VIDEO_FIELDS_RATES,
+  apiError,
+  authenticate,
+  cachedJson,
+  isMissingTableError,
+  isUuid,
+  loadScopedVideos,
+  loadTeamVideos,
+  loadUserNames,
+  loadVideosByIds
+} from '@/lib/v3/server'
 import { V3_TABLES } from '@/lib/v3/tables'
 import { sampleSeriesRows } from '@/lib/v3/sample-data'
 
@@ -21,18 +31,23 @@ export async function GET(request: Request) {
     const staffParam = new URL(request.url).searchParams.get('staffId')
     const staffId = isUuid(staffParam) ? staffParam : null
 
-    const [scopedVideos, teamVideos] = await Promise.all([
-      loadScopedVideos(supabaseAdmin, { isAdmin, selfUserId: profile.id, staffId: isAdmin ? staffId : null, limit: 1500 }),
-      loadTeamVideos(supabaseAdmin, { limit: 3000 })
+    // 관리자가 팀 전체를 볼 때는 "범위 영상"이 "팀 영상"의 앞 1500개와 똑같으므로 한 번만 받는다.
+    const sameAsTeam = isAdmin && !staffId
+    const teamPromise = loadTeamVideos(supabaseAdmin, { limit: 3000, fields: VIDEO_FIELDS_RATES })
+    // 시리즈 목록도 영상과 상관없이 받을 수 있어서 함께 요청한다.
+    const [teamVideos, scopedVideos, seriesRes] = await Promise.all([
+      teamPromise,
+      sameAsTeam
+        ? teamPromise.then((rows) => rows.slice(0, 1500))
+        : loadScopedVideos(supabaseAdmin, { isAdmin, selfUserId: profile.id, staffId: isAdmin ? staffId : null, limit: 1500, fields: VIDEO_FIELDS_RATES }),
+      supabaseAdmin
+        .from(V3_TABLES.videoSeries)
+        .select('id, name, stock_name, created_by, created_at')
+        .order('created_at', { ascending: false })
+        .limit(500)
     ])
 
     const formatStats = summarizeByFormat(scopedVideos, now)
-
-    const seriesRes = await supabaseAdmin
-      .from(V3_TABLES.videoSeries)
-      .select('id, name, stock_name, created_by, created_at')
-      .order('created_at', { ascending: false })
-      .limit(500)
 
     let sample = false
     let seriesRows: { id: string; name: string; stock_name: string | null; created_by: string | null; created_at: string }[] = []
@@ -139,7 +154,7 @@ export async function GET(request: Request) {
           .slice(0, PICKER_LIMIT)
           .map((v) => ({ ...toPick(v), seriesId: seriesOfVideo.get(v.id) as string, seriesName: seriesNameById.get(seriesOfVideo.get(v.id) as string) || '' }))
 
-    return NextResponse.json({
+    return cachedJson({
       sample,
       formatStats: {
         longform: { label: CONTENT_TYPE_LABELS.longform, ...formatStats.longform },

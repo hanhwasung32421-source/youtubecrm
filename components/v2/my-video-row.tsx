@@ -17,6 +17,9 @@ import {
   type SeoChecklistField
 } from '@/lib/v2/types'
 import { friendlyEditError } from './register-utils'
+import { Segmented } from './segmented'
+
+const TYPE_OPTIONS = CONTENT_TYPES.map((type) => ({ value: type, label: CONTENT_TYPE_LABELS[type] }))
 
 export type RowMode = 'edit' | 'delete' | null
 
@@ -47,6 +50,10 @@ export function MyVideoRow({ video, checklist, isNew, mode, onMode, checklistOpe
 
   const stockRef = useRef<HTMLInputElement | null>(null)
   const cancelDeleteRef = useRef<HTMLButtonElement | null>(null)
+  const rowRef = useRef<HTMLDivElement | null>(null)
+  const editBtnRef = useRef<HTMLButtonElement | null>(null)
+  const deleteBtnRef = useRef<HTMLButtonElement | null>(null)
+  const prevMode = useRef<RowMode>(null)
   const alive = useRef(true)
 
   useEffect(() => {
@@ -80,6 +87,18 @@ export function MyVideoRow({ video, checklist, isNew, mode, onMode, checklistOpe
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, video.id])
+
+  // 수정/삭제 확인 창을 닫으면 (Esc·취소·저장) 방금 누른 버튼으로 커서를 돌려준다. 삭제로 줄이 사라지면 저절로 무시된다.
+  useEffect(() => {
+    const before = prevMode.current
+    prevMode.current = mode
+    if (mode !== null || before === null) return
+    // 다른 줄의 수정 버튼을 눌러서 이 줄이 닫힌 경우에는 커서를 뺏지 않는다.
+    const active = document.activeElement
+    if (active && active !== document.body && !rowRef.current?.contains(active)) return
+    if (before === 'edit') editBtnRef.current?.focus()
+    if (before === 'delete') deleteBtnRef.current?.focus()
+  }, [mode])
 
   useEffect(() => {
     if (mode === 'delete') {
@@ -146,7 +165,7 @@ export function MyVideoRow({ video, checklist, isNew, mode, onMode, checklistOpe
   }
 
   return (
-    <div className={`list-item v2-vrow ${isNew ? 'is-new' : ''}`}>
+    <div ref={rowRef} className={`list-item v2-vrow ${isNew ? 'is-new' : ''}`}>
       <div className="row-between" style={{ alignItems: 'flex-start', gap: 10 }}>
         <div style={{ minWidth: 0 }}>
           <div className="v2-card-title">
@@ -159,8 +178,8 @@ export function MyVideoRow({ video, checklist, isNew, mode, onMode, checklistOpe
             <span>조회 {(video.view_count ?? 0).toLocaleString('ko-KR')}</span>
             <span>좋아요 {(video.like_count ?? 0).toLocaleString('ko-KR')}</span>
             {video.youtube_url ? (
-              <a className="link" href={video.youtube_url} target="_blank" rel="noreferrer">
-                영상 열기 ↗
+              <a className="link v2-open-link" href={video.youtube_url} target="_blank" rel="noreferrer">
+                영상 열기 ↗<span className="v2-sr-only"> (새 창)</span>
               </a>
             ) : null}
           </div>
@@ -174,10 +193,10 @@ export function MyVideoRow({ video, checklist, isNew, mode, onMode, checklistOpe
           >
             SEO 점검 {done}/4 {checklistOpen ? '▴' : '▾'}
           </button>
-          <button type="button" className="v2-text-btn" aria-expanded={mode === 'edit'} disabled={busy} onClick={() => onMode(mode === 'edit' ? null : 'edit')}>
+          <button ref={editBtnRef} type="button" className="v2-text-btn" aria-expanded={mode === 'edit'} disabled={busy} onClick={() => onMode(mode === 'edit' ? null : 'edit')}>
             수정
           </button>
-          <button type="button" className="v2-text-btn danger" aria-expanded={mode === 'delete'} disabled={busy} onClick={() => onMode(mode === 'delete' ? null : 'delete')}>
+          <button ref={deleteBtnRef} type="button" className="v2-text-btn danger" aria-expanded={mode === 'delete'} disabled={busy} onClick={() => onMode(mode === 'delete' ? null : 'delete')}>
             삭제
           </button>
         </div>
@@ -194,6 +213,8 @@ export function MyVideoRow({ video, checklist, isNew, mode, onMode, checklistOpe
               ref={stockRef}
               className="input compact"
               autoComplete="off"
+              spellCheck={false}
+              list="v2-reg-stock-list"
               value={stock}
               disabled={busy}
               onChange={(e) => {
@@ -206,13 +227,7 @@ export function MyVideoRow({ video, checklist, isNew, mode, onMode, checklistOpe
             <span className="label" id={`v2-edit-type-${video.id}`}>
               형식
             </span>
-            <div className="v2-seg" role="group" aria-labelledby={`v2-edit-type-${video.id}`}>
-              {CONTENT_TYPES.map((t) => (
-                <button key={t} type="button" className={`v2-seg-btn ${type === t ? 'active' : ''}`} aria-pressed={type === t} disabled={busy} onClick={() => setType(t)}>
-                  {CONTENT_TYPE_LABELS[t]}
-                </button>
-              ))}
-            </div>
+            <Segmented value={type} onChange={setType} options={TYPE_OPTIONS} labelledBy={`v2-edit-type-${video.id}`} disabled={busy} />
           </div>
           <div className="field v2-edit-memo">
             <label className="label" htmlFor={`v2-edit-memo-${video.id}`}>
@@ -239,7 +254,7 @@ export function MyVideoRow({ video, checklist, isNew, mode, onMode, checklistOpe
               취소
             </button>
           </div>
-          {error ? <div className="v2-hint v2-inline-msg">{error}</div> : null}
+          {error ? <div className="v2-hint v2-inline-msg" role="alert">{error}</div> : null}
         </form>
       ) : null}
 
@@ -257,7 +272,7 @@ export function MyVideoRow({ video, checklist, isNew, mode, onMode, checklistOpe
               취소
             </button>
           </div>
-          {error ? <div className="v2-hint v2-inline-msg">{error}</div> : null}
+          {error ? <div className="v2-hint v2-inline-msg" role="alert">{error}</div> : null}
         </div>
       ) : null}
 

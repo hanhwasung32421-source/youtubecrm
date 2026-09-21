@@ -1,5 +1,4 @@
-import { NextResponse } from 'next/server'
-import { ApiFail, apiError, authenticate, loadVideosByIds, readJson, requireUuid } from '@/lib/v3/server'
+import { ApiFail, apiError, authenticate, loadVideosByIds, noStoreJson, readJson, requireUuid } from '@/lib/v3/server'
 import { assertCanEditSeries, assertCanMove, assertOwnVideos, loadMemberships, loadSeriesById } from '@/lib/v3/series-access'
 import { V3_TABLES } from '@/lib/v3/tables'
 
@@ -24,13 +23,13 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     assertOwnVideos([video], profile, isAdmin)
 
     const [current] = await loadMemberships(supabaseAdmin, [videoId])
-    if (current && current.series_id === id) return NextResponse.json({ ok: true, already: true })
+    if (current && current.series_id === id) return noStoreJson({ ok: true, already: true })
     if (current) assertCanMove([current], id, profile, isAdmin)
 
     const { error } = await supabaseAdmin.from(V3_TABLES.videoSeriesMembers).upsert({ series_id: id, video_id: videoId }, { onConflict: 'video_id' })
     if (error) throw error
 
-    return NextResponse.json(current ? { ok: true, moved: true, fromSeriesName: current.seriesName } : { ok: true })
+    return noStoreJson(current ? { ok: true, moved: true, fromSeriesName: current.seriesName } : { ok: true })
   } catch (e) {
     return apiError(e, '시리즈에 영상을 추가하지 못했어요.', { reference: '시리즈나 영상을 찾을 수 없어요. 화면을 새로 고친 뒤 다시 시도해 주세요.' })
   }
@@ -53,7 +52,7 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
     const { error } = await supabaseAdmin.from(V3_TABLES.videoSeriesMembers).delete().eq('series_id', id).eq('video_id', videoId)
     if (error) throw error
 
-    return NextResponse.json({ ok: true })
+    return noStoreJson({ ok: true })
   } catch (e) {
     return apiError(e, '시리즈에서 영상을 빼지 못했어요.')
   }

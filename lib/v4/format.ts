@@ -111,3 +111,74 @@ export function fmtHourRangeKo(hour: number) {
   if (prefix(start) && prefix(start) === prefix(end)) return `${start}~${end.replace(`${prefix(end)} `, '')}`
   return `${start}~${end}`
 }
+
+// ---------------------------------------------------------------- Round 3: 안전한 표기 / 한국 시간 표기
+
+// 숫자가 아니거나 무한대(NaN, Infinity, 0으로 나눈 값)면 "-" 로 보여준다. 0 은 정상 값이므로 "0" 으로 표시한다.
+export function isFiniteNum(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
+}
+
+export function fmtNumberOr(value: number | null | undefined, fallback = '-') {
+  return isFiniteNum(value) ? Math.round(value).toLocaleString('ko-KR') : fallback
+}
+
+export function fmtShortOr(value: number | null | undefined, fallback = '-') {
+  return isFiniteNum(value) ? fmtShort(value) : fallback
+}
+
+export function fmtPercentOr(ratio: number | null | undefined, digits = 1, fallback = '-') {
+  return isFiniteNum(ratio) ? `${(ratio * 100).toFixed(digits)}%` : fallback
+}
+
+// 나눗셈 도우미: 분모가 0/음수/비정상이면 null (화면에서는 "-")
+export function ratioOf(numerator: number | null | undefined, denominator: number | null | undefined): number | null {
+  if (!isFiniteNum(numerator) || !isFiniteNum(denominator) || denominator <= 0) return null
+  const r = numerator / denominator
+  return Number.isFinite(r) ? r : null
+}
+
+// 평균 대비 차이를 "▲ 12%" / "▼ 8%" / "평균과 비슷" 으로 (색이 아니라 기호로도 방향이 보이게)
+export function fmtDeltaVsMean(value: number | null | undefined, mean: number | null | undefined, tolerance = 0.05) {
+  const ratio = ratioOf(value, mean)
+  if (ratio === null) return '-'
+  const diff = ratio - 1
+  if (Math.abs(diff) <= tolerance) return '평균과 비슷'
+  return `${diff > 0 ? '▲' : '▼'} ${Math.abs(Math.round(diff * 100))}%`
+}
+
+const KST_OFFSET_MS = 9 * 60 * 60 * 1000
+const pad2 = (n: number) => String(n).padStart(2, '0')
+
+function kstParts(iso: string | null | undefined) {
+  if (!iso) return null
+  const ms = new Date(iso).getTime()
+  if (!Number.isFinite(ms)) return null
+  const d = new Date(ms + KST_OFFSET_MS)
+  return { month: d.getUTCMonth() + 1, day: d.getUTCDate(), weekday: d.getUTCDay(), hour: d.getUTCHours(), minute: d.getUTCMinutes() }
+}
+
+// "9/21 (월) 14:30" (한국 시간)
+export function fmtKstStamp(iso: string | null | undefined) {
+  const p = kstParts(iso)
+  if (!p) return '-'
+  return `${p.month}/${p.day} (${WEEKDAY_LABELS[p.weekday]}) ${pad2(p.hour)}:${pad2(p.minute)}`
+}
+
+// "9/21 (월)"
+export function fmtKstMonthDay(iso: string | null | undefined) {
+  const p = kstParts(iso)
+  if (!p) return '-'
+  return `${p.month}/${p.day} (${WEEKDAY_LABELS[p.weekday]})`
+}
+
+// 'YYYY-MM-DD' 날짜(시각 없음) → "9/21 (월)". 시간대 영향이 없도록 UTC 정오로 계산한다.
+export function fmtYmdKo(ymd: string | null | undefined) {
+  if (!ymd) return '-'
+  const parts = String(ymd).slice(0, 10).split('-').map(Number)
+  if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) return '-'
+  const [y, m, d] = parts
+  const date = new Date(Date.UTC(y, m - 1, d, 12))
+  if (Number.isNaN(date.getTime()) || date.getUTCMonth() !== m - 1) return '-'
+  return `${m}/${d} (${WEEKDAY_LABELS[date.getUTCDay()]})`
+}

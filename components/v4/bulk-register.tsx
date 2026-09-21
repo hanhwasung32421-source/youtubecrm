@@ -4,6 +4,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { MAX_BULK_ROWS, parseBulkText, removeLine, type ParsedLine } from '@/components/v4/register-bulk'
 import { registerVideo, type ContentType } from '@/components/v4/register-api'
 import { normalizeStockName } from '@/components/v4/register-utils'
+import { findUrls, toBulkText } from '@/components/v4/paste-detect'
+import { FormatToggle } from '@/components/v4/ui'
 
 type RowStatus = 'pending' | 'running' | 'done' | 'failed'
 
@@ -32,11 +34,13 @@ function effectiveFormat(row: Row, fallback: ContentType): ContentType {
 }
 
 export function BulkRegister({
+  seed,
   defaultFormat,
   stockChoices,
   existingIds,
   onFinished
 }: {
+  seed?: { id: number; text: string } | null
   defaultFormat: ContentType
   stockChoices: string[]
   existingIds: Set<string>
@@ -92,6 +96,32 @@ export function BulkRegister({
         }
       })
     })
+  }
+
+  // 하나씩 등록 화면에서 "여러 개 붙여넣기로 바꾸기"를 눌렀을 때 넘어온 글을 채운다.
+  useEffect(() => {
+    if (!seed) return
+    setStarted(false)
+    setText(seed.text)
+    reparse(seed.text)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seed?.id])
+
+  // 여러 줄을 붙여넣을 때 제목 줄(주소가 없는 줄)은 빼고, 한 줄에 주소가 여러 개면 나눠서 넣는다.
+  const onPasteText = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const pasted = e.clipboardData.getData('text')
+    if (!pasted || !/\r?\n/.test(pasted.trim()) && findUrls(pasted).length <= 1) return
+    const cleaned = toBulkText(pasted)
+    if (!cleaned || cleaned === pasted.trim()) return
+    e.preventDefault()
+    const el = e.currentTarget
+    const before = text.slice(0, el.selectionStart)
+    const after = text.slice(el.selectionEnd)
+    const glueBefore = before && !before.endsWith('\n') ? '\n' : ''
+    const glueAfter = after && !after.startsWith('\n') ? '\n' : ''
+    const next = `${before}${glueBefore}${cleaned}${glueAfter}${after}`
+    setText(next)
+    reparse(next)
   }
 
   const patchRow = (key: string, patch: Partial<Row>) => setRows((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)))
@@ -192,9 +222,13 @@ export function BulkRegister({
             rows={6}
             spellCheck={false}
             autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="none"
+            aria-describedby="v4-bulk-help"
             placeholder={PLACEHOLDER}
             value={text}
             disabled={running}
+            onPaste={onPasteText}
             onChange={(e) => {
               setText(e.target.value)
               reparse(e.target.value)
@@ -206,7 +240,7 @@ export function BulkRegister({
               }
             }}
           />
-          <div className="v4-hint-slot">
+          <div className="v4-hint-slot" id="v4-bulk-help">
             <span className="v4-hint">
               한 줄에 <strong>주소 종목명</strong> 형태로 적어 주세요. 종목명을 빼면 아래 공통 종목이 쓰입니다. 쇼츠 주소는 숏폼으로 자동 표시돼요.
             </span>
@@ -225,6 +259,8 @@ export function BulkRegister({
               className="input"
               list="v4-bulk-stock-list"
               autoComplete="off"
+              autoCorrect="off"
+              spellCheck={false}
               placeholder="종목명을 안 적은 줄에 쓰여요"
               value={commonStock}
               disabled={running}
@@ -235,26 +271,7 @@ export function BulkRegister({
             <span className="label" id="v4-bulk-format-label">
               기본 형식
             </span>
-            <div className="v4-segment" role="radiogroup" aria-labelledby="v4-bulk-format-label">
-              {(
-                [
-                  ['longform', '롱폼'],
-                  ['shortform', '숏폼']
-                ] as const
-              ).map(([value, label]) => (
-                <button
-                  key={value}
-                  type="button"
-                  role="radio"
-                  aria-checked={format === value}
-                  className={`v4-segment-item ${format === value ? 'active' : ''}`}
-                  disabled={running}
-                  onClick={() => setFormat(value)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+            <FormatToggle value={format} onChange={setFormat} disabled={running} labelledBy="v4-bulk-format-label" />
           </div>
         </div>
       ) : null}
@@ -276,6 +293,7 @@ export function BulkRegister({
       {rows.length > 0 ? (
         <div className="v4-bulk-table-wrap" ref={tableRef}>
           <table className="v4-bulk-table">
+            <caption className="v4-sr">붙여넣은 영상 미리보기</caption>
             <thead>
               <tr>
                 <th scope="col" className="num">
@@ -303,12 +321,13 @@ export function BulkRegister({
                     <td className="url" title={row.url}>
                       {shortUrl(row.url)}
                     </td>
-                    <td>
+                    <td className="stock">
                       {row.valid ? (
                         <input
                           className="input v4-bulk-stock"
                           list="v4-bulk-stock-list"
                           autoComplete="off"
+                          spellCheck={false}
                           aria-label={`${index + 1}번 종목명`}
                           aria-invalid={missingStock ? true : undefined}
                           placeholder={normalizeStockName(commonStock) || '종목명 입력'}
@@ -326,7 +345,7 @@ export function BulkRegister({
                         <span className="muted small">-</span>
                       )}
                     </td>
-                    <td>
+                    <td className="fmt">
                       {row.valid ? (
                         <select
                           className="input v4-bulk-select"
@@ -379,7 +398,7 @@ export function BulkRegister({
       ) : null}
 
       {finished ? (
-        <div className={`v4-reg-status ${allDone ? 'ok' : 'error'}`} role="status" aria-live="polite">
+        <div className={`v4-reg-status ${allDone ? 'ok' : 'error'}`} role={allDone ? 'status' : 'alert'} aria-live={allDone ? 'polite' : 'assertive'}>
           <strong>
             {allDone ? '✓ ' : ''}
             {summaryParts.join(' · ')}
