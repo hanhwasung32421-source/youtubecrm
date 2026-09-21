@@ -8,8 +8,19 @@ import type { ReactNode } from 'react'
 export function SampleBanner({ show, sqlFile = 'supabase/sql/v5/100_v5_growth_lab.sql' }: { show: boolean; sqlFile?: string }) {
   if (!show) return null
   return (
-    <div className="v5-banner">
-      샘플 데이터 표시 중 — <code>{sqlFile}</code> 실행 후 실데이터로 전환됩니다.
+    <div className="v5-banner" role="status">
+      샘플 데이터 표시 중 · <code>{sqlFile}</code> 실행 후 실제 데이터로 바뀝니다
+    </div>
+  )
+}
+
+// 비어 있는 화면 안내: 이 화면이 무엇인지 + 무엇을 하면 되는지 + (선택) 바로 할 수 있는 버튼.
+export function EmptyState({ title, children, action }: { title: ReactNode; children?: ReactNode; action?: ReactNode }) {
+  return (
+    <div className="v5-empty">
+      <div className="v5-empty-title">{title}</div>
+      {children ? <div className="v5-empty-body">{children}</div> : null}
+      {action ? <div className="v5-empty-action">{action}</div> : null}
     </div>
   )
 }

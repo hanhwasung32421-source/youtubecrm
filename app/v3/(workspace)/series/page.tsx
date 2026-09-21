@@ -1,13 +1,15 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import '../analysis.css'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { PageHeader } from '@/components/v3/app-shell'
 import { Toast, useToast } from '@/components/toast'
-import { EmptyState, SampleBanner, Section } from '@/components/v3/ui'
+import { SampleBanner, Section, Tag } from '@/components/v3/ui'
 import { authedFetchJson, authedPostJson } from '@/lib/session/authed-fetch'
-import { formatNumber, formatPct, formatSignedPct } from '@/lib/v3/format'
+import { formatCompactNumber, formatNumber, formatPct } from '@/lib/v3/format'
 import { pctChange } from '@/lib/v3/engagement'
 import { SAMPLE_STOCK_NAMES } from '@/lib/v3/sample-data'
+import { AnswerCard, EmptyBlock, ErrorBlock, HowTo, LoadingBlock, MoreButton, describeChange, useShowMore, type Tone } from '../analysis-parts'
 
 type FormatStat = { label: string; contentType: string; count: number; avgEngagementPct: number; avgVelocity: number; totalViews: number }
 
@@ -31,24 +33,57 @@ type FormatSeriesResponse = {
   eligibleVideos: EligibleVideo[]
 }
 
-function Delta({ current, baseline, digits = 1, suffix = '%p' }: { current: number; baseline: number; digits?: number; suffix?: string }) {
-  const change = pctChange(current, baseline)
-  const positive = change !== null && change > 0
-  const negative = change !== null && change < 0
-  return (
-    <span className={positive ? 'v3-delta-up' : negative ? 'v3-delta-down' : 'muted'}>
-      {change === null ? '비교 불가' : `${formatSignedPct(change, digits)} (${suffix === '%p' ? `${(current - baseline).toFixed(digits)}%p` : suffix})`}
-    </span>
-  )
+// 형식(롱폼/숏폼) 비교 결과를 한 문장으로
+function summarizeFormats(lf: FormatStat, sf: FormatStat): { tone: Tone; headline: string; detail?: string } | null {
+  if (lf.count === 0 && sf.count === 0) return null
+  if (lf.count === 0 || sf.count === 0) {
+    const missing = lf.count === 0 ? '롱폼' : '숏폼'
+    const have = lf.count === 0 ? sf : lf
+    return {
+      tone: 'neutral',
+      headline: `아직 ${missing} 영상이 없어서 두 형식을 비교할 수 없어요.`,
+      detail: `지금은 ${have.label} 영상 ${formatNumber(have.count)}개만 있어요. ${missing}도 몇 개 등록하면 어느 쪽이 반응이 좋은지 알려드려요.`
+    }
+  }
+  const engDiff = pctChange(Math.max(lf.avgEngagementPct, sf.avgEngagementPct), Math.min(lf.avgEngagementPct, sf.avgEngagementPct))
+  const velDiff = pctChange(Math.max(lf.avgVelocity, sf.avgVelocity), Math.min(lf.avgVelocity, sf.avgVelocity))
+  const engWin = sf.avgEngagementPct > lf.avgEngagementPct ? sf : lf
+  const velWin = sf.avgVelocity > lf.avgVelocity ? sf : lf
+  const small = (engDiff ?? 0) < 5 && (velDiff ?? 0) < 5
+  const fewNote = lf.count < 5 || sf.count < 5 ? `영상 수가 적어서(롱폼 ${lf.count}개, 숏폼 ${sf.count}개) 참고용으로만 봐 주세요.` : undefined
+
+  if (small) return { tone: 'neutral', headline: '롱폼과 숏폼의 차이가 크지 않아요. 지금은 어느 쪽이 더 좋다고 말하기 어려워요.', detail: fewNote }
+  if (engWin === velWin) {
+    return { tone: 'good', headline: `${engWin.label}이 반응(참여율)도, 조회수가 늘어나는 속도도 더 좋아요.`, detail: fewNote }
+  }
+  return {
+    tone: 'neutral',
+    headline: `시청자 반응(참여율)은 ${engWin.label}이, 조회수가 늘어나는 속도는 ${velWin.label}이 더 좋아요.`,
+    detail: fewNote
+  }
+}
+
+// 시리즈가 같은 종목의 시리즈 밖 영상보다 나은지 판정
+function seriesVerdict(s: SeriesRow, engChange: number | null, velChange: number | null): { tone: 'green' | 'red' | 'gray'; label: string } {
+  if (s.videoCount === 0) return { tone: 'gray', label: '영상 없음' }
+  if (engChange === null && velChange === null) return { tone: 'gray', label: '비교할 기준 영상 없음' }
+  const e = engChange ?? 0
+  const v = velChange ?? 0
+  if (e >= 5 && v >= 5) return { tone: 'green', label: '시리즈 효과 있음' }
+  if (e <= -5 && v <= -5) return { tone: 'red', label: '일반 영상보다 반응이 낮음' }
+  return { tone: 'gray', label: '결과가 엇갈려요' }
 }
 
 export default function SeriesPage() {
   const { toast, showSuccess, showError } = useToast()
   const [data, setData] = useState<FormatSeriesResponse | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
   const [showForm, setShowForm] = useState(false)
+  const [attempted, setAttempted] = useState(false)
   const [name, setName] = useState('')
   const [stockName, setStockName] = useState('')
+  const [videoQuery, setVideoQuery] = useState('')
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [addPickers, setAddPickers] = useState<Record<string, string>>({})
   const [addingSeriesId, setAddingSeriesId] = useState<string | null>(null)
@@ -56,9 +91,12 @@ export default function SeriesPage() {
   const load = useCallback(async () => {
     const { ok, data } = await authedFetchJson<FormatSeriesResponse>('/api/v3/format-series')
     if (!ok) {
-      showError((data as any)?.error || '형식 · 시리즈 효과 분석에 실패했습니다.')
+      const message = (data as any)?.error || '형식 · 시리즈 비교를 불러오지 못했습니다.'
+      setLoadError(message)
+      showError(message)
       return
     }
+    setLoadError(null)
     setData(data)
   }, [showError])
 
@@ -70,11 +108,11 @@ export default function SeriesPage() {
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
   }
 
+  const nameError = attempted && !name.trim() ? '시리즈 이름을 입력해 주세요. 예: 삼성전자 실적 브리핑 시리즈' : null
+
   const createSeries = async () => {
-    if (!name.trim()) {
-      showError('시리즈 이름을 입력해 주세요.')
-      return
-    }
+    setAttempted(true)
+    if (!name.trim()) return
     setCreating(true)
     try {
       const { ok, data } = await authedPostJson<{ error?: string }>('/api/v3/series', {
@@ -86,10 +124,12 @@ export default function SeriesPage() {
         showError(data?.error || '시리즈 생성에 실패했습니다.')
         return
       }
-      showSuccess('시리즈를 만들었습니다.')
+      showSuccess('시리즈를 만들었어요.')
       setName('')
       setStockName('')
       setSelectedIds([])
+      setVideoQuery('')
+      setAttempted(false)
       setShowForm(false)
       await load()
     } finally {
@@ -100,7 +140,7 @@ export default function SeriesPage() {
   const addToSeries = async (seriesId: string) => {
     const videoId = addPickers[seriesId]
     if (!videoId) {
-      showError('추가할 영상을 선택해 주세요.')
+      showError('추가할 영상을 먼저 골라 주세요.')
       return
     }
     setAddingSeriesId(seriesId)
@@ -110,7 +150,7 @@ export default function SeriesPage() {
         showError(data?.error || '영상 추가에 실패했습니다.')
         return
       }
-      showSuccess('시리즈에 영상을 추가했습니다.')
+      showSuccess('시리즈에 영상을 추가했어요.')
       setAddPickers((prev) => ({ ...prev, [seriesId]: '' }))
       await load()
     } finally {
@@ -118,150 +158,284 @@ export default function SeriesPage() {
     }
   }
 
-  const stats = data?.formatStats
+  // 종목을 입력했다면 그 종목 영상이 위로 오도록, 검색어가 있으면 걸러서 보여준다.
+  const pickable = useMemo(() => {
+    const q = videoQuery.trim().toLowerCase()
+    const stock = stockName.trim()
+    let items = data?.eligibleVideos || []
+    if (q) items = items.filter((v) => v.title.toLowerCase().includes(q) || (v.stockName || '').toLowerCase().includes(q))
+    if (stock) items = [...items].sort((a, b) => Number(b.stockName === stock) - Number(a.stockName === stock))
+    return items
+  }, [data, videoQuery, stockName])
+  const pickMore = useShowMore(pickable, 8, 10)
+  const seriesMore = useShowMore(data?.series || [], 5, 10)
+
+  const header = <PageHeader icon="🧩" title="롱폼·숏폼·시리즈 비교" subtitle="어떤 형식과 시리즈가 반응을 더 잘 얻는지 비교합니다." />
+
+  if (!data) {
+    return (
+      <>
+        {header}
+        <Toast toast={toast} />
+        {loadError ? <ErrorBlock message={loadError} onRetry={() => void load()} /> : <LoadingBlock>비교 결과를 불러오는 중이에요…</LoadingBlock>}
+      </>
+    )
+  }
+
+  const { longform: lf, shortform: sf } = data.formatStats
+  const formatAnswer = summarizeFormats(lf, sf)
+  const noVideos = lf.count === 0 && sf.count === 0
+  const engWinner = lf.count > 0 && sf.count > 0 && lf.avgEngagementPct !== sf.avgEngagementPct ? (lf.avgEngagementPct > sf.avgEngagementPct ? 'longform' : 'shortform') : null
+  const velWinner = lf.count > 0 && sf.count > 0 && lf.avgVelocity !== sf.avgVelocity ? (lf.avgVelocity > sf.avgVelocity ? 'longform' : 'shortform') : null
 
   return (
     <>
-      <PageHeader icon="🧩" title="형식 · 시리즈 효과 분석" subtitle="롱폼과 숏폼 중 무엇이 더 '깊이' 참여를 이끄는지, 시리즈로 묶었을 때 성과가 달라지는지를 봅니다." />
+      {header}
       <Toast toast={toast} />
-      <SampleBanner show={!!data?.sample} />
 
-      {stats ? (
-        <Section title="롱폼 vs 숏폼 참여 효율" description="건수 비교가 아니라, 평균 참여율과 평균 조회 속도로 형식의 질을 비교합니다.">
-          <div className="v3-chart-card">
-            <table className="v3-print-table">
-              <thead>
-                <tr>
-                  <th>형식</th>
-                  <th className="num">영상 수</th>
-                  <th className="num">평균 참여율</th>
-                  <th className="num">평균 조회 속도</th>
-                  <th className="num">누적 조회수</th>
-                </tr>
-              </thead>
-              <tbody>
-                {[stats.longform, stats.shortform].map((row) => (
-                  <tr key={row.contentType}>
-                    <td>{row.label}</td>
-                    <td className="num">{formatNumber(row.count)}개</td>
-                    <td className="num">{formatPct(row.avgEngagementPct, 2)}</td>
-                    <td className="num">{formatNumber(Math.round(row.avgVelocity))}회/일</td>
-                    <td className="num">{formatNumber(row.totalViews)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Section>
-      ) : (
-        <div className="empty-state">형식 · 시리즈 데이터를 불러오는 중입니다.</div>
-      )}
+      <div className="v3a-stack">
+        <SampleBanner show={data.sample} />
 
-      <Section
-        title="시리즈 트래커"
-        count={data?.series.length ?? 0}
-        description="같은 종목의 시리즈 밖 영상(기준선) 대비 참여율 · 조회 속도 차이를 보여줍니다."
-        actions={
-          <button className="button secondary" onClick={() => setShowForm((v) => !v)}>
-            {showForm ? '취소' : '새 시리즈 만들기'}
-          </button>
-        }
-      >
-        {showForm ? (
-          <div className="v3-inline-form">
-            <div className="v3-form-grid">
-              <div className="field">
-                <label className="label">시리즈 이름</label>
-                <input className="input" value={name} disabled={creating} onChange={(e) => setName(e.target.value)} placeholder="예: 삼성전자 실적 브리핑 시리즈" />
-              </div>
-              <div className="field">
-                <label className="label">종목(선택)</label>
-                <input className="input" list="v3-series-stock-suggestions" value={stockName} disabled={creating} onChange={(e) => setStockName(e.target.value)} />
-                <datalist id="v3-series-stock-suggestions">
-                  {SAMPLE_STOCK_NAMES.map((s) => (
-                    <option key={s} value={s} />
-                  ))}
-                </datalist>
-              </div>
-            </div>
-            <div className="field">
-              <label className="label">묶을 영상 선택 (선택 {selectedIds.length}개)</label>
-              <div className="v3-picker-list" style={{ maxHeight: 220 }}>
-                {(data?.eligibleVideos || []).length === 0 ? (
-                  <EmptyState>추가할 수 있는 영상이 없습니다.</EmptyState>
-                ) : (
-                  data!.eligibleVideos.map((v) => (
-                    <button
-                      key={v.id}
-                      type="button"
-                      className={`v3-picker-item ${selectedIds.includes(v.id) ? 'selected' : ''}`}
-                      disabled={creating}
-                      onClick={() => toggleSelect(v.id)}
-                    >
-                      <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {v.title}
-                        {v.stockName ? <span className="v3-cell-sub"> · {v.stockName}</span> : null}
-                      </span>
-                      <span className="small muted">{selectedIds.includes(v.id) ? '선택됨' : ''}</span>
-                    </button>
-                  ))
-                )}
-              </div>
-            </div>
-            <button className="button" disabled={creating} style={{ justifySelf: 'start' }} onClick={createSeries}>
-              {creating ? '만드는 중...' : '시리즈 만들기'}
-            </button>
-          </div>
-        ) : null}
-
-        {!data || data.series.length === 0 ? (
-          <EmptyState>아직 만든 시리즈가 없습니다.</EmptyState>
+        {noVideos ? (
+          <EmptyBlock title="아직 비교할 영상이 없어요" actionHref="/v3/register" actionLabel="영상 등록하러 가기">
+            롱폼과 숏폼 영상이 함께 쌓이면, 어느 형식이 시청자 반응을 더 잘 얻는지 여기에서 바로 알려드려요.
+          </EmptyBlock>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {data.series.map((s) => (
-              <div className="v3-chart-card" key={s.id}>
-                <div className="row-between">
-                  <div>
-                    <div style={{ fontWeight: 700 }}>{s.name}</div>
-                    <div className="v3-cell-sub">{s.stockName || '종목 무관'} · 영상 {s.videoCount}개</div>
-                  </div>
-                </div>
-                <div className="v3-form-grid" style={{ marginTop: 10 }}>
-                  <div className="small">
-                    참여율 {formatPct(s.avgEngagementPct, 2)} <span className="muted">(기준선 {formatPct(s.baselineEngagementPct, 2)})</span>
-                    <br />
-                    <Delta current={s.avgEngagementPct} baseline={s.baselineEngagementPct} digits={1} />
-                  </div>
-                  <div className="small">
-                    조회 속도 {formatNumber(Math.round(s.avgVelocity))}회/일 <span className="muted">(기준선 {formatNumber(Math.round(s.baselineVelocity))}회/일)</span>
-                    <br />
-                    <Delta current={s.avgVelocity} baseline={s.baselineVelocity} digits={1} />
-                  </div>
-                </div>
-                {!data.sample && data.eligibleVideos.length > 0 ? (
-                  <div className="row" style={{ marginTop: 10 }}>
-                    <select
-                      className="select"
-                      value={addPickers[s.id] || ''}
-                      onChange={(e) => setAddPickers((prev) => ({ ...prev, [s.id]: e.target.value }))}
-                    >
-                      <option value="">영상 선택…</option>
-                      {data.eligibleVideos.map((v) => (
-                        <option key={v.id} value={v.id}>
-                          {v.title}
-                        </option>
-                      ))}
-                    </select>
-                    <button className="button secondary xs" disabled={addingSeriesId === s.id} onClick={() => void addToSeries(s.id)}>
-                      {addingSeriesId === s.id ? '추가 중...' : '이 시리즈에 추가'}
-                    </button>
-                  </div>
-                ) : null}
-              </div>
-            ))}
-          </div>
+          <>
+            {formatAnswer ? <AnswerCard tone={formatAnswer.tone} eyebrow="롱폼 vs 숏폼" headline={formatAnswer.headline} detail={formatAnswer.detail} /> : null}
+
+            <Section title="롱폼 vs 숏폼" description="영상이 몇 개인지가 아니라, 시청자가 얼마나 반응하고 조회수가 얼마나 빨리 느는지를 비교해요. ▲는 더 좋은 쪽이에요.">
+              <table className="v3a-compare">
+                <thead>
+                  <tr>
+                    <th />
+                    <th>롱폼</th>
+                    <th>숏폼</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <th scope="row">영상 수</th>
+                    <td>{formatNumber(lf.count)}개</td>
+                    <td>{formatNumber(sf.count)}개</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">
+                      시청자 반응률
+                      <small>조회수 대비 좋아요+댓글 비율</small>
+                    </th>
+                    <td className={engWinner === 'longform' ? 'win' : undefined}>{lf.count ? formatPct(lf.avgEngagementPct, 2) : '—'}</td>
+                    <td className={engWinner === 'shortform' ? 'win' : undefined}>{sf.count ? formatPct(sf.avgEngagementPct, 2) : '—'}</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">
+                      하루 평균 조회수
+                      <small>올린 뒤 하루에 평균 몇 번 보였는지</small>
+                    </th>
+                    <td className={velWinner === 'longform' ? 'win' : undefined}>{lf.count ? `${formatNumber(Math.round(lf.avgVelocity))}회` : '—'}</td>
+                    <td className={velWinner === 'shortform' ? 'win' : undefined}>{sf.count ? `${formatNumber(Math.round(sf.avgVelocity))}회` : '—'}</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">
+                      총 조회수
+                      <small>모든 영상의 조회수를 더한 값</small>
+                    </th>
+                    <td title={formatNumber(lf.totalViews)}>{formatCompactNumber(lf.totalViews)}회</td>
+                    <td title={formatNumber(sf.totalViews)}>{formatCompactNumber(sf.totalViews)}회</td>
+                  </tr>
+                </tbody>
+              </table>
+            </Section>
+          </>
         )}
-      </Section>
+
+        <Section
+          title="시리즈"
+          count={data.series.length}
+          description="같은 주제로 이어지는 영상 묶음이에요. 같은 종목의 시리즈 밖 영상과 비교해서, 묶어 만든 효과가 있는지 알려드려요."
+          actions={
+            <>
+              {data.sample ? <span className="small muted">SQL 실행 후 만들 수 있어요</span> : null}
+              <button
+                className={showForm ? 'button secondary' : 'button'}
+                disabled={data.sample && !showForm}
+                onClick={() => {
+                  setShowForm((v) => !v)
+                  setAttempted(false)
+                }}
+              >
+                {showForm ? '닫기' : '새 시리즈 만들기'}
+              </button>
+            </>
+          }
+        >
+          {showForm ? (
+            <div className="v3-inline-form">
+              <div className="v3-form-grid">
+                <div className="field">
+                  <label className="label" htmlFor="v3-series-name">
+                    시리즈 이름
+                  </label>
+                  <input
+                    id="v3-series-name"
+                    className="input"
+                    value={name}
+                    maxLength={200}
+                    disabled={creating}
+                    aria-invalid={!!nameError}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="예: 삼성전자 실적 브리핑 시리즈"
+                  />
+                  {nameError ? <p className="v3a-field-error">{nameError}</p> : null}
+                </div>
+                <div className="field">
+                  <label className="label" htmlFor="v3-series-stock">
+                    종목 (선택)
+                  </label>
+                  <input
+                    id="v3-series-stock"
+                    className="input"
+                    list="v3-series-stock-suggestions"
+                    value={stockName}
+                    maxLength={100}
+                    disabled={creating}
+                    onChange={(e) => setStockName(e.target.value)}
+                    placeholder="예: 삼성전자"
+                  />
+                  <p className="v3a-field-help">넣으면 같은 종목의 다른 영상과 비교해요. 비워도 돼요.</p>
+                  <datalist id="v3-series-stock-suggestions">
+                    {SAMPLE_STOCK_NAMES.map((s) => (
+                      <option key={s} value={s} />
+                    ))}
+                  </datalist>
+                </div>
+              </div>
+              <div className="field">
+                <label className="label" htmlFor="v3-series-video-search">
+                  묶을 영상 고르기 (선택) · 지금 {selectedIds.length}개 골랐어요
+                </label>
+                <input
+                  id="v3-series-video-search"
+                  className="input v3a-search"
+                  type="search"
+                  placeholder="제목이나 종목으로 찾기"
+                  value={videoQuery}
+                  disabled={creating}
+                  onChange={(e) => setVideoQuery(e.target.value)}
+                />
+                <div className="v3a-picker scroll">
+                  {pickable.length === 0 ? (
+                    <div className="v3a-empty compact">
+                      <div className="v3a-empty-text">{(data.eligibleVideos || []).length === 0 ? '묶을 수 있는 영상이 아직 없어요. 시리즈만 먼저 만들고 나중에 추가해도 돼요.' : '검색 결과가 없어요.'}</div>
+                    </div>
+                  ) : (
+                    <>
+                      {pickMore.visible.map((v) => (
+                        <button key={v.id} type="button" className={`v3a-pick check ${selectedIds.includes(v.id) ? 'selected' : ''}`} disabled={creating} aria-pressed={selectedIds.includes(v.id)} onClick={() => toggleSelect(v.id)}>
+                          <span className="v3a-pick-title">
+                            {v.title}
+                            {v.stockName ? <span className="v3a-row-sub">· {v.stockName}</span> : null}
+                          </span>
+                          <span className="small muted">{selectedIds.includes(v.id) ? '✓ 선택됨' : ''}</span>
+                        </button>
+                      ))}
+                      <MoreButton remaining={pickMore.remaining} onClick={pickMore.more} />
+                    </>
+                  )}
+                </div>
+                <p className="v3a-field-help">영상은 나중에 시리즈 카드에서 더 추가할 수 있어요. 이미 다른 시리즈에 들어간 영상은 보이지 않아요.</p>
+              </div>
+              <div className="v3a-lead-actions">
+                <button className="button" disabled={creating} onClick={() => void createSeries()}>
+                  {creating ? '만드는 중…' : '시리즈 만들기'}
+                </button>
+                <button className="button secondary" disabled={creating} onClick={() => setShowForm(false)}>
+                  취소
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {data.series.length === 0 ? (
+            <EmptyBlock title="아직 만든 시리즈가 없어요" actionLabel="첫 시리즈 만들기" onAction={() => setShowForm(true)}>
+              예를 들어 “삼성전자 실적 브리핑”처럼 같은 주제로 이어지는 영상을 묶어 두세요. 묶어 두면 시리즈가 일반 영상보다 반응이 좋은지 자동으로 비교해 드려요.
+            </EmptyBlock>
+          ) : (
+            <div className="v3a-cards">
+              {seriesMore.visible.map((s) => {
+                const engChange = pctChange(s.avgEngagementPct, s.baselineEngagementPct)
+                const velChange = pctChange(s.avgVelocity, s.baselineVelocity)
+                const engText = describeChange(engChange, '시리즈 밖 영상')
+                const velText = describeChange(velChange, '시리즈 밖 영상')
+                const verdict = seriesVerdict(s, engChange, velChange)
+                return (
+                  <div className="v3a-card" key={s.id}>
+                    <div className="v3a-card-head">
+                      <div>
+                        <div className="v3a-card-title">
+                          {s.name} {data.sample ? <Tag tone="amber">예시</Tag> : null}
+                        </div>
+                        <div className="v3-cell-sub">
+                          {s.stockName || '종목 무관'} · 영상 {formatNumber(s.videoCount)}개
+                        </div>
+                      </div>
+                      <Tag tone={verdict.tone}>{verdict.label}</Tag>
+                    </div>
+                    {s.videoCount === 0 ? (
+                      <p className="v3a-note">아직 이 시리즈에 묶인 영상이 없어요. 아래에서 영상을 추가하면 효과를 계산해요.</p>
+                    ) : (
+                      <div className="v3a-series-lines">
+                        <div className="v3a-series-line">
+                          시청자 반응률
+                          <strong>{formatPct(s.avgEngagementPct, 2)}</strong>
+                          <span className={`v3a-tone-${engText.tone}`}>
+                            {engChange === null ? '비교할 기준 영상이 없어요' : `${engText.text} (${formatPct(s.baselineEngagementPct, 2)})`}
+                          </span>
+                        </div>
+                        <div className="v3a-series-line">
+                          하루 평균 조회수
+                          <strong>{formatNumber(Math.round(s.avgVelocity))}회</strong>
+                          <span className={`v3a-tone-${velText.tone}`}>
+                            {velChange === null ? '비교할 기준 영상이 없어요' : `${velText.text} (${formatNumber(Math.round(s.baselineVelocity))}회)`}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                    {!data.sample && data.eligibleVideos.length > 0 ? (
+                      <div className="v3a-series-add">
+                        <select
+                          className="select"
+                          aria-label={`${s.name}에 추가할 영상`}
+                          value={addPickers[s.id] || ''}
+                          disabled={addingSeriesId === s.id}
+                          onChange={(e) => setAddPickers((prev) => ({ ...prev, [s.id]: e.target.value }))}
+                        >
+                          <option value="">추가할 영상 고르기…</option>
+                          {data.eligibleVideos.map((v) => (
+                            <option key={v.id} value={v.id}>
+                              {v.title}
+                            </option>
+                          ))}
+                        </select>
+                        <button className="button secondary xs" disabled={addingSeriesId === s.id || !addPickers[s.id]} onClick={() => void addToSeries(s.id)}>
+                          {addingSeriesId === s.id ? '추가 중…' : '이 시리즈에 추가'}
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                )
+              })}
+              <MoreButton remaining={seriesMore.remaining} onClick={seriesMore.more} label="시리즈 더 보기" />
+            </div>
+          )}
+        </Section>
+
+        <HowTo>
+          <p>시청자 반응률 = (좋아요 + 댓글) ÷ 조회수 × 100</p>
+          <p>하루 평균 조회수 = 조회수 ÷ 올린 지 지난 날짜 (최소 1일)</p>
+          <p>시리즈 효과: 시리즈에 묶인 영상들의 평균을, 같은 종목이면서 시리즈에 속하지 않은 영상들의 평균(괄호 안 숫자)과 비교해요. 두 지표가 모두 5% 이상 높으면 ‘시리즈 효과 있음’이에요.</p>
+        </HowTo>
+      </div>
     </>
   )
 }

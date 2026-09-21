@@ -6,7 +6,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { createSupabaseBrowserClient } from '@/lib/supabase/browser-client'
 import { clearMeCache, fetchMe } from '@/lib/session/me-client'
 import { getAccessToken } from '@/lib/session/authed-fetch'
-import { getMenusForRole, isAdminRoleType, type MenuDefinition } from '@/lib/v5/menu'
+import { findMenuByPath, getMenusForRole, isAdminRoleType, type MenuDefinition } from '@/lib/v5/menu'
 
 export type V5Me = {
   crmUserId: string
@@ -73,10 +73,10 @@ export function AppShellFrame({ children }: { children: React.ReactNode }) {
         <aside id="app-sidebar" className="sidebar">
           <div className="sidebar-section">
             <div className="sidebar-brand">
-              <div className="sidebar-brand-mark">GL</div>
+              <img className="sidebar-brand-logo" src="/logo-ant.png" alt="" width={28} height={28} />
               <div>
-                <div className="sidebar-brand-title">성장 실험 랩</div>
-                <div className="sidebar-brand-sub">여왕개미미디어 V5</div>
+                <div className="sidebar-brand-title">여왕개미미디어</div>
+                <div className="sidebar-brand-sub">영상 성장 관리</div>
               </div>
             </div>
             {groups.map(([group, menus]) => (
@@ -91,10 +91,7 @@ export function AppShellFrame({ children }: { children: React.ReactNode }) {
                       aria-current={isActive(item.href) ? 'page' : undefined}
                       title={item.description}
                     >
-                      <span className="sidebar-link-icon" aria-hidden>
-                        {item.icon}
-                      </span>
-                      <span>{item.label}</span>
+                      {item.label}
                     </Link>
                   ))}
                 </nav>
@@ -102,24 +99,21 @@ export function AppShellFrame({ children }: { children: React.ReactNode }) {
             ))}
           </div>
 
-          <div className="sidebar-section">
-            <div className="sidebar-caption">account</div>
+          <div className="sidebar-section sidebar-account-box">
             {me ? (
               <div className="sidebar-account">
                 <div className="sidebar-avatar">{me.name.slice(0, 1)}</div>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontWeight: 700, fontSize: 14 }}>{me.name}</div>
-                  <div className="small muted">{me.isAdmin ? '관리자' : '직원'} · {me.roleName}</div>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div className="sidebar-account-name">{me.name}</div>
+                  <div className="small muted">{me.isAdmin ? '관리자' : '직원'}</div>
                 </div>
+                <button className="button secondary sm" type="button" onClick={logout}>
+                  로그아웃
+                </button>
               </div>
             ) : (
-              <div className="small muted">계정 정보를 불러오는 중</div>
+              <div className="small muted">계정 확인 중...</div>
             )}
-            <div className="stack" style={{ marginTop: 12 }}>
-              <button className="button secondary sm" onClick={logout}>
-                로그아웃
-              </button>
-            </div>
           </div>
         </aside>
 
@@ -129,7 +123,8 @@ export function AppShellFrame({ children }: { children: React.ReactNode }) {
   )
 }
 
-// 페이지 제목/부제/작업공간 배지 + 우측 액션 슬롯. 각 page.tsx 가 맨 위에 렌더링한다.
+// 페이지 제목 + 한 줄 설명 + 우측 주요 버튼 슬롯. 각 page.tsx 가 맨 위에 렌더링한다.
+// subtitle 을 생략하면 메뉴에 적어 둔 화면 설명을 그대로 쓴다.
 export function PageHeader({
   title,
   subtitle,
@@ -139,18 +134,16 @@ export function PageHeader({
   subtitle?: string
   actions?: React.ReactNode
 }) {
-  const me = useV5Me()
+  const pathname = usePathname()
+  const description = subtitle ?? findMenuByPath(pathname)?.description
   return (
     <div className="document-head">
       <div className="document-head-top">
         <div>
           <h1 className="page-title">{title}</h1>
-          {subtitle ? <p className="page-subtitle">{subtitle}</p> : null}
+          {description ? <p className="page-subtitle">{description}</p> : null}
         </div>
-        <div className="document-head-actions">
-          {actions}
-          <div className="page-badge">{me ? (me.isAdmin ? '관리자 작업 공간' : '직원 작업 공간') : '성장 실험 랩'}</div>
-        </div>
+        {actions ? <div className="document-head-actions">{actions}</div> : null}
       </div>
     </div>
   )

@@ -15,7 +15,12 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false)
 
   const onSubmit = async () => {
+    if (loading) return
     setError('')
+    if (!email.trim() || !password) {
+      setError(!email.trim() ? '아이디를 입력해 주세요.' : '비밀번호를 입력해 주세요.')
+      return
+    }
     setLoading(true)
 
     try {
@@ -43,7 +48,7 @@ export default function LoginPage() {
       })
 
       if (error || !data.session?.access_token) {
-        setError(error?.message || '로그인에 실패했습니다.')
+        setError('아이디 또는 비밀번호가 맞지 않습니다. 다시 확인해 주세요.')
         return
       }
 
@@ -65,19 +70,26 @@ export default function LoginPage() {
   return (
     <div className="auth-wrap">
       <div className="auth-center">
-        <div className="panel form-stack" style={{ width: '100%', maxWidth: 520 }}>
+        <form
+          className="panel form-stack"
+          style={{ width: '100%', maxWidth: 520 }}
+          onSubmit={(e) => {
+            e.preventDefault()
+            void onSubmit()
+          }}
+        >
           <img className="auth-logo" src="/logo-ant.png" alt="" width={56} height={56} />
           <h1 className="auth-title">여왕개미미디어 CRM</h1>
-          <p className="auth-subtitle">시청자 참여 · 커뮤니티 성장 CRM</p>
+          <p className="auth-subtitle">영상 등록과 시청자 반응 확인을 한 곳에서</p>
           <div className="field">
             <label className="label">아이디</label>
             <input
               className="input"
               value={email}
+              autoFocus
+              autoComplete="username"
+              autoCapitalize="none"
               onChange={(e) => setEmail(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void onSubmit()
-              }}
             />
           </div>
           <div className="field">
@@ -86,20 +98,18 @@ export default function LoginPage() {
               className="input"
               type="password"
               value={password}
+              autoComplete="current-password"
               onChange={(e) => setPassword(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void onSubmit()
-              }}
             />
           </div>
-          <button className="button" disabled={loading} onClick={onSubmit}>
+          <button className="button" type="submit" disabled={loading}>
             {loading ? '로그인 중...' : '로그인'}
           </button>
           {error ? <div className="message-error small">{error}</div> : null}
           <div className="small muted">
-            계정이 없나요? <Link className="link" href="/v3/signup">회원가입</Link>
+            처음 사용하시나요? <Link className="link" href="/v3/signup">회원가입</Link>
           </div>
-        </div>
+        </form>
       </div>
     </div>
   )

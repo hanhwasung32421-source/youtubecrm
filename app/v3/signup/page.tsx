@@ -161,7 +161,7 @@ export default function SignupPage() {
           <img className="auth-logo" src="/logo-ant.png" alt="" width={56} height={56} />
           <div className="panel-title">회원가입</div>
           <p className="panel-subtitle">
-            이메일 중복확인을 통과한 뒤 가입 정보를 입력하면 가입이 완료됩니다.
+            이메일을 먼저 확인한 뒤 정보를 입력하면 가입 후 바로 로그인됩니다.
           </p>
         </div>
 
@@ -173,6 +173,11 @@ export default function SignupPage() {
                 ref={emailRef}
                 className="input"
                 value={email}
+                autoFocus
+                placeholder="name@example.com"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !loading) void checkEmailDuplicate()
+                }}
                 onChange={(e) => setEmail(e.target.value)}
                 onBlur={() => {
                   if (emailCheckedValue !== email.trim()) {
@@ -279,7 +284,7 @@ export default function SignupPage() {
           {error ? <div className="message-error small">{error}</div> : null}
           {message ? <div className="message-success small">{message}</div> : null}
           <div className="small muted">
-            이미 계정이 있나요? <Link className="link" href="/v3/login">로그인</Link>
+            이미 계정이 있나요? <Link className="link" href="/v3/login">로그인하기</Link>
           </div>
         </div>
       </div>

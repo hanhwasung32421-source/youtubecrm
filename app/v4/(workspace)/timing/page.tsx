@@ -2,12 +2,13 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { PageHeader } from '@/components/v4/app-shell'
-import { Heatmap } from '@/components/v4/charts'
-import { EmptyState, PeriodToggle } from '@/components/v4/ui'
+import { PeriodToggle } from '@/components/v4/ui'
 import { Toast, useToast } from '@/components/toast'
 import { authedFetchJson } from '@/lib/session/authed-fetch'
 import type { HeatCell, PeriodDays } from '@/lib/v4/analytics'
-import { WEEKDAY_LABELS, fmtCompact, fmtNumber } from '@/lib/v4/format'
+import { BarRow, Card, EmptyPanel, ErrorPanel, Formula, Hero, Kpi, KpiRow, Seg, SkelRows } from '@/lib/v4/analysis-ui'
+import { WEEKDAY_LABELS, fmtHourKo, fmtHourRangeKo, fmtNumber, fmtShort } from '@/lib/v4/format'
+import '../pages.css'
 
 type TimingResponse = {
   scope: 'admin' | 'staff'
@@ -21,33 +22,58 @@ type TimingResponse = {
   error?: string
 }
 
+type HeatMode = 'avg' | 'count'
+
+// 월요일부터 보여준다 (일 = 0)
+const WEEK_ORDER = [1, 2, 3, 4, 5, 6, 0]
+const slotLabel = (c: { weekday: number; hour: number }) => `${WEEKDAY_LABELS[c.weekday]}요일 ${fmtHourRangeKo(c.hour)}`
+
 export default function UploadTimingPage() {
   const { toast, showError } = useToast()
   const [period, setPeriod] = useState<PeriodDays>(30)
   const [data, setData] = useState<TimingResponse | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [reloadKey, setReloadKey] = useState(0)
+  const [mode, setMode] = useState<HeatMode>('avg')
 
   useEffect(() => {
+    let cancelled = false
     const run = async () => {
       setLoading(true)
+      setError('')
       const { ok, data: res } = await authedFetchJson<TimingResponse>(`/api/v4/timing?period=${period}`)
+      if (cancelled) return
       setLoading(false)
       if (!ok || res?.error) {
-        showError(res?.error || '업로드 타이밍 분석 조회에 실패했습니다.')
+        const message = res?.error || '업로드 시간대 분석을 불러오지 못했습니다.'
+        setError(message)
+        showError(message)
         return
       }
       setData(res)
     }
     void run()
+    return () => {
+      cancelled = true
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [period])
+  }, [period, reloadKey])
 
-  const highlight = useMemo(() => new Set((data?.recommendations || []).map((c) => `${c.weekday}-${c.hour}`)), [data])
+  // 추천: API의 추천(같은 칸에 영상 2개 이상)을 우선, 없으면 1개짜리라도 참고용으로 상위 3개
+  const { picks, isReference } = useMemo(() => {
+    if (!data) return { picks: [] as HeatCell[], isReference: false }
+    if (data.recommendations.length > 0) return { picks: data.recommendations, isReference: false }
+    const fallback = data.cells
+      .filter((c) => c.count >= 1 && c.avgViews > 0)
+      .sort((a, b) => b.avgViews - a.avgViews)
+      .slice(0, 3)
+    return { picks: fallback, isReference: fallback.length > 0 }
+  }, [data])
 
-  // 요일별/시간대별 합계 (보조 지표)
   const byWeekday = useMemo(() => {
     if (!data) return []
-    return Array.from({ length: 7 }, (_, weekday) => {
+    return WEEK_ORDER.map((weekday) => {
       const cells = data.cells.filter((c) => c.weekday === weekday)
       const count = cells.reduce((s, c) => s + c.count, 0)
       const views = cells.reduce((s, c) => s + c.totalViews, 0)
@@ -55,95 +81,216 @@ export default function UploadTimingPage() {
     })
   }, [data])
 
-  const busiestHour = useMemo(() => {
-    if (!data) return null
-    const totals = Array.from({ length: 24 }, (_, hour) => ({
-      hour,
-      count: data.cells.filter((c) => c.hour === hour).reduce((s, c) => s + c.count, 0)
-    }))
-    return totals.sort((a, b) => b.count - a.count)[0] || null
+  const byHour = useMemo(() => {
+    if (!data) return []
+    return Array.from({ length: 24 }, (_, hour) => {
+      const cells = data.cells.filter((c) => c.hour === hour)
+      const count = cells.reduce((s, c) => s + c.count, 0)
+      const views = cells.reduce((s, c) => s + c.totalViews, 0)
+      return { hour, count, avg: count > 0 ? Math.round(views / count) : 0 }
+    })
   }, [data])
+
+  const bestDay = useMemo(() => {
+    const pool = byWeekday.filter((d) => d.count >= 2 && d.avg > 0)
+    return [...pool].sort((a, b) => b.avg - a.avg)[0] ?? null
+  }, [byWeekday])
+  const bestHour = useMemo(() => {
+    const pool = byHour.filter((h) => h.count >= 2 && h.avg > 0)
+    return [...pool].sort((a, b) => b.avg - a.avg)[0] ?? null
+  }, [byHour])
+  const busiestHour = useMemo(() => [...byHour].sort((a, b) => b.count - a.count)[0] ?? null, [byHour])
+
+  const highlight = useMemo(() => new Set(picks.map((c) => `${c.weekday}-${c.hour}`)), [picks])
+
+  const noData = !loading && !error && data !== null && data.sampleCount === 0
+  const scopeText = data?.scope === 'staff' ? '내 영상' : '팀 전체'
+  const maxWeekdayAvg = Math.max(...byWeekday.map((d) => d.avg), 0)
+
+  const heatMax = mode === 'avg' ? data?.maxAvg ?? 0 : data?.maxCount ?? 0
+  const valueOf = (c: HeatCell) => (mode === 'avg' ? c.avgViews : c.count)
+  const rgb = mode === 'avg' ? '16, 185, 129' : '79, 70, 229'
 
   return (
     <>
       <PageHeader
         title="업로드 타이밍 분석"
-        subtitle={data ? `${data.range.start} ~ ${data.range.end} · 영상 ${fmtNumber(data.sampleCount)}개 · KST 게시 시각(published_at, 없으면 등록 시각) 기준` : '언제 올린 영상이 잘 나오는지 요일 × 시간대로 봅니다.'}
+        subtitle="언제 올린 영상이 조회수가 잘 나오는지 봅니다."
         actions={<PeriodToggle value={period} onChange={setPeriod} disabled={loading} />}
       />
       <Toast toast={toast} />
 
-      <div className="v4-callout">
-        <div className="v4-callout-title">추천 업로드 슬롯 Top 3</div>
-        <p className="small muted" style={{ marginTop: -4, marginBottom: 10 }}>같은 요일·시간대에 2개 이상 업로드된 슬롯 중 평균 조회수가 높은 순. 히트맵에 노란 테두리로 표시됩니다.</p>
-        {!data || data.recommendations.length === 0 ? (
-          <EmptyState>추천할 만큼 데이터가 쌓이지 않았습니다 (슬롯당 최소 2개 영상 필요).</EmptyState>
+      <div className="v4p">
+        {error && !data ? (
+          <ErrorPanel message={error} onRetry={() => setReloadKey((k) => k + 1)} />
+        ) : noData ? (
+          <EmptyPanel title="이 기간에 등록된 영상이 아직 없어요">
+            이 화면은 영상을 올린 요일·시간대별로 평균 조회수를 비교해서 &quot;언제 올리면 좋은지&quot; 알려줘요. 영상이 어느 정도 쌓이면 추천 시간대가 나타납니다. 기간을 더 길게 바꿔 볼 수도 있어요.
+          </EmptyPanel>
         ) : (
-          <div className="v4-callout-list">
-            {data.recommendations.map((cell, index) => (
-              <div className="v4-callout-item" key={`${cell.weekday}-${cell.hour}`}>
-                <span className={`v4-rank ${index === 0 ? 'top' : ''}`}>{index + 1}</span>
-                <div style={{ flex: 1 }}>
-                  <div className="v4-cell-title">
-                    {WEEKDAY_LABELS[cell.weekday]}요일 {cell.hour}시 ~ {cell.hour + 1}시
+          <>
+            <Hero
+              loading={!data}
+              eyebrow={data ? `최근 ${period}일 · ${scopeText} · 영상 ${fmtNumber(data.sampleCount)}개 기준` : undefined}
+              headline={
+                picks.length > 0 ? (
+                  <>
+                    이 시간대에 올리면 평균 조회수가 가장 높아요: <span className="em">{slotLabel(picks[0])}</span>
+                  </>
+                ) : (
+                  '아직 추천할 시간대를 정하기엔 영상이 부족해요'
+                )
+              }
+            >
+              {picks.length > 0 ? (
+                <>
+                  <p className="v4p-hero-detail">
+                    그 시간대에 올린 영상 {fmtNumber(picks[0].count)}개가 평균 <strong>{fmtShort(picks[0].avgViews)}회</strong> 조회됐어요.
+                    {isReference ? ' (같은 시간대 영상이 1개씩뿐이라 참고용이에요.)' : ''}
+                  </p>
+                  <div className="v4p-top3">
+                    {picks.map((c, index) => (
+                      <div className={`v4p-top3-item ${index === 0 ? 'first' : ''}`} key={`${c.weekday}-${c.hour}`}>
+                        <div className="v4p-top3-head">
+                          <span className="v4p-medal">{index + 1}</span>
+                          <span className="v4p-top3-name">{slotLabel(c)}</span>
+                        </div>
+                        <div className="v4p-top3-main" title={`평균 ${fmtNumber(c.avgViews)}회`}>
+                          {fmtShort(c.avgViews)}
+                          <small>회 평균</small>
+                        </div>
+                        <div className="v4p-top3-meta">
+                          <span>영상 {fmtNumber(c.count)}개</span>
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                  <div className="small muted">업로드 {cell.count}개 · 총 {fmtNumber(cell.totalViews)}회</div>
+                  {busiestHour && bestHour && busiestHour.count > 0 && busiestHour.hour !== bestHour.hour ? (
+                    <div className="v4p-hero-note plain">
+                      지금은 <strong>{fmtHourKo(busiestHour.hour)}</strong>대에 가장 많이 올리고 있지만, 평균 조회수는 <strong>{fmtHourKo(bestHour.hour)}</strong>대가 더 높아요. 올리는 시간을 조금 옮겨 보세요.
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <p className="v4p-hero-detail">같은 요일·시간대에 영상이 2개 이상 쌓이면 추천해 드려요. 영상을 꾸준히 등록해 주세요.</p>
+              )}
+            </Hero>
+
+            <KpiRow>
+              <Kpi
+                label="반응이 좋은 요일"
+                value={bestDay ? `${WEEKDAY_LABELS[bestDay.weekday]}요일` : '-'}
+                hint={bestDay ? `이 요일에 올린 영상은 평균 ${fmtShort(bestDay.avg)}회 조회됐어요.` : '영상이 2개 이상 쌓인 요일이 아직 없어요.'}
+                tone={bestDay ? 'good' : 'neutral'}
+                loading={!data}
+              />
+              <Kpi
+                label="반응이 좋은 시간대"
+                value={bestHour ? fmtHourRangeKo(bestHour.hour) : '-'}
+                hint={bestHour ? `요일과 상관없이, 이 시간대 영상이 평균 ${fmtShort(bestHour.avg)}회 조회됐어요.` : '영상이 2개 이상 쌓인 시간대가 아직 없어요.'}
+                tone={bestHour ? 'good' : 'neutral'}
+                loading={!data}
+              />
+              <Kpi
+                label="가장 많이 올리는 시간대"
+                value={busiestHour && busiestHour.count > 0 ? fmtHourRangeKo(busiestHour.hour) : '-'}
+                hint={busiestHour && busiestHour.count > 0 ? `이 시간대에 영상 ${fmtNumber(busiestHour.count)}개를 올렸어요. 반응 좋은 시간대와 비교해 보세요.` : '아직 올린 영상이 없어요.'}
+                loading={!data}
+              />
+            </KpiRow>
+
+            <Card
+              title="요일 × 시간대 한눈에 보기"
+              sub="진하게 칠해진 칸일수록 값이 커요. 칸에 마우스를 올리면 자세한 숫자가 나와요."
+              actions={
+                <Seg
+                  label="보기 방식"
+                  value={mode}
+                  options={[
+                    ['avg', '평균 조회수'],
+                    ['count', '올린 영상 수']
+                  ]}
+                  onChange={setMode}
+                />
+              }
+            >
+              {!data ? (
+                <SkelRows rows={4} />
+              ) : (
+                <>
+                  <div className="v4p-heat">
+                    <div className="v4p-heat-grid" role="table" aria-label={mode === 'avg' ? '요일별 시간대별 평균 조회수' : '요일별 시간대별 올린 영상 수'}>
+                      <div />
+                      {Array.from({ length: 24 }, (_, hour) => (
+                        <div className="v4p-heat-label" key={hour}>
+                          {hour % 3 === 0 ? `${hour}시` : ''}
+                        </div>
+                      ))}
+                      {WEEK_ORDER.map((weekday) => (
+                        <div style={{ display: 'contents' }} key={weekday} role="row">
+                          <div className="v4p-heat-label">{WEEKDAY_LABELS[weekday]}</div>
+                          {Array.from({ length: 24 }, (_, hour) => {
+                            const cell = data.cells[weekday * 24 + hour]
+                            const value = cell ? valueOf(cell) : 0
+                            const alpha = heatMax > 0 && value > 0 ? 0.12 + (value / heatMax) * 0.78 : 0
+                            const key = `${weekday}-${hour}`
+                            const thin = mode === 'avg' && cell && cell.count === 1
+                            return (
+                              <div
+                                key={key}
+                                role="cell"
+                                className={`v4p-heat-cell ${highlight.has(key) ? 'rec' : ''} ${thin ? 'thin' : ''}`}
+                                style={{ background: alpha > 0 ? `rgba(${rgb}, ${alpha.toFixed(2)})` : undefined }}
+                                title={`${WEEKDAY_LABELS[weekday]}요일 ${fmtHourRangeKo(hour)} · 올린 영상 ${fmtNumber(cell?.count || 0)}개${cell && cell.count > 0 ? ` · 평균 조회수 ${fmtNumber(cell.avgViews)}회` : ''}`}
+                              >
+                                {value > 0 ? (mode === 'avg' ? fmtShort(value) : fmtNumber(value)) : ''}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="v4p-legend">
+                    <span className="v4p-legend-item">
+                      {mode === 'avg' ? '낮음' : '적음'}
+                      <i className="v4p-legend-scale" style={{ background: `linear-gradient(to right, rgba(${rgb}, 0.12), rgba(${rgb}, 0.9))` }} />
+                      {mode === 'avg' ? `높음 (최고 ${fmtShort(heatMax)}회)` : `많음 (최대 ${fmtNumber(heatMax)}개)`}
+                    </span>
+                    <span className="v4p-legend-item"><i className="v4p-swatch" /> 올린 영상 없음</span>
+                    <span className="v4p-legend-item"><i className="v4p-swatch rec" /> 추천 시간대</span>
+                    {mode === 'avg' ? <span className="v4p-legend-item"><i className="v4p-swatch thin" /> 흐린 칸 = 영상 1개뿐이라 참고만</span> : null}
+                  </div>
+                </>
+              )}
+            </Card>
+
+            <Card title="요일별로 보면" sub="요일마다 올린 영상의 평균 조회수예요. 가장 높은 요일이 진하게 표시돼요.">
+              {!data ? (
+                <SkelRows rows={4} />
+              ) : (
+                <div className="v4p-bars">
+                  {byWeekday.map((d) => (
+                    <BarRow
+                      key={d.weekday}
+                      label={`${WEEKDAY_LABELS[d.weekday]}요일`}
+                      value={d.avg}
+                      max={maxWeekdayAvg}
+                      valueText={d.count > 0 ? `${fmtShort(d.avg)}회` : '-'}
+                      sub={`영상 ${fmtNumber(d.count)}개`}
+                      leader={bestDay?.weekday === d.weekday}
+                    />
+                  ))}
                 </div>
-                <div className="v4-num">평균 {fmtNumber(cell.avgViews)}회</div>
-              </div>
-            ))}
-          </div>
+              )}
+              <Formula>
+                <p>평균 조회수 = 그 칸(또는 요일)에 올린 영상들의 조회수 합계 ÷ 영상 수.</p>
+                <p>추천 시간대 = 같은 요일·시간대에 영상이 2개 이상 있는 칸 중 평균 조회수가 높은 순 Top 3. 영상이 1개뿐인 칸은 우연일 수 있어서 제외해요.</p>
+                <p>시각은 한국 시간 기준이며, 유튜브 게시 시각(없으면 CRM 등록 시각)으로 계산해요.</p>
+              </Formula>
+            </Card>
+          </>
         )}
-      </div>
-
-      <div className="panel">
-        <div className="panel-header">
-          <div>
-            <div className="panel-title">업로드 수 히트맵</div>
-            <p className="panel-subtitle">셀 = 해당 요일·시간대에 게시된 영상 수. {busiestHour && busiestHour.count > 0 ? `가장 많이 올리는 시간대는 ${busiestHour.hour}시(${busiestHour.count}개).` : ''}</p>
-          </div>
-        </div>
-        {data && data.sampleCount === 0 ? (
-          <EmptyState>이 기간에 등록된 영상이 없습니다.</EmptyState>
-        ) : data ? (
-          <Heatmap cells={data.cells} max={data.maxCount} valueOf={(c) => c.count} color="indigo" weekdayLabels={WEEKDAY_LABELS} highlight={highlight} />
-        ) : null}
-      </div>
-
-      <div className="panel">
-        <div className="panel-header">
-          <div>
-            <div className="panel-title">평균 조회수 히트맵</div>
-            <p className="panel-subtitle">셀 = 해당 슬롯에 게시된 영상들의 평균 조회수. 표본이 1개뿐인 슬롯은 참고만 하세요.</p>
-          </div>
-        </div>
-        {data && data.sampleCount === 0 ? (
-          <EmptyState>이 기간에 등록된 영상이 없습니다.</EmptyState>
-        ) : data ? (
-          <Heatmap cells={data.cells} max={data.maxAvg} valueOf={(c) => c.avgViews} color="emerald" weekdayLabels={WEEKDAY_LABELS} format={fmtCompact} highlight={highlight} />
-        ) : null}
-      </div>
-
-      <div className="panel">
-        <div className="panel-header">
-          <div>
-            <div className="panel-title">요일별 요약</div>
-          </div>
-        </div>
-        <div className="data-table">
-          <div className="data-table-header" style={{ gridTemplateColumns: '80px 1fr 1fr' }}>
-            <div>요일</div>
-            <div className="data-right">업로드 수</div>
-            <div className="data-right">평균 조회수</div>
-          </div>
-          {byWeekday.map((row) => (
-            <div className="data-table-row" style={{ gridTemplateColumns: '80px 1fr 1fr' }} key={row.weekday}>
-              <div>{WEEKDAY_LABELS[row.weekday]}</div>
-              <div className="data-right v4-num">{fmtNumber(row.count)}</div>
-              <div className="data-right v4-num">{fmtNumber(row.avg)}</div>
-            </div>
-          ))}
-        </div>
       </div>
     </>
   )

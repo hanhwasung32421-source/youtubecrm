@@ -236,7 +236,7 @@ export function sampleReportPayload(): ReportPayload {
     .sort((a, b) => b.score - a.score)
   const top = items[0]
   const insight = top
-    ? `이번 주 발견성 점수 1위는 ${top.ownerName}님의 「${top.video.title}」 — ${top.video.title?.includes(top.video.stock_name) ? '제목에 종목명 포함 + ' : ''}체크리스트 ${top.checklistDone}/4 완료 (점수 ${top.score}점)`
+    ? `이번 주 반응이 가장 좋은 영상은 ${top.ownerName}님의 「${top.video.title}」 — 하루 평균 ${Math.round(top.viewsPerDay).toLocaleString('ko-KR')}회 조회, 반응 점수 ${top.score}점입니다.`
     : '표시할 영상이 없습니다.'
   return { items, insight, sample: true }
 }

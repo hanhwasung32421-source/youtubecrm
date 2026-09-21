@@ -14,18 +14,20 @@ export type MenuDefinition = {
   description: string
 }
 
+// 사이드바 묶음. 순서는 역할에 따라 getMenuGroups()가 바꾼다(직원: 매일 하는 일 먼저, 관리자: 현황 먼저).
 export const MENU_GROUPS = [
-  { key: 'content', label: '콘텐츠', icon: '📥' },
-  { key: 'insight', label: '참여 인사이트', icon: '💬' },
-  { key: 'format', label: '포맷·시리즈', icon: '🧩' }
+  { key: 'daily', label: '매일 하는 일' },
+  { key: 'overview', label: '반응 한눈에 보기' },
+  { key: 'compare', label: '자세히 비교하기' }
 ] as const
 
+// label = 사이드바 이름 = 페이지 제목(PageHeader가 이 값을 쓴다). description = 제목 아래 한 줄 설명.
 export const MENU_DEFINITIONS: MenuDefinition[] = [
-  { key: 'register', label: '영상 등록', href: '/v3/register', audience: 'all', group: 'content', description: '유튜브 URL로 새 영상을 등록합니다' },
-  { key: 'engagement', label: '참여도 대시보드', href: '/v3/engagement', audience: 'all', group: 'insight', description: '참여율 · 댓글 비율 등 참여 품질 지표' },
-  { key: 'lifecycle', label: '조회 성장 곡선', href: '/v3/lifecycle', audience: 'all', group: 'insight', description: '영상별 조회수 라이프사이클' },
-  { key: 'viral', label: '바이럴 신호 레이더', href: '/v3/viral', audience: 'all', group: 'insight', description: '조회 속도가 급상승한 영상 감지' },
-  { key: 'series', label: '형식 · 시리즈 효과', href: '/v3/series', audience: 'all', group: 'format', description: '롱폼 · 숏폼, 시리즈별 참여 효율 비교' }
+  { key: 'register', label: '영상 등록', href: '/v3/register', audience: 'all', group: 'daily', description: '유튜브 주소와 종목만 넣으면 등록됩니다. 제목·조회수는 자동으로 가져옵니다.' },
+  { key: 'engagement', label: '참여 현황', href: '/v3/engagement', audience: 'all', group: 'overview', description: '시청자가 좋아요·댓글로 얼마나 반응하는지 한눈에 봅니다.' },
+  { key: 'viral', label: '급상승 영상', href: '/v3/viral', audience: 'all', group: 'overview', description: '조회수가 평소보다 빠르게 오르는 영상을 찾아 줍니다.' },
+  { key: 'lifecycle', label: '조회수 성장', href: '/v3/lifecycle', audience: 'all', group: 'compare', description: '영상을 올린 뒤 조회수가 어떻게 늘어나는지 봅니다.' },
+  { key: 'series', label: '롱폼·숏폼·시리즈 비교', href: '/v3/series', audience: 'all', group: 'compare', description: '어떤 형식과 시리즈가 반응을 더 잘 얻는지 비교합니다.' }
 ]
 
 export const ADMIN_ROLE_TYPES = ['super_admin', 'admin']
@@ -34,9 +36,17 @@ export function isAdminRole(roleType: string | null | undefined) {
   return !!roleType && ADMIN_ROLE_TYPES.includes(roleType)
 }
 
-// 관리자 홈 = 참여도 대시보드(팀 현황), 직원 홈 = 영상 등록(매일 하는 작업)
+// 관리자 홈 = 참여 현황(팀 전체), 직원 홈 = 영상 등록(매일 하는 작업)
 export function getHomeHref(roleType: string | null | undefined) {
   return isAdminRole(roleType) ? '/v3/engagement' : '/v3/register'
+}
+
+export function getMenuGroups(roleType: string | null | undefined) {
+  if (isAdminRole(roleType)) {
+    const order = ['overview', 'compare', 'daily']
+    return [...MENU_GROUPS].sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key))
+  }
+  return [...MENU_GROUPS]
 }
 
 export function getMenuByPath(pathname: string): MenuDefinition | null {

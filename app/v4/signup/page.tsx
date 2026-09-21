@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createSupabaseBrowserClient } from '@/lib/supabase/browser-client'
 import { fetchMe } from '@/lib/session/me-client'
-import { HOME_HREF, LOGIN_HREF } from '@/lib/v4/menu'
+import { LOGIN_HREF, homeHrefForRole } from '@/lib/v4/menu'
 
 export default function SignupPage() {
   const router = useRouter()
@@ -136,15 +136,17 @@ export default function SignupPage() {
         headers: { Authorization: `Bearer ${signInData.session.access_token}` }
       })
 
+      let homeHref = homeHrefForRole(null)
       try {
-        await fetchMe(signInData.session.access_token)
+        const me = await fetchMe(signInData.session.access_token)
+        homeHref = homeHrefForRole(me.roleType)
       } catch {
         setMessage('회원가입이 완료되었습니다. 자동 로그인 후 화면 이동에 실패했습니다.')
         return
       }
 
       setMessage('회원가입이 완료되어 자동 로그인됩니다.')
-      router.push(HOME_HREF)
+      router.push(homeHref)
     } catch (e: any) {
       setError(e?.message || '회원가입 중 오류가 발생했습니다.')
       await refresh()

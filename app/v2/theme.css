@@ -318,29 +318,40 @@ body:has(.v2-theme) {
   font-variant-numeric: tabular-nums;
 }
 
-/* 샘플 데이터 안내 띠 */
+/* 샘플 데이터 안내: 경고가 아니라 차분한 한 줄 안내 */
 .v2-theme .v2-sample-banner {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  border: 1px solid rgba(255, 176, 32, 0.55);
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
   border-radius: 4px;
-  background: rgba(255, 176, 32, 0.1);
-  color: #ffd27a;
-  font-size: 13px;
-  font-family: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, monospace;
+  background: var(--bg-soft);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
-.v2-theme .v2-sample-banner::before {
-  content: 'SAMPLE';
-  flex: none;
-  padding: 2px 6px;
-  border: 1px solid currentColor;
+.v2-theme .v2-sample-banner code {
+  padding: 1px 5px;
   border-radius: 3px;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.1em;
+  background: var(--panel-soft);
+  color: var(--text);
+  font-family: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.v2-theme .v2-sample-tag {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 700;
 }
 
 /* 사이드바: 터미널 패널 느낌 */
@@ -354,14 +365,14 @@ body:has(.v2-theme) {
 }
 
 .v2-theme .v2-brand-line {
+  text-decoration: none;
   display: flex;
   align-items: center;
   gap: 8px;
   font-family: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, monospace;
-  font-size: 12px;
+  font-size: 15px;
   font-weight: 800;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  letter-spacing: 0.02em;
   color: var(--primary);
 }
 
@@ -374,9 +385,10 @@ body:has(.v2-theme) {
 }
 
 .v2-theme .sidebar-caption {
-  font-family: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, monospace;
-  font-size: 11px;
-  letter-spacing: 0.12em;
+  margin-bottom: 8px;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  text-transform: none;
 }
 
 .v2-theme .sidebar-link {
@@ -398,16 +410,7 @@ body:has(.v2-theme) {
   border-color: transparent;
   border-left-color: var(--primary);
   color: var(--primary);
-}
-
-.v2-theme .v2-nav-index {
-  font-family: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, monospace;
-  font-size: 11px;
-  color: var(--muted);
-}
-
-.v2-theme .sidebar-link.active .v2-nav-index {
-  color: var(--primary);
+  font-weight: 700;
 }
 
 .v2-theme .v2-account-name {
@@ -1015,5 +1018,157 @@ body:has(.v2-theme) {
 
   .v2-theme .document-head {
     padding: 16px;
+  }
+}
+
+/* ---- 영상 등록(가장 자주 쓰는 화면): 한 줄 입력 흐름 ---- */
+.v2-theme .v2-register-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.v2-theme .v2-url-input {
+  min-height: 46px;
+  font-size: 15px;
+}
+
+.v2-theme .v2-reg-row {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.v2-theme .v2-reg-stock {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.v2-theme .v2-reg-submit {
+  min-width: 96px;
+  min-height: 42px;
+}
+
+.v2-theme .v2-seg {
+  display: inline-flex;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--bg-soft);
+}
+
+.v2-theme .v2-seg-btn {
+  min-height: 40px;
+  padding: 0 16px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.v2-theme .v2-seg-btn + .v2-seg-btn {
+  border-left: 1px solid var(--line-strong);
+}
+
+.v2-theme .v2-seg-btn.active {
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-weight: 700;
+}
+
+.v2-theme .v2-seg-btn:focus-visible,
+.v2-theme .v2-chip-btn:focus-visible,
+.v2-theme .v2-check-toggle:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+/* 안내 문구: 붉은 경고가 아니라 차분한 앰버 한 줄 */
+.v2-theme .v2-hint {
+  font-size: 13px;
+  line-height: 1.5;
+  color: #ffd27a;
+}
+
+.v2-theme .v2-hint.quiet {
+  color: var(--muted);
+}
+
+.v2-theme .v2-recent {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.v2-theme .v2-chip-btn {
+  min-height: 30px;
+  padding: 0 10px;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.v2-theme .v2-chip-btn:hover,
+.v2-theme .v2-chip-btn.on {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.v2-theme .v2-more summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.v2-theme .v2-more summary:hover {
+  color: var(--text);
+}
+
+.v2-theme .v2-more[open] summary {
+  margin-bottom: 8px;
+}
+
+.v2-theme .v2-status {
+  min-height: 20px;
+  font-size: 14px;
+}
+
+.v2-theme .v2-confirm {
+  color: #4ade80;
+  font-weight: 600;
+}
+
+.v2-theme .v2-confirm .muted {
+  font-weight: 400;
+}
+
+.v2-theme .v2-check-toggle {
+  flex: none;
+  min-height: 28px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.v2-theme .v2-check-all {
+  margin-top: 8px;
+  min-height: 30px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+@media (max-width: 720px) {
+  .v2-theme .v2-reg-row {
+    align-items: stretch;
+  }
+
+  .v2-theme .v2-reg-submit {
+    flex: 1 1 100%;
   }
 }

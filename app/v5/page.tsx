@@ -1,6 +1,10 @@
-import { redirect } from 'next/navigation'
+'use client'
 
-// 로그인 페이지가 역할에 맞는 홈(/v5/canvas 또는 /v5/register)으로 보낸다.
+import { useHomeRedirect } from '@/components/v5/use-home-redirect'
+
+// 로그인된 사람은 역할별 첫 화면(직원 = 영상 등록, 관리자 = 성장 실험)으로,
+// 아니면 로그인 화면으로 보낸다.
 export default function HomePage() {
-  redirect('/v5/login')
+  useHomeRedirect('/v5/login')
+  return <div className="small muted" style={{ padding: 24 }}>이동 중...</div>
 }

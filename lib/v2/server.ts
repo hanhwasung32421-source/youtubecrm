@@ -148,27 +148,36 @@ export async function loadVideos(
   return ((data || []) as any[]).map((row) => ({ ...row, content_type: row.content_type as ContentType }))
 }
 
+// .in() 에 아이디가 수백 개 들어가면 URL이 너무 길어지므로 나눠서 조회한다.
+function chunkIds(ids: string[], size = 100): string[][] {
+  const chunks: string[][] = []
+  for (let i = 0; i < ids.length; i += size) chunks.push(ids.slice(i, i + size))
+  return chunks
+}
+
 export async function loadChecklistMap(supabaseAdmin: SupabaseAdmin, videoIds: string[]): Promise<Map<string, SeoChecklist>> {
   const map = new Map<string, SeoChecklist>()
-  if (videoIds.length === 0) return map
-  const { data, error } = await supabaseAdmin.from(V2_TABLES.seoChecklists).select('*').in('video_id', videoIds)
-  if (error) throw error
-  for (const row of (data || []) as SeoChecklist[]) map.set(row.video_id, row)
+  for (const ids of chunkIds(videoIds)) {
+    const { data, error } = await supabaseAdmin.from(V2_TABLES.seoChecklists).select('*').in('video_id', ids)
+    if (error) throw error
+    for (const row of (data || []) as SeoChecklist[]) map.set(row.video_id, row)
+  }
   return map
 }
 
 // 영상별 최신 썸네일 리뷰(자가평가) — created_at 내림차순 첫 건
 export async function loadLatestReviewMap(supabaseAdmin: SupabaseAdmin, videoIds: string[]): Promise<Map<string, ThumbnailReview>> {
   const map = new Map<string, ThumbnailReview>()
-  if (videoIds.length === 0) return map
-  const { data, error } = await supabaseAdmin
-    .from(V2_TABLES.thumbnailReviews)
-    .select('id, video_id, rating, note, reviewed_by, created_at')
-    .in('video_id', videoIds)
-    .order('created_at', { ascending: false })
-  if (error) throw error
-  for (const row of (data || []) as ThumbnailReview[]) {
-    if (!map.has(row.video_id)) map.set(row.video_id, row)
+  for (const ids of chunkIds(videoIds)) {
+    const { data, error } = await supabaseAdmin
+      .from(V2_TABLES.thumbnailReviews)
+      .select('id, video_id, rating, note, reviewed_by, created_at')
+      .in('video_id', ids)
+      .order('created_at', { ascending: false })
+    if (error) throw error
+    for (const row of (data || []) as ThumbnailReview[]) {
+      if (!map.has(row.video_id)) map.set(row.video_id, row)
+    }
   }
   return map
 }

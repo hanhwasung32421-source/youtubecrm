@@ -1,6 +1,10 @@
 // V4 — 성장 · 성과 분석 CRM 메뉴 정의.
 // 메뉴 권한은 DB(role_menu_permissions)를 전혀 보지 않고 역할(role_type)만으로 결정한다.
 // super_admin/admin = 관리자, 그 외 = 직원(유튜버).
+//
+// 첫 화면(홈)은 역할마다 다르다.
+//  - 직원: 매일 하는 일인 "영상 등록"
+//  - 관리자: 무엇이 잘 되는지 보는 "성장 현황"
 
 export type MenuAudience = 'admin' | 'staff' | 'all'
 
@@ -13,65 +17,69 @@ export type MenuDefinition = {
   description: string
 }
 
-export const HOME_HREF = '/v4/dashboard'
+export const ADMIN_HOME_HREF = '/v4/dashboard'
+export const STAFF_HOME_HREF = '/v4/register'
+// 역할을 모를 때(예: 로그인 직후 확인 전)의 기본값. 역할을 알면 homeHrefForRole()을 쓴다.
+export const HOME_HREF = ADMIN_HOME_HREF
 export const LOGIN_HREF = '/v4/login'
 
+// 표시 순서 = 관리자 기준 순서. 직원은 getMenusForRole()에서 "영상 등록"을 맨 앞으로 옮긴다.
 export const MENU_DEFINITIONS: readonly MenuDefinition[] = [
   {
     key: 'growth_dashboard',
-    label: '성장 대시보드',
+    label: '성장 현황',
     href: '/v4/dashboard',
     audience: 'all',
-    group: '개요',
-    description: '기간별 조회수·업로드 흐름과 목표 달성률'
+    group: '한눈에 보기',
+    description: '조회수와 업로드가 어떻게 흘러가는지, 지금 무엇을 봐야 하는지'
   },
   {
     key: 'video_register',
     label: '영상 등록',
     href: '/v4/register',
     audience: 'all',
-    group: '개요',
-    description: '유튜브 URL과 종목명을 입력해 영상을 등록합니다'
+    group: '매일 하는 일',
+    description: '유튜브 주소와 종목명만 입력하면 영상이 등록됩니다'
   },
   {
     key: 'content_ranking',
-    label: '콘텐츠 성과 랭킹',
+    label: '영상 성과 순위',
     href: '/v4/ranking',
     audience: 'all',
-    group: '콘텐츠 분석',
-    description: '영상별 조회수·반응·조회 속도 순위'
+    group: '잘 되는 것 찾기',
+    description: '조회수·반응·확산 속도로 영상 순위 보기'
   },
   {
     key: 'stock_trends',
-    label: '종목 트렌드',
+    label: '종목별 반응',
     href: '/v4/stocks',
     audience: 'all',
-    group: '콘텐츠 분석',
-    description: '종목별 영상 수와 조회수 반응, 전기 대비 추세'
+    group: '잘 되는 것 찾기',
+    description: '어떤 종목 영상이 반응이 좋은지, 지난 기간보다 늘었는지'
   },
   {
     key: 'upload_timing',
-    label: '업로드 타이밍 분석',
+    label: '업로드 시간대',
     href: '/v4/timing',
     audience: 'all',
-    group: '콘텐츠 분석',
-    description: '요일 × 시간대 업로드 분포와 평균 조회수'
+    group: '잘 되는 것 찾기',
+    description: '어느 요일·시간에 올린 영상이 조회수가 높은지'
   },
   {
     key: 'staff_comparison',
-    label: '담당자 성과 비교',
+    label: '담당자 비교',
     href: '/v4/staff',
     audience: 'admin',
     group: '팀',
-    description: '담당자별 업로드·조회수·형식 비중 비교'
+    description: '담당자별 업로드 수·조회수·롱폼/숏폼 비중'
   },
   {
     key: 'experiments',
-    label: '실험 관리 (A/B 로그)',
+    label: '제목·썸네일 실험',
     href: '/v4/experiments',
     audience: 'all',
-    group: '실험',
-    description: '썸네일·제목 실험 기록과 학습 노트'
+    group: '개선 실험',
+    description: '제목·썸네일을 바꿔 본 기록과 배운 점'
   }
 ] as const
 
@@ -79,9 +87,18 @@ export function isAdminRole(roleType: string | null | undefined) {
   return roleType === 'super_admin' || roleType === 'admin'
 }
 
+// 로그인/가입 직후, 잘못된 접근 시 보낼 첫 화면.
+export function homeHrefForRole(roleType: string | null | undefined) {
+  return isAdminRole(roleType) ? ADMIN_HOME_HREF : STAFF_HOME_HREF
+}
+
 export function getMenusForRole(roleType: string | null | undefined) {
   const admin = isAdminRole(roleType)
-  return MENU_DEFINITIONS.filter((menu) => menu.audience === 'all' || (admin ? menu.audience === 'admin' : menu.audience === 'staff'))
+  const menus = MENU_DEFINITIONS.filter((menu) => menu.audience === 'all' || (admin ? menu.audience === 'admin' : menu.audience === 'staff'))
+  if (admin) return menus
+  // 직원은 매일 하는 일(영상 등록)이 맨 위.
+  const home = menus.filter((menu) => menu.href === STAFF_HOME_HREF)
+  return [...home, ...menus.filter((menu) => menu.href !== STAFF_HOME_HREF)]
 }
 
 export function findMenuByPath(pathname: string) {

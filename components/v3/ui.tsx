@@ -6,13 +6,13 @@ import { formatNumber, formatSignedPct } from '@/lib/v3/format'
 import { pctChange } from '@/lib/v3/engagement'
 
 // ── 샘플 데이터 배너 ────────────────────────────────────────────
+// 한 줄로 조용히: 지금 보는 숫자가 예시이고, 무엇을 하면 실제 데이터로 바뀌는지만 알려준다.
 export function SampleBanner({ show }: { show: boolean }) {
   if (!show) return null
   return (
     <div className="v3-sample-banner" role="status">
-      <span aria-hidden>🧪</span>
       <span>
-        샘플 데이터 표시 중 — <code>{V3_SQL_FILE}</code> 실행 후 실데이터로 전환됩니다
+        예시 데이터를 보고 있어요. 실제 데이터로 바꾸려면 <code>{V3_SQL_FILE}</code> 파일을 실행하세요.
       </span>
     </div>
   )
@@ -201,9 +201,15 @@ export function StockTagInput({
   )
 }
 
-// ── 접기/펼치기 안내 텍스트(빈 상태) ──────────────────────────
-export function EmptyState({ children }: { children: React.ReactNode }) {
-  return <div className="empty-state">{children}</div>
+// ── 빈 상태: 무엇을 보는 곳인지 + 무엇을 하면 되는지 + (선택) 버튼 ─────────
+export function EmptyState({ children, title, action }: { children?: React.ReactNode; title?: string; action?: React.ReactNode }) {
+  return (
+    <div className="empty-state">
+      {title ? <div style={{ fontWeight: 600, color: 'var(--text)', marginBottom: 4 }}>{title}</div> : null}
+      {children}
+      {action ? <div style={{ marginTop: 12 }}>{action}</div> : null}
+    </div>
+  )
 }
 
 export function useToggle(initial = false): [boolean, () => void] {

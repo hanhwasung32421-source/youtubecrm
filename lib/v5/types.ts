@@ -74,10 +74,10 @@ export type GrowthExperiment = {
 export const SCORE_TIERS = ['excellent', 'good', 'fair', 'poor'] as const
 export type ScoreTier = (typeof SCORE_TIERS)[number]
 export const SCORE_TIER_LABEL: Record<ScoreTier, string> = {
-  excellent: '우수',
-  good: '양호',
+  excellent: '매우 좋음',
+  good: '좋음',
   fair: '보통',
-  poor: '저조'
+  poor: '아쉬움'
 }
 
 export type ScoreboardRow = {

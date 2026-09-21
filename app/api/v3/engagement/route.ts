@@ -76,8 +76,10 @@ export async function GET(request: Request) {
     const since14 = isoDaysAgo(14)
     const thisWeek = videos.filter((v) => v.created_at >= since7)
     const lastWeek = videos.filter((v) => v.created_at >= since14 && v.created_at < since7)
-    const thisWeekAvg = average(thisWeek.map((v) => engagementRatePct(v)).filter((v): v is number => v !== null))
-    const lastWeekAvg = average(lastWeek.map((v) => engagementRatePct(v)).filter((v): v is number => v !== null))
+    const thisWeekRates = thisWeek.map((v) => engagementRatePct(v)).filter((v): v is number => v !== null)
+    const lastWeekRates = lastWeek.map((v) => engagementRatePct(v)).filter((v): v is number => v !== null)
+    const thisWeekAvg = average(thisWeekRates)
+    const lastWeekAvg = average(lastWeekRates)
     const weekChange = lastWeek.length > 0 ? pctChange(thisWeekAvg, lastWeekAvg) : null
 
     const summaryParts = [
@@ -93,6 +95,8 @@ export async function GET(request: Request) {
       sample: false,
       summary: summaryParts.join('. ') + '.',
       videoCount: withViews.length,
+      // 이번 주/지난 주에 "조회수가 있어 참여율을 계산할 수 있는" 영상 수 (빈 주 안내용)
+      weekCounts: { thisWeek: thisWeekRates.length, lastWeek: lastWeekRates.length },
       kpis: {
         avgEngagementPct: { current: avgEngagementPct },
         avgCommentRatePct: { current: avgCommentRatePct },

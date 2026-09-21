@@ -80,6 +80,26 @@ export function isoWeekLabel(date: Date = new Date()) {
   return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`
 }
 
+// "2026-W38" → "9월 14일 ~ 9월 20일" (월~일). 형식이 다르면 라벨 그대로 돌려준다.
+export function isoWeekRangeText(label: string) {
+  const match = /^(\d{4})-W(\d{2})$/.exec(label)
+  if (!match) return label
+  const year = Number(match[1])
+  const week = Number(match[2])
+  // 1월 4일은 항상 1주차. 그 주의 월요일을 구한 뒤 (week-1)주를 더한다.
+  const jan4 = new Date(Date.UTC(year, 0, 4))
+  const jan4Day = jan4.getUTCDay() || 7
+  const monday = new Date(jan4.getTime() + (1 - jan4Day) * 86_400_000 + (week - 1) * 7 * 86_400_000)
+  const sunday = new Date(monday.getTime() + 6 * 86_400_000)
+  const fmt = (d: Date) => `${d.getUTCMonth() + 1}월 ${d.getUTCDate()}일`
+  return `${fmt(monday)} ~ ${fmt(sunday)}`
+}
+
+// 시작일로부터 오늘까지 며칠째인지(시작일 당일 = 1일째).
+export function daysSince(ymd: string) {
+  return Math.max(diffDays(ymd, todayYmd()) + 1, 1)
+}
+
 // datetime-local input 값(YYYY-MM-DDTHH:mm)으로 변환
 export function toDateTimeLocal(value: string | null | undefined) {
   const date = value ? new Date(value) : new Date()

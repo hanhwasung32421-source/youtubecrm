@@ -9,13 +9,21 @@ import { loadUserMap, optionalText, optionalYmd, ymdSchema, type Session } from 
 export const EXPERIMENT_SELECT =
   'id, dimensions, video_ids, hypothesis, metric_definition, started_on, ended_on, status, effect_size, next_action, created_by, created_at, updated_at'
 
-export type ExperimentRow = Omit<GrowthExperiment, 'author_name' | 'videos'>
+export const DEFAULT_METRIC_DEFINITION = '조회수 변화'
+
+export type ExperimentRow =Omit<GrowthExperiment, 'author_name' | 'videos'>
 
 export const experimentInputSchema = z.object({
   dimensions: z.array(z.enum(EXPERIMENT_DIMENSIONS)).min(1, '실험 유형을 1개 이상 선택해 주세요.'),
   videoIds: z.array(z.string().uuid()).min(1, '대상 영상을 1개 이상 선택해 주세요.'),
   hypothesis: z.string().trim().min(1, '가설을 입력해 주세요.').max(2000),
-  metricDefinition: z.string().trim().min(1, '측정 지표를 입력해 주세요.').max(500),
+  // 선택 항목: 비워 두면 기본 문구로 저장한다(이전 화면은 항상 값을 보냈으므로 호환됨).
+  metricDefinition: z
+    .string()
+    .trim()
+    .max(500)
+    .optional()
+    .transform((v) => (v && v.length > 0 ? v : DEFAULT_METRIC_DEFINITION)),
   startedOn: ymdSchema,
   endedOn: optionalYmd,
   status: z.enum(EXPERIMENT_STATUSES).optional().default('running'),

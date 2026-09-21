@@ -5,7 +5,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createSupabaseBrowserClient } from '@/lib/supabase/browser-client'
 import { fetchMe } from '@/lib/session/me-client'
-import { HOME_HREF } from '@/lib/v4/menu'
+import { homeHrefForRole } from '@/lib/v4/menu'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -15,6 +15,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false)
 
   const onSubmit = async () => {
+    if (loading) return
     setError('')
     setLoading(true)
 
@@ -53,9 +54,9 @@ export default function LoginPage() {
         headers: { Authorization: `Bearer ${data.session.access_token}` }
       })
 
-      // 역할과 무관하게 성장 대시보드가 홈. 관리자/직원 범위는 대시보드가 알아서 나눈다.
-      await fetchMe(data.session.access_token)
-      router.push(HOME_HREF)
+      // 직원은 매일 하는 영상 등록, 관리자는 성장 현황이 첫 화면.
+      const me = await fetchMe(data.session.access_token)
+      router.push(homeHrefForRole(me.roleType))
     } catch (e: any) {
       setError(e?.message || '로그인 중 오류가 발생했습니다.')
     } finally {
@@ -69,11 +70,15 @@ export default function LoginPage() {
         <div className="panel form-stack" style={{ width: '100%', maxWidth: 520 }}>
           <img className="auth-logo" src="/logo-ant.png" alt="" width={56} height={56} />
           <h1 className="auth-title">여왕개미미디어 CRM</h1>
-          <p className="auth-subtitle">성장 · 성과 분석 CRM (V4)</p>
+          <p className="auth-subtitle">영상을 등록하고, 무엇이 잘 되는지 확인하는 공간입니다.</p>
           <div className="field">
-            <label className="label">아이디</label>
+            <label className="label" htmlFor="v4-login-id">아이디</label>
             <input
+              id="v4-login-id"
               className="input"
+              autoFocus
+              autoComplete="username"
+              placeholder="아이디 또는 이메일"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               onKeyDown={(e) => {
@@ -82,9 +87,11 @@ export default function LoginPage() {
             />
           </div>
           <div className="field">
-            <label className="label">비밀번호</label>
+            <label className="label" htmlFor="v4-login-pw">비밀번호</label>
             <input
+              id="v4-login-pw"
               className="input"
+              autoComplete="current-password"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}

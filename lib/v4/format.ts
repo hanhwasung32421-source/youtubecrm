@@ -80,3 +80,34 @@ export function contentTypeLabel(contentType: string | null | undefined) {
   if (contentType === 'longform') return '롱폼'
   return '기타'
 }
+
+// ---------------------------------------------------------------- 분석 화면용 쉬운 표기 (Round 1 추가)
+
+// 1,234 / 1.2만 / 123만 / 1.2억 — 큰 숫자를 읽기 쉽게 줄인다. 정확한 값은 호출부에서 title 등으로 보조.
+export function fmtShort(value: number | null | undefined) {
+  const n = Number(value || 0)
+  if (!Number.isFinite(n)) return '0'
+  const abs = Math.abs(n)
+  const trim = (x: number, digits: number) => x.toFixed(digits).replace(/\.0+$/, '')
+  if (abs >= 100000000) return `${trim(n / 100000000, 1)}억`
+  if (abs >= 1000000) return `${Math.round(n / 10000).toLocaleString('ko-KR')}만`
+  if (abs >= 10000) return `${trim(n / 10000, 1)}만`
+  return Math.round(n).toLocaleString('ko-KR')
+}
+
+// 0~23시 → 오전 7시 / 낮 12시 / 오후 7시 / 자정
+export function fmtHourKo(hour: number) {
+  const h = ((Math.round(hour) % 24) + 24) % 24
+  if (h === 0) return '자정'
+  if (h === 12) return '낮 12시'
+  return h < 12 ? `오전 ${h}시` : `오후 ${h - 12}시`
+}
+
+// 19 → "오후 7시~8시", 11 → "오전 11시~낮 12시", 23 → "오후 11시~자정"
+export function fmtHourRangeKo(hour: number) {
+  const start = fmtHourKo(hour)
+  const end = fmtHourKo(hour + 1)
+  const prefix = (s: string) => (s.startsWith('오전') ? '오전' : s.startsWith('오후') ? '오후' : '')
+  if (prefix(start) && prefix(start) === prefix(end)) return `${start}~${end.replace(`${prefix(end)} `, '')}`
+  return `${start}~${end}`
+}

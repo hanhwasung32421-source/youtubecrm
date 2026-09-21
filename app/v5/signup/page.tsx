@@ -161,13 +161,13 @@ export default function SignupPage() {
           <img className="auth-logo" src="/logo-ant.png" alt="" width={56} height={56} />
           <div className="panel-title">회원가입</div>
           <p className="panel-subtitle">
-            이메일 중복확인을 통과한 뒤 가입 정보를 입력하면 가입이 완료됩니다.
+            이메일을 먼저 확인한 뒤, 아이디·이름 등을 입력하면 바로 가입되고 로그인됩니다.
           </p>
         </div>
 
         <div className="panel form-stack">
           <div className="field">
-            <label className="label">이메일</label>
+            <label className="label">이메일 (먼저 중복확인을 눌러 주세요)</label>
             <div className="row">
               <input
                 ref={emailRef}
@@ -190,7 +190,7 @@ export default function SignupPage() {
           {emailChecked ? (
             <>
               <div className="field">
-                <label className="label">아이디</label>
+                <label className="label">아이디 (로그인할 때 사용)</label>
                 <input className="input" value={loginId} onChange={(e) => setLoginId(e.target.value)} />
               </div>
               <div className="field">
@@ -202,7 +202,7 @@ export default function SignupPage() {
                 <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
               </div>
               <div className="field">
-                <label className="label">생년월일</label>
+                <label className="label">생년월일 (숫자 8자리)</label>
                 <input
                   ref={birthRef}
                   className="input"
@@ -252,7 +252,7 @@ export default function SignupPage() {
               </div>
               <div className="panel soft">
                 <div className="row-between">
-                  <span className="label">자동가입방지</span>
+                  <span className="label">자동가입방지 · 왼쪽 숫자를 오른쪽에 입력</span>
                   <button className="button secondary" onClick={refresh}>
                     새로 만들기
                   </button>
@@ -276,7 +276,7 @@ export default function SignupPage() {
             </>
           ) : null}
 
-          {error ? <div className="message-error small">{error}</div> : null}
+          {error ? <div className="message-error small" role="alert">{error}</div> : null}
           {message ? <div className="message-success small">{message}</div> : null}
           <div className="small muted">
             이미 계정이 있나요? <Link className="link" href="/v5/login">로그인</Link>

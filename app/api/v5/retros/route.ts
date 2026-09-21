@@ -32,15 +32,17 @@ export async function GET(request: Request) {
     const session = await getSession(request)
     if (!session.isAdmin) return forbidden()
     const { supabaseAdmin } = session
+    // 서버 기준 "이번 주" 라벨 — POST(중복 방지)와 같은 기준이라 화면이 "이미 작성함"을 정확히 판단할 수 있다.
+    const thisWeekLabel = isoWeekLabel()
 
     const { data, error } = await supabaseAdmin.from(V5_TABLES.weeklyRetros).select(RETRO_SELECT).order('week_label', { ascending: false })
     if (error) {
-      if (isMissingTableError(error)) return NextResponse.json({ sample: true, items: SAMPLE_RETROS })
+      if (isMissingTableError(error)) return NextResponse.json({ sample: true, items: SAMPLE_RETROS, thisWeekLabel })
       throw error
     }
 
     const items = await mapRetros(supabaseAdmin, (data || []) as RetroRow[])
-    return NextResponse.json({ sample: false, items })
+    return NextResponse.json({ sample: false, items, thisWeekLabel })
   } catch (e) {
     return handleRouteError(e, '성장 회고 목록 조회 실패')
   }

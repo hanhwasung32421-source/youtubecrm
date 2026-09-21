@@ -9,7 +9,7 @@ export async function GET(request: Request) {
   try {
     const { profile, supabaseAdmin } = await requireV2Admin(request)
 
-    const videos = await loadVideos(supabaseAdmin, { userId: profile.id, isAdmin: true }, 200)
+    const videos = await loadVideos(supabaseAdmin, { userId: profile.id, isAdmin: true }, 500)
     const videoIds = videos.map((v) => v.id)
 
     let checklistMap
@@ -35,10 +35,8 @@ export async function GET(request: Request) {
     const top = recentItems[0] || items[0]
 
     const insight = top
-      ? `이번 주 발견성 점수 1위는 ${top.ownerName}님의 「${top.video.title || '(제목 없음)'}」 — ${
-          top.video.title && top.video.title.includes(top.video.stock_name) ? '제목에 종목명 포함 + ' : ''
-        }체크리스트 ${top.checklistDone}/4 완료 (점수 ${top.score}점)`
-      : '표시할 영상이 없습니다. 영상을 등록하면 발견성 점수가 계산됩니다.'
+      ? `이번 주 반응이 가장 좋은 영상은 ${top.ownerName}님의 「${top.video.title || '(제목 없음)'}」 — 하루 평균 ${Math.round(top.viewsPerDay).toLocaleString('ko-KR')}회 조회, 반응 점수 ${top.score}점입니다.`
+      : '표시할 영상이 없습니다. 영상을 등록하면 반응 점수가 계산됩니다.'
 
     const payload: ReportPayload = { items, insight }
     return NextResponse.json(payload)

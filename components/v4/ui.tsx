@@ -1,7 +1,7 @@
 'use client'
 
 import { PERIOD_OPTIONS, type PeriodDays } from '@/lib/v4/analytics'
-import { SAMPLE_BANNER_MESSAGE } from '@/lib/v4/tables'
+import { V4_SQL_FILE } from '@/lib/v4/tables'
 import { fmtNumber } from '@/lib/v4/format'
 
 export function PeriodToggle({ value, onChange, disabled }: { value: PeriodDays; onChange: (next: PeriodDays) => void; disabled?: boolean }) {
@@ -23,12 +23,15 @@ export function PeriodToggle({ value, onChange, disabled }: { value: PeriodDays;
   )
 }
 
-export function SampleBanner({ show }: { show: boolean }) {
+// 샘플 데이터 안내: 한 줄, 차분하게. what = 샘플로 채워진 부분 (예: '이번 달 목표').
+export function SampleBanner({ show, what }: { show: boolean; what?: string }) {
   if (!show) return null
   return (
     <div className="v4-banner" role="status">
       <span className="v4-banner-dot" />
-      {SAMPLE_BANNER_MESSAGE}
+      <span>
+        샘플 데이터 표시 중{what ? `(${what})` : ''} · <code>{V4_SQL_FILE}</code> 실행 후 실제 데이터로 바뀝니다
+      </span>
     </div>
   )
 }
@@ -66,8 +69,15 @@ export function FormatPill({ contentType }: { contentType: string }) {
   return <span className={`v4-format ${short ? 'short' : 'long'}`}>{short ? '숏폼' : '롱폼'}</span>
 }
 
-export function EmptyState({ children }: { children: React.ReactNode }) {
-  return <div className="empty-state">{children}</div>
+// 빈 화면 안내: (선택) 제목 + 설명 + 다음에 할 일 버튼. 기존처럼 children만 넘겨도 된다.
+export function EmptyState({ title, children, action }: { title?: string; children?: React.ReactNode; action?: React.ReactNode }) {
+  return (
+    <div className="empty-state v4-empty">
+      {title ? <div className="v4-empty-title">{title}</div> : null}
+      {children ? <div className="v4-empty-body">{children}</div> : null}
+      {action ? <div className="v4-empty-action">{action}</div> : null}
+    </div>
+  )
 }
 
 export function StatLine({ label, value }: { label: string; value: number | string }) {

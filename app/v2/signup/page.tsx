@@ -160,7 +160,7 @@ export default function SignupPage() {
           <img className="auth-logo" src="/logo-ant.png" alt="" width={56} height={56} />
           <div className="panel-title">회원가입</div>
           <p className="panel-subtitle">
-            이메일 중복확인을 통과한 뒤 가입 정보를 입력하면 가입이 완료됩니다.
+            먼저 이메일 중복확인을 하면 나머지 정보를 입력할 수 있어요.
           </p>
         </div>
 
@@ -178,6 +178,13 @@ export default function SignupPage() {
                     setEmailChecked(false)
                   }
                 }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.nativeEvent.isComposing && !emailChecked) {
+                    e.preventDefault()
+                    void checkEmailDuplicate()
+                  }
+                }}
+                autoFocus
               />
               <button className="button secondary nowrap" type="button" disabled={loading} onClick={checkEmailDuplicate}>
                 {loading ? '확인 중...' : '중복확인'}

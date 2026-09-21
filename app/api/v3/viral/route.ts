@@ -72,6 +72,8 @@ export async function GET(request: Request) {
       insufficientData,
       teamMedianVelocity: Math.round(teamMedian),
       teamSampleSize: teamVideos.length,
+      minSampleSize: MIN_TEAM_SAMPLE,
+      thresholdMultiplier: THRESHOLD_MULTIPLIER,
       acksAvailable,
       summary: insufficientData
         ? '최근 30일간 등록된 영상이 충분하지 않아 바이럴 신호를 계산할 수 없습니다.'

@@ -17,7 +17,7 @@ export async function GET(request: Request) {
   try {
     const { profile, supabaseAdmin, isAdmin } = await authedContext(request)
 
-    const videos = await loadVideos(supabaseAdmin, { userId: profile.id, isAdmin }, 200)
+    const videos = await loadVideos(supabaseAdmin, { userId: profile.id, isAdmin }, 300)
     const videoIds = videos.map((v) => v.id)
 
     let checklistMap
