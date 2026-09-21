@@ -1,4 +1,3 @@
-import { NextResponse } from 'next/server'
 import { getKstYmd } from '@/lib/attendance/time'
 import { firstIssueMessage } from '@/lib/v4/errors'
 import {
@@ -34,16 +33,16 @@ export async function GET(request: Request) {
 
     if (error) {
       if (isMissingTableError(error)) {
-        return NextResponse.json({ sample: true, items: getSampleExperiments(), videoOptions, scope: ctx.isAdmin ? 'admin' : 'staff', truncated: false })
+        return noStoreJson({ sample: true, items: getSampleExperiments(), videoOptions, scope: ctx.isAdmin ? 'admin' : 'staff', truncated: false })
       }
       throw dbError(error)
     }
 
     const rows = (data || []) as ExperimentRow[]
     const items = await mapExperiments(ctx, rows)
-    return NextResponse.json({ sample: false, items, videoOptions, scope: ctx.isAdmin ? 'admin' : 'staff', truncated: rows.length >= LIST_LIMIT })
+    return noStoreJson({ sample: false, items, videoOptions, scope: ctx.isAdmin ? 'admin' : 'staff', truncated: rows.length >= LIST_LIMIT })
   } catch (e) {
-    return v4ErrorResponse(e, '실험 목록 조회 실패')
+    return v4ErrorResponse(e, '실험 목록을 불러오지 못했어요')
   }
 }
 
@@ -94,6 +93,6 @@ export async function POST(request: Request) {
     const [item] = await mapExperiments(ctx, [data as ExperimentRow])
     return noStoreJson({ item })
   } catch (e) {
-    return v4ErrorResponse(e, '실험 등록 실패')
+    return v4ErrorResponse(e, '실험을 등록하지 못했어요')
   }
 }

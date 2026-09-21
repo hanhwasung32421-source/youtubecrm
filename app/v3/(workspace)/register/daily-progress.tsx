@@ -1,12 +1,12 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { parseGoal, progressCopy, progressPercent } from './register-logic'
 
 // "오늘 N / 목표" 진행 막대 + 오늘 등록한 영상을 종목별로 묶은 작은 목록.
 // 목표 개수는 이 브라우저에만 기억한다(기본 12개). 재촉하지 않는 차분한 문구만 쓴다.
 
-export function DailyProgress({
+export const DailyProgress = memo(function DailyProgress({
   count,
   goal,
   groups,
@@ -116,4 +116,4 @@ export function DailyProgress({
       ) : null}
     </div>
   )
-}
+})

@@ -11,9 +11,6 @@ import { SCORE_TIER_LABEL, type ScoreboardRow, type WeeklyRetro } from '@/lib/v5
 
 export type CsvValue = string | number | boolean | null | undefined
 
-export const CSV_BOM = '﻿'
-export const CSV_MIME = 'text/csv;charset=utf-8'
-
 // 수식으로 읽힐 수 있는 첫 글자: = + - @ , 탭, 줄바꿈(CR)
 const FORMULA_START = /^[=+\-@\t\r]/
 // 큰따옴표로 감싸야 하는 글자
@@ -32,7 +29,7 @@ export function csvCell(value: CsvValue): string {
   return text
 }
 
-// 머리글 + 줄들 → CSV 글자(줄 끝은 CRLF, BOM 은 붙이지 않는다: 저장할 때 CSV_BOM 을 앞에 둔다).
+// 머리글 + 줄들 → CSV 글자(줄 끝은 CRLF, BOM 은 붙이지 않는다: 저장할 때(share.ts) 앞에 BOM 을 붙인다).
 export function buildCsv(headers: readonly CsvValue[], rows: ReadonlyArray<readonly CsvValue[]>): string {
   const lines = [headers, ...rows].map((r) => r.map(csvCell).join(','))
   return `${lines.join('\r\n')}\r\n`
@@ -50,7 +47,7 @@ export function csvFileName(prefix: string, ymd: string): string {
 export const SCOREBOARD_CSV_HEADERS = ['순위', '영상 제목', '종목', '담당자', '조회수', '올린 날', '반응 점수(0~100)', '구간', '조회 속도(45점 만점)', '참여율(35점 만점)', '초기 성장(20점 만점)', '가장 약한 요소', '유튜브 주소'] as const
 
 // rankOf: 점수 순위(1등부터). 정렬을 바꿔도 순위는 점수 기준이라 따로 받는다.
-export function scoreboardCsv(rows: readonly ScoreboardRow[], rankOf: (row: ScoreboardRow) => number): string {
+export function scoreboardCsv<T extends ScoreboardRow>(rows: readonly T[], rankOf: (row: T) => number): string {
   const body = rows.map((row) => {
     const parts = scoreParts(row)
     const value = (key: string) => parts.find((p) => p.key === key)?.value ?? ''

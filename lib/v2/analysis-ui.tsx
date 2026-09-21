@@ -5,7 +5,6 @@
 import Link from 'next/link'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { formatKstStamp, formatRelative } from './dates'
-import { V2_SAMPLE_BANNER_TEXT } from './tables'
 import './analysis.css'
 
 export type Tone = 'good' | 'warn' | 'bad' | 'neutral'
@@ -97,22 +96,6 @@ export function MoreButton({ shown, total, onMore, step = 20 }: { shown: number;
       <span className="small muted">
         {shown} / {total.toLocaleString('ko-KR')}
       </span>
-    </div>
-  )
-}
-
-// 첫 조회 중일 때 조용히 보여줄 한 줄
-export function LoadingLine() {
-  return <div className="v2a-loading">불러오는 중…</div>
-}
-
-// 샘플 데이터 안내를 한 줄로 (기존 SampleBanner와 같은 문구 사용)
-export function SampleNote({ show }: { show?: boolean }) {
-  if (!show) return null
-  return (
-    <div className="v2a-sample" role="status">
-      <b>샘플</b>
-      <span>{V2_SAMPLE_BANNER_TEXT}</span>
     </div>
   )
 }

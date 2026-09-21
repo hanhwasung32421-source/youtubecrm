@@ -60,11 +60,12 @@ export default function SignupPage() {
     clearFieldError('antiBotCode')
     try {
       const res = await fetch('/api/auth/challenge')
-      const data = (await res.json()) as { code: string }
+      const data = (await res.json()) as { code?: string }
+      if (!res.ok || !data.code) throw new Error('challenge')
       setChallengeCode(data.code)
     } catch {
       setChallengeCode('----')
-      setError('자동가입방지 숫자를 불러오지 못했어요. "새로 만들기"를 눌러 주세요.')
+      setError('자동가입방지 숫자를 불러오지 못했어요. “새로 만들기”를 눌러 주세요.')
     }
   }
 
@@ -103,14 +104,14 @@ export default function SignupPage() {
       const data = await res.json().catch(() => ({}))
 
       if (!res.ok) {
-        setFieldError('email', data?.error || '이메일 중복확인에 실패했어요. 잠시 후 다시 시도해 주세요.')
+        setFieldError('email', /[가-힣]/.test(data?.error || '') ? data.error : '이메일 중복확인에 실패했어요. 잠시 후 다시 시도해 주세요.')
         return
       }
 
       if (data.exists) {
         setEmailChecked(false)
         setEmailCheckedValue('')
-        setFieldError('email', '이미 가입된 이메일이에요. 아래 "로그인하기"를 이용해 주세요.')
+        setFieldError('email', '이미 가입된 이메일이에요. 아래 “로그인하기”를 눌러 주세요.')
         return
       }
 
@@ -187,7 +188,7 @@ export default function SignupPage() {
 
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
-        showServerError(data?.error || '회원가입에 실패했어요. 입력한 내용을 확인해 주세요.')
+        showServerError(/[가-힣]/.test(data?.error || '') ? data.error : '가입하지 못했어요. 입력한 내용을 확인해 주세요.')
         await refresh()
         return
       }
@@ -202,7 +203,7 @@ export default function SignupPage() {
       })
 
       if (signInError || !signInData.session?.access_token) {
-        setMessage('회원가입이 완료되었습니다. 로그인 화면으로 이동해 주세요.')
+        setMessage('가입이 끝났어요. 로그인 화면으로 이동할게요.')
         leaving = true
         setTimeout(() => {
           router.push('/v3/login')
@@ -220,11 +221,11 @@ export default function SignupPage() {
       try {
         me = await fetchMe(signInData.session.access_token)
       } catch {
-        setMessage('회원가입이 완료되었습니다. 자동 로그인 후 화면 이동에 실패했습니다.')
+        setMessage('가입이 끝났어요. 자동으로 로그인했지만 화면을 옮기지 못했어요. 아래 “로그인하기”를 눌러 주세요.')
         return
       }
 
-      setMessage('회원가입이 완료되어 자동 로그인됩니다.')
+      setMessage('가입이 끝났어요. 자동으로 로그인하고 있어요.')
       leaving = true
       router.push(getHomeHref(me.roleType))
     } catch {
@@ -244,7 +245,7 @@ export default function SignupPage() {
         <div className="panel soft">
           <img className="auth-logo" src="/logo-ant.png" alt="" width={56} height={56} />
           <div className="panel-title">회원가입</div>
-          <p className="panel-subtitle">이메일을 먼저 확인한 뒤 정보를 입력하면 가입 후 바로 로그인됩니다.</p>
+          <p className="panel-subtitle">이메일을 먼저 확인한 뒤 정보를 입력하면, 가입하는 즉시 로그인돼요.</p>
         </div>
 
         <form className="panel form-stack" onSubmit={onSubmit} noValidate>

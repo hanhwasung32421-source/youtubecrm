@@ -1,9 +1,10 @@
 'use client'
 
+import Link from 'next/link'
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { PageHeader } from '@/components/v2/app-shell'
-import { SampleBanner } from '@/components/v2/sample-banner'
 import { BulkRegister } from '@/components/v2/bulk-register'
+import { SampleBanner } from '@/components/v2/sample-banner'
 import { MyVideoRow, type RowMode } from '@/components/v2/my-video-row'
 import { RegisterStatus, type RegisterErrorView } from '@/components/v2/register-status'
 import { TodayProgress, TodayStocks } from '@/components/v2/register-progress'
@@ -16,9 +17,11 @@ import {
   parseDraft,
   registeredWhenLabel,
   serializeDraft,
+  undoKindOf,
   undoReducer,
   unionVideos,
   upsertVideo,
+  type EntryOrigin,
   type LastEntry
 } from '@/components/v2/register-flow'
 import {
@@ -27,6 +30,7 @@ import {
   extractYoutubeUrls,
   friendlyEditError,
   hasYoutubeUrl,
+  isImeKey,
   normalizeYoutubeUrl,
   urlProblemText,
   youtubeVideoId
@@ -36,7 +40,7 @@ import { VideoListSkeleton } from '@/components/v2/skeletons'
 import { useV2Me } from '@/components/v2/session-context'
 import { Toast, useToast } from '@/components/toast'
 import { authedFetchJson, authedPostJson, type AuthedJsonResult } from '@/lib/session/authed-fetch'
-import { NETWORK_ERROR, authedDeleteJson, authedPatchJson } from '@/lib/v2/client'
+import { NETWORK_ERROR, authedDeleteJson, authedPatchJson, v2Get } from '@/lib/v2/client'
 import { kstYmd } from '@/lib/v2/dates'
 import {
   CONTENT_TYPES,
@@ -147,6 +151,9 @@ function canReadClipboard() {
 type UrlMsg = { text: string; tone: 'error' | 'quiet' } | null
 type SubmitOpts = { url?: string; type?: ContentType; force?: boolean }
 type FetchPage = { ok: true; items: MineVideoItem[] } | { ok: false; error: string }
+// 이미 등록돼 있는 것으로 확인된 영상(내 목록에서 찾았거나, 등록 직전 확인에서 내 것으로 나온 것)
+type KnownVideo = { id: string; title: string | null; stock_name: string; content_type: ContentType; created_at: string }
+type LookupPayload = { exists?: boolean; mine?: boolean; serverNow?: string; item?: { id: string; stock_name: string; content_type: ContentType; created_at: string } }
 
 export default function RegisterPage() {
   const me = useV2Me()
@@ -188,6 +195,8 @@ export default function RegisterPage() {
   const stockRef = useRef<HTMLInputElement | null>(null)
   const submitRef = useRef<HTMLButtonElement | null>(null)
   const savingRef = useRef(false)
+  const undoingRef = useRef(false)
+  const deepDone = useRef(false)
   const loadSeq = useRef(0)
   const checklistLoaded = useRef<Set<string>>(new Set())
 
@@ -196,6 +205,8 @@ export default function RegisterPage() {
   const todayVideos = useMemo(() => videos.filter((v) => kstYmd(new Date(v.created_at)) === today), [videos, today])
   const earlierVideos = useMemo(() => videos.filter((v) => kstYmd(new Date(v.created_at)) !== today), [videos, today])
   const todayCount = todayVideos.length
+  // 관리자는 팀 전체 영상 중 최근 것만(최대 DEEP_PAGES × PAGE_SIZE 개) 받아 오므로, 전부 오늘 것이면 실제 개수는 이보다 많을 수 있다.
+  const teamCapped = me.isAdmin && earlierVideos.length === 0 && videos.length >= PAGE_SIZE * DEEP_PAGES
   const todayGroups = useMemo(() => groupTodayByStock(videos, (iso) => kstYmd(new Date(iso)) === today), [videos, today])
 
   // 영상 ID → 이미 등록된 영상(중복 확인용)
@@ -259,7 +270,9 @@ export default function RegisterPage() {
   }
 
   // 첫 쪽(가장 새로운 20개)을 먼저 그리고, deep 이면 뒤에서 더 오래된 쪽을 이어서 받아 중복 확인 범위를 넓힌다.
-  const load = async (deep = false) => {
+  const load = async (wantDeep = false) => {
+    // 처음 화면의 깊은 불러오기가 다른 불러오기에 밀려 끊겼다면, 다음 불러오기에서 이어서 마저 받는다.
+    const deep = wantDeep || !deepDone.current
     // 등록 직후·여러 개 등록이 끝난 직후처럼 요청이 겹치면 마지막 요청의 결과만 쓴다.
     const seq = ++loadSeq.current
     const first = await fetchPage(1)
@@ -282,6 +295,7 @@ export default function RegisterPage() {
       setVideos((prev) => unionVideos(prev, next.items))
       void loadChecklists(next.items.map((v) => v.id))
     }
+    deepDone.current = true
   }
 
   useEffect(() => {
@@ -461,7 +475,7 @@ export default function RegisterPage() {
   }
 
   const onUrlKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.nativeEvent.isComposing) return
+    if (isImeKey(e)) return
     if (e.key === 'Escape' && url) {
       // 내용이 있을 때만 지운다(열려 있는 수정 창을 닫는 Esc와 겹치지 않게 여기서 멈춘다).
       e.preventDefault()
@@ -486,7 +500,7 @@ export default function RegisterPage() {
   }
 
   const onStockKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.nativeEvent.isComposing) return
+    if (isImeKey(e)) return
     if (e.key === 'Escape') {
       // 종목을 한 번에 비우고 주소 칸으로(수정 창을 닫는 Esc와 겹치지 않게 여기서 멈춘다)
       e.preventDefault()
@@ -530,6 +544,15 @@ export default function RegisterPage() {
     writeDraft(serializeDraft({ url, stock, note, type: contentType }, Date.now()))
   }
 
+  // "이미 같은 종목으로 등록돼 있어요": 아무것도 보내지 않고 다음 영상으로
+  const finishSame = () => {
+    setUrl('')
+    setUrlMsg(null)
+    setTypeHint('')
+    setInfo('이미 같은 종목으로 등록돼 있어요. 다음 영상 주소를 붙여 넣어 주세요.')
+    focusUrl()
+  }
+
   const submit = async (e?: React.FormEvent | null, opts: SubmitOpts = {}) => {
     e?.preventDefault()
     // Enter와 버튼 클릭이 거의 동시에 들어와도 한 번만 보낸다(state는 다음 그리기 때 바뀌므로 ref로 막는다).
@@ -550,39 +573,78 @@ export default function RegisterPage() {
       return
     }
 
-    const watchUrl = `https://www.youtube.com/watch?v=${check.videoId}`
-    const dup = registeredByVideoId.get(check.videoId)
+    const videoId = check.videoId
+    const watchUrl = `https://www.youtube.com/watch?v=${videoId}`
+    const localDup = registeredByVideoId.get(videoId)
 
-    // 이미 등록한 영상: 다시 등록하지 않고 종목만 바꾼다(같은 종목이면 아무것도 하지 않는다).
-    if (dup && !opts.force) {
-      if (normStock(dup.stock_name) === cleanStock) {
-        setUrl('')
-        setUrlMsg(null)
-        setTypeHint('')
-        setInfo('이미 같은 종목으로 등록돼 있어요. 다음 영상 주소를 붙여 넣어 주세요.')
-        focusUrl()
-        return
-      }
-      await run(async () => {
-        const { ok, status, data } = await authedPatchJson<{ ok?: boolean; error?: string }>(`/api/v2/my-videos/${dup.id}`, { stock_name: cleanStock })
-        if (!ok) {
-          failEdit(data?.error, status, dup.id)
-          return
-        }
-        setVideos((prev) => prev.map((v) => (v.id === dup.id ? { ...v, stock_name: cleanStock } : v)))
-        onRegistered({
-          videoId: dup.id,
-          url: watchUrl,
-          stock: cleanStock,
-          type: dup.content_type,
-          nth: todayCount,
-          updatedFrom: { stock: dup.stock_name, type: dup.content_type }
-        })
-      })
+    // 이미 등록한 영상이고 종목도 같다: 보낼 것이 없다.
+    if (localDup && !opts.force && normStock(localDup.stock_name) === cleanStock) {
+      finishSame()
       return
     }
 
     await run(async () => {
+      let dup: KnownVideo | undefined = localDup
+      // 이번 등록이 무엇을 만드는지 "확실히" 알 때만 되돌리기(삭제)를 열어 준다.
+      let origin: EntryOrigin = 'existing'
+      let guard: string | null = null
+
+      if (!dup) {
+        // 내 목록(최근 것만 받아 옴)에 없다고 해서 새 영상이라는 뜻은 아니다. 다른 담당자가 올린 영상이나 오래된 내 영상일 수 있어서 서버에 직접 물어본다.
+        const look = await v2Get<LookupPayload>(`/api/v2/my-videos/lookup?videoId=${encodeURIComponent(videoId)}`, '')
+        if (look.status === 401) {
+          failWith(undefined, 401)
+          return
+        }
+        if (look.status === 0) {
+          failWith(undefined, 0)
+          return
+        }
+        const found = look.data
+        if (look.ok && found.exists === false && typeof found.serverNow === 'string') {
+          origin = 'created'
+          guard = found.serverNow
+        } else if (look.ok && found.exists === true && found.item) {
+          if (found.mine) {
+            dup = { id: found.item.id, title: null, stock_name: found.item.stock_name, content_type: found.item.content_type, created_at: found.item.created_at }
+          } else {
+            const go = window.confirm('이 영상은 다른 담당자가 이미 등록했어요.\n\n등록하면 내 영상으로 바뀌고, 그 담당자 목록에서는 빠져요. 그래도 등록할까요?')
+            if (!go) {
+              setInfo('등록하지 않았어요. 적어 둔 내용은 그대로 두었어요.')
+              return
+            }
+          }
+        } else {
+          origin = 'unknown'
+        }
+      }
+
+      // 이미 등록한 내 영상: 다시 등록하지 않고 종목만 바꾼다(같은 종목이면 아무것도 하지 않는다).
+      if (dup && !opts.force) {
+        if (normStock(dup.stock_name) === cleanStock) {
+          finishSame()
+          return
+        }
+        const known = dup
+        const { ok, status, data } = await authedPatchJson<{ ok?: boolean; error?: string }>(`/api/v2/my-videos/${known.id}`, { stock_name: cleanStock })
+        if (!ok) {
+          failEdit(data?.error, status, known.id)
+          return
+        }
+        setVideos((prev) => prev.map((v) => (v.id === known.id ? { ...v, stock_name: cleanStock } : v)))
+        onRegistered({
+          videoId: known.id,
+          url: watchUrl,
+          stock: cleanStock,
+          type: known.content_type,
+          nth: todayCount,
+          origin: 'existing',
+          updatedFrom: { stock: known.stock_name, type: known.content_type },
+          guard: null
+        })
+        return
+      }
+
       const { ok, status, data } = await authedPostJson<{ ok?: boolean; video?: { id: string; title?: string | null; published_at?: string | null; view_count?: number | null; like_count?: number | null; comment_count?: number | null }; error?: string }>(
         '/api/videos/create',
         { youtubeUrl: watchUrl, contentType: type, stockName: cleanStock, contentCategory: note.trim() || null }
@@ -593,34 +655,38 @@ export default function RegisterPage() {
       }
       const video = data.video
 
-      // SEO 점검표 행을 기본값으로 만들어 둔다. 테이블이 없으면 조용히 넘어간다.
+      // 검색 점검표 행을 기본값으로 만들어 둔다. 테이블이 없으면 조용히 넘어간다.
       void authedPatchJson('/api/v2/seo-checklists', { videoId: video.id, patch: {} }).catch(() => undefined)
 
       // 다시 받아 오기 전에 목록·오늘 개수에 먼저 반영한다(같은 영상을 덮어쓴 경우는 원래 등록 시각을 유지).
-      const createdAt = dup?.created_at ?? new Date().toISOString()
-      setVideos((prev) =>
-        upsertVideo(prev, {
-          id: video.id,
-          title: video.title ?? dup?.title ?? null,
-          stock_name: cleanStock,
-          content_type: type,
-          published_at: video.published_at ?? null,
-          view_count: video.view_count ?? null,
-          like_count: video.like_count ?? null,
-          comment_count: video.comment_count ?? null,
-          youtube_url: watchUrl,
-          created_at: createdAt
-        })
-      )
+      // 새 영상인지 모를 때는 등록 시각을 지어내지 않고 곧 이어지는 목록 새로고침에 맡긴다.
+      if (dup || origin === 'created') {
+        setVideos((prev) =>
+          upsertVideo(prev, {
+            id: video.id,
+            title: video.title ?? dup?.title ?? null,
+            stock_name: cleanStock,
+            content_type: type,
+            published_at: video.published_at ?? null,
+            view_count: video.view_count ?? null,
+            like_count: video.like_count ?? null,
+            comment_count: video.comment_count ?? null,
+            youtube_url: watchUrl,
+            created_at: dup?.created_at ?? new Date().toISOString()
+          })
+        )
+      }
       const alreadyToday = dup ? isToday(dup.created_at) : false
       onRegistered({
         videoId: video.id,
         url: watchUrl,
         stock: cleanStock,
         type,
-        nth: todayCount + (alreadyToday ? 0 : 1),
-        // 이미 있던 영상을 덮어쓴 경우: 되돌리면 삭제하지 않고 이전 종목·형식으로 복원한다
-        updatedFrom: dup ? { stock: dup.stock_name, type: dup.content_type } : null
+        nth: todayCount + (alreadyToday || origin !== 'created' ? 0 : 1),
+        origin: dup ? 'existing' : origin,
+        // 이미 있던 내 영상을 덮어쓴 경우: 되돌리면 삭제하지 않고 이전 종목·형식으로 복원한다
+        updatedFrom: dup ? { stock: dup.stock_name, type: dup.content_type } : null,
+        guard: dup ? null : guard
       })
     })
   }
@@ -661,8 +727,14 @@ export default function RegisterPage() {
   const doUndo = async () => {
     const entry = undo.entry
     if (!entry || undo.phase !== 'open') return
+    const kind = undoKindOf(entry)
+    // 새로 만든 것으로 확인된 영상이거나 내 영상의 이전 값 복원일 때만 한다. 그 밖에는 아무것도 지우거나 바꾸지 않는다.
+    if (kind === 'none') return
+    // 버튼을 빠르게 두 번 눌러도 한 번만 보낸다(state 는 다음 그리기 때 바뀐다).
+    if (undoingRef.current) return
     const start = Date.now()
     if (start >= undo.expiresAt) return
+    undoingRef.current = true
     dispatchUndo({ type: 'undo_start', now: start })
     const restore = () => {
       // 다음 영상을 이미 적기 시작했다면 그대로 두고, 주소 칸이 비어 있을 때만 방금 내용을 다시 채워 준다.
@@ -683,10 +755,12 @@ export default function RegisterPage() {
     }
     try {
       const path = `/api/v2/my-videos/${entry.videoId}`
-      const res = entry.updatedFrom
-        ? await authedPatchJson<{ error?: string }>(path, { stock_name: entry.updatedFrom.stock, content_type: entry.updatedFrom.type })
-        : await authedDeleteJson<{ error?: string }>(path)
-      const alreadyGone = !entry.updatedFrom && res.status === 404
+      const from = entry.updatedFrom
+      // 삭제는 서버에게 "이 시각 이후에 만든 영상일 때만"이라는 조건을 함께 보낸다(그 전부터 있던 영상은 서버가 거절한다).
+      const res = from
+        ? await authedPatchJson<{ error?: string }>(path, { stock_name: from.stock, content_type: from.type })
+        : await authedDeleteJson<{ error?: string }>(`${path}?createdAfter=${encodeURIComponent(entry.guard || '')}`)
+      const alreadyGone = !from && res.status === 404
       if (!res.ok && !alreadyGone) {
         const text = friendlyEditError(res.data?.error, res.status, '되돌리지 못했어요. 아래 목록에서 「삭제」를 눌러 주세요.')
         dispatchUndo({ type: 'undo_fail', videoId: entry.videoId, error: text, now: Date.now() })
@@ -694,8 +768,7 @@ export default function RegisterPage() {
         return
       }
       dispatchUndo({ type: 'undo_ok', videoId: entry.videoId })
-      if (entry.updatedFrom) {
-        const from = entry.updatedFrom
+      if (from) {
         setVideos((prev) => prev.map((v) => (v.id === entry.videoId ? { ...v, stock_name: from.stock, content_type: from.type } : v)))
       } else {
         setVideos((prev) => prev.filter((v) => v.id !== entry.videoId))
@@ -704,6 +777,8 @@ export default function RegisterPage() {
       void load()
     } catch {
       dispatchUndo({ type: 'undo_fail', videoId: entry.videoId, error: `${NETWORK_ERROR} 시간 안이면 「되돌리기」를 다시 눌러 보세요.`, now: Date.now() })
+    } finally {
+      undoingRef.current = false
     }
   }
 
@@ -799,7 +874,7 @@ export default function RegisterPage() {
 
   return (
     <>
-      <PageHeader title="영상 등록" subtitle="유튜브 주소와 종목만 넣으면 조회수·좋아요는 자동으로 가져옵니다." />
+      <PageHeader title="영상 등록" subtitle="유튜브 주소와 종목만 넣으면 조회수·좋아요는 자동으로 가져와요." />
       <Toast toast={toast} />
 
       {/* 종목 자동완성 목록: 한 개씩 등록 칸·수정 칸·방금 등록한 영상의 종목 고치기 칸이 함께 쓴다 */}
@@ -844,7 +919,7 @@ export default function RegisterPage() {
         />
       ) : (
         <div className="panel v2-register">
-          <TodayProgress count={todayCount} goal={goal} teamView={me.isAdmin} loaded={loaded} onGoalChange={(g) => {
+          <TodayProgress count={todayCount} goal={goal} teamView={me.isAdmin} loaded={loaded} capped={teamCapped} onGoalChange={(g) => {
             setGoal(g)
             writeStored(GOAL_KEY, String(g))
           }} />
@@ -853,7 +928,7 @@ export default function RegisterPage() {
             onSubmit={(e) => void submit(e)}
             onKeyDown={(e) => {
               // Ctrl/⌘+Enter: 어느 칸에 있든 바로 등록
-              if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.nativeEvent.isComposing) {
+              if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !isImeKey(e)) {
                 e.preventDefault()
                 void submit()
               }
@@ -915,17 +990,16 @@ export default function RegisterPage() {
                   <div className="v2-hint v2-dup" role="status">
                     {dupText} ({registeredWhenLabel(existing.created_at, today)} · {existing.stock_name}).
                     {stockDiffers ? (
-                      <button type="button" className="v2-text-btn" tabIndex={-1} disabled={saving} onClick={() => void submit()}>
+                      <button type="button" className="v2-text-btn" disabled={saving} onClick={() => void submit()}>
                         종목만 「{normStock(stock)}」(으)로 바꾸기
                       </button>
                     ) : null}
-                    <button type="button" className="v2-text-btn" tabIndex={-1} disabled={saving} onClick={() => void submit(null, { force: true })}>
+                    <button type="button" className="v2-text-btn" disabled={saving} onClick={() => void submit(null, { force: true })}>
                       그래도 다시 등록
                     </button>
                     <button
                       type="button"
                       className="v2-text-btn"
-                      tabIndex={-1}
                       onClick={() => {
                         setUrl('')
                         setTypeHint('')
@@ -1093,7 +1167,7 @@ export default function RegisterPage() {
               <details className="v2-more">
                 <summary>제목에 넣으면 좋은 표현 보기</summary>
                 <div className="small muted" style={{ marginBottom: 6 }}>
-                  누르면 복사돼요. 제목에 종목명과 이런 검색어를 함께 쓰면 검색에 더 잘 걸립니다.
+                  누르면 복사돼요. 제목에 종목명과 이런 검색어를 함께 쓰면 검색에 더 잘 걸려요.
                 </div>
                 <div className="v2-chips">
                   {suggestions.map((s) => (
@@ -1117,6 +1191,9 @@ export default function RegisterPage() {
             >
               영상이 많나요? 여러 개 한 번에 붙여넣기 →
             </button>
+            <Link className="link small v2-help-link" href="/v2/help">
+              처음이라면 사용 방법 보기
+            </Link>
           </div>
         </div>
       )}

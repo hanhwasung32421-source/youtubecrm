@@ -24,6 +24,6 @@ export async function GET(request: Request) {
       maxAvg
     })
   } catch (e) {
-    return v4ErrorResponse(e, '업로드 타이밍 분석 조회 실패')
+    return v4ErrorResponse(e, '업로드 시간대 분석을 불러오지 못했어요')
   }
 }

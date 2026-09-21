@@ -26,6 +26,53 @@ type YoutubeJson = {
   }>
 }
 
+// ── 입력 검사 ──────────────────────────────────────────────
+const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/
+const MAX_URL_LENGTH = 300
+
+// 유튜브 영상 주소에서 영상 번호(11자)만 꺼낸다. 유튜브 주소가 아니거나 번호가 정확하지 않으면 빈 문자열. (순수 함수)
+export function parseVideoId(input: string): string {
+  const raw = (input || '').trim()
+  if (!raw || raw.length > MAX_URL_LENGTH) return ''
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    return ''
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return ''
+  const host = url.hostname.toLowerCase().replace(/^www\./, '')
+  let id = ''
+  if (host === 'youtu.be') {
+    id = url.pathname.split('/').filter(Boolean)[0] || ''
+  } else if (host === 'youtube.com' || host.endsWith('.youtube.com')) {
+    const parts = url.pathname.split('/').filter(Boolean)
+    id = ['shorts', 'live', 'embed'].includes(parts[0]) ? parts[1] || '' : url.searchParams.get('v') || ''
+  }
+  return VIDEO_ID.test(id) ? id : ''
+}
+
+// ── 사용 횟수 제한(서버 한 대 안에서만 세는 간단한 방식) ──────────────
+const RATE_WINDOW_MS = 60_000
+const RATE_MAX = 60
+const hits = new Map<string, number[]>()
+
+export function checkRate(key: string, now: number = Date.now()): boolean {
+  const recent = (hits.get(key) || []).filter((t) => now - t < RATE_WINDOW_MS)
+  if (recent.length >= RATE_MAX) {
+    hits.set(key, recent)
+    return false
+  }
+  recent.push(now)
+  hits.set(key, recent)
+  if (hits.size > 500) {
+    for (const [k, list] of hits) if (list.every((t) => now - t >= RATE_WINDOW_MS)) hits.delete(k)
+  }
+  return true
+}
+
+const FETCH_TIMEOUT_MS = 6000
+
 const QUOTA_REASONS = ['quotaExceeded', 'dailyLimitExceeded', 'rateLimitExceeded', 'userRateLimitExceeded']
 const KEY_REASONS = ['keyInvalid', 'keyExpired', 'accessNotConfigured', 'ipRefererBlocked', 'forbidden', 'API_KEY_INVALID', 'badRequest']
 
@@ -70,7 +117,7 @@ export function classifyYoutubeResponse(httpStatus: number, json: YoutubeJson | 
 export async function lookupYoutubeVideo(videoId: string, apiKey: string): Promise<LookupResult> {
   const params = new URLSearchParams({ id: videoId, part: 'snippet,contentDetails,statistics,status', key: apiKey })
   try {
-    const response = await fetch(`https://www.googleapis.com/youtube/v3/videos?${params.toString()}`, { cache: 'no-store' })
+    const response = await fetch(`https://www.googleapis.com/youtube/v3/videos?${params.toString()}`, { cache: 'no-store', signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) })
     const json = (await response.json().catch(() => null)) as YoutubeJson | null
     return classifyYoutubeResponse(response.status, json)
   } catch {

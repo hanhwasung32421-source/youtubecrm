@@ -185,14 +185,13 @@ export type DiscoverabilityRow = {
 
 // ---- 응답 payload 타입 ----
 export type SeoChecklistsPayload = { items: SeoChecklist[]; sample?: boolean; error?: string }
-export type OptimizationPayload = { items: OptimizationRow[]; capped?: boolean; sample?: boolean; error?: string }
+export type OptimizationPayload = { items: OptimizationRow[]; capped?: boolean; error?: string }
 export type KeywordsPayload = {
   items: KeywordRadarItem[]
   recentStocks: RecentStock[]
   doneTotal?: number
   // 종목별로 지금까지 등록된 영상 수 (키워드 → 그 종목 영상 보기 링크의 근거). 옛 응답에는 없다.
   videoCounts?: Record<string, number>
-  sample?: boolean
   error?: string
 }
 export type PlannerPayload = {
@@ -202,14 +201,11 @@ export type PlannerPayload = {
   planned: Record<string, Record<string, PlannedSlot[]>> // staffId -> ymd -> slots
   actual: Record<string, Record<string, number>> // staffId -> ymd -> count
   timingHint: TimingHint
-  sample?: boolean
   error?: string
 }
 export type ReportPayload = {
   items: DiscoverabilityRow[]
-  insight: string
   capped?: boolean
-  sample?: boolean
   error?: string
 }
 

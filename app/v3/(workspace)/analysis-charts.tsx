@@ -10,6 +10,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react'
 import { downsample, nearestPoint, niceScale, scaleLinear } from '@/lib/v3/chart-math'
 import { formatCompactNumber, formatKstDateTime, formatNumber, formatPct } from '@/lib/v3/format'
+import { pickWinner } from '@/lib/v3/series-logic'
 
 // 색맹에서도 구분되는 파랑/주황
 const BLUE = '#3b6fe0'
@@ -162,7 +163,7 @@ export function GrowthChart({ points }: { points: GrowthPoint[] }) {
           {shown.length > 1 ? <path d={path} fill="none" stroke={BLUE} strokeWidth={2.5} strokeLinejoin="round" /> : null}
           {showDots
             ? shown.map((p, i) => (
-                <circle key={p.snapshotAt} cx={coords[i].x} cy={coords[i].y} r={act === i ? 6 : 4} fill={BLUE} stroke="#fff" strokeWidth={1.5}>
+                <circle key={`${p.snapshotAt}-${i}`} cx={coords[i].x} cy={coords[i].y} r={act === i ? 6 : 4} fill={BLUE} stroke="#fff" strokeWidth={1.5}>
                   <title>{`올린 뒤 ${trimTick(p.day)}일 · ${formatKstDateTime(p.snapshotAt)} · 조회수 ${formatNumber(p.views)}회`}</title>
                 </circle>
               ))
@@ -437,7 +438,9 @@ export function CompareTable({ rows }: { rows: CompareRowData[] }) {
           const s = row.short.value
           const both = row.compare && l !== null && s !== null && Number.isFinite(l) && Number.isFinite(s)
           const max = both ? Math.max(l as number, s as number) : 0
-          const winner = both && l !== s ? ((l as number) > (s as number) ? 'long' : 'short') : null
+          // 5% 넘게 차이 날 때만 ‘더 높아요’를 붙인다. (위쪽 한 문장 답과 같은 기준)
+          const winnerSide = both ? pickWinner(l as number, s as number) : null
+          const winner = winnerSide === 'longform' ? 'long' : winnerSide === 'shortform' ? 'short' : null
           const cell = (side: 'long' | 'short', data: CompareCell, value: number | null, label: string) => {
             const isWin = winner === side
             const width = both && max > 0 && value !== null ? Math.max((value / max) * 100, value > 0 ? 4 : 0) : 0

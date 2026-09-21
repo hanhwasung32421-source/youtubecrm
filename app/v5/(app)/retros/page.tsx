@@ -5,7 +5,6 @@ import Link from 'next/link'
 import { PageHeader } from '@/components/v5/app-shell'
 import { Toast, useToast } from '@/components/toast'
 import { authedDeleteJson, authedPatchJson, errorText, v5Post } from '@/lib/v5/client'
-import { csvFileName, retrosCsv } from '@/lib/v5/csv'
 import { RETRO_SPEC } from '@/lib/v5/filters'
 import { formatDayShort, formatRelative, isoWeekRangeText, todayYmd } from '@/lib/v5/format'
 import { CopyLinkButton, ExportCsvButton, useNow } from '@/lib/v5/insight-parts'
@@ -22,9 +21,8 @@ import {
   type RetroDraftData
 } from '@/lib/v5/retro-draft'
 import { RetroSkeleton } from '@/lib/v5/skeleton'
-import { downloadCsv } from '@/lib/v5/share'
 import { useV5Query } from '@/lib/v5/swr'
-import { ConfirmDelete, useBeforeUnload, useEscape } from '@/lib/v5/ui'
+import { ConfirmDelete, useBeforeUnload, useEscape, useKstToday } from '@/lib/v5/ui'
 import { useUrlFilters } from '@/lib/v5/use-filters'
 import type { RetroActionItem, WeeklyRetro } from '@/lib/v5/types'
 
@@ -32,7 +30,8 @@ const MAX_ACTIONS = 20
 const FILTER_KEY = 'v5.retros.filters.v1'
 
 type EditorValues = { wentWell: string; toImprove: string; actionItems: RetroActionItem[] }
-type SubmitResult = { message: string; extra?: ReactNode } | null
+// extra: 오류 옆에 붙이는 버튼. discard() 를 부르면 이 편집기의 임시 저장본을 지우고 화면을 떠날 때 다시 저장하지 않는다.
+type SubmitResult = { message: string; extra?: (discard: () => void) => ReactNode } | null
 
 // "방금" / "3분 전"
 const agoText = (ts: number, now: number) => (now - ts < 60_000 ? '방금' : formatRelative(ts, now))
@@ -175,6 +174,13 @@ function RetroEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // 이 편집기의 글을 다른 곳(이미 있는 회고)으로 옮길 때: 임시 저장본을 지우고, 화면이 바뀔 때 다시 저장하지 않게 한다.
+  const discardDraft = () => {
+    skipFlushRef.current = true
+    clearStoredDraft(draftKey)
+    setDraftSavedAt(null)
+  }
+
   const acceptRestore = () => {
     if (!restore) return
     setWentWell(restore.values.wentWell)
@@ -287,7 +293,7 @@ function RetroEditor({
       {restore ? (
         <div className="v5p-restore" role="status">
           <span>
-            쓰다 만 내용이 있어요 ({agoText(restore.savedAt, now)} 임시 저장). 이어서 쓸까요?
+            쓰다 만 내용이 있어요{restore.savedAt ? ` (${agoText(restore.savedAt, now)} 임시 저장)` : ''}. 이어서 쓸까요?
           </span>
           <span className="v5p-restore-actions">
             <button className="button xs" type="button" onClick={acceptRestore}>
@@ -383,7 +389,7 @@ function RetroEditor({
       {error ? (
         <div className="v5p-field-error" role="alert">
           <ErrorText message={error.message} />
-          {error.extra ? <span className="v5p-inline-action">{error.extra}</span> : null}
+          {error.extra ? <span className="v5p-inline-action">{error.extra(discardDraft)}</span> : null}
         </div>
       ) : null}
       <div className="row" style={{ marginTop: 12, gap: 8 }}>
@@ -454,6 +460,7 @@ function RetroCard({
   highlight,
   editOnMount,
   editRequest,
+  onEditRequestHandled,
   editable,
   savedAt,
   onToggle,
@@ -465,6 +472,8 @@ function RetroCard({
   highlight?: boolean
   editOnMount?: EditorValues | null
   editRequest: boolean
+  // 이어 쓰기 요청을 편집기로 넘겼다(다음에 이 카드를 다시 열 때 또 열리지 않게 부모가 요청을 지운다)
+  onEditRequestHandled: () => void
   editable: boolean
   // 이 세션에서 서버에 저장된 시각(있으면 "저장됨" 표시)
   savedAt?: number
@@ -481,7 +490,10 @@ function RetroCard({
 
   // "기존 회고에 이어서 쓰기"로 들어온 경우 바로 수정 모드로 연다.
   useEffect(() => {
-    if (editRequest) setEditing(mergeValues(retro, editOnMount || null))
+    if (editRequest) {
+      setEditing(mergeValues(retro, editOnMount || null))
+      onEditRequestHandled()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editRequest])
 
@@ -598,12 +610,21 @@ function RetrosView() {
   const setItems = (fn: (prev: WeeklyRetro[]) => WeeklyRetro[]) => updateData((d) => ({ ...d, items: fn(d.items || []) }))
 
   const { filters, setFilters, ready: filtersReady, shareUrl } = useUrlFilters(RETRO_SPEC, FILTER_KEY)
+  // 화면을 켜 둔 채 자정(한국 시간)이 지나 "이번 주"가 바뀔 수 있으니, 날짜가 바뀌면 서버가 알려 주는 이번 주·지난주를 다시 받는다.
+  const today = useKstToday()
+  const lastTodayRef = useRef(today)
+  useEffect(() => {
+    if (lastTodayRef.current === today) return
+    lastTodayRef.current = today
+    reload()
+  }, [today, reload])
   // 보고 있는 주(빈 값 = 이번 주). 이번 주보다 미래거나 형식이 틀리면 이번 주.
   const sw = useMemo(() => (thisWeek ? weekSwitch(filters.week || thisWeek, thisWeek) : null), [filters.week, thisWeek])
   const selectedWeek = sw?.current || ''
 
   // 이미 있는 회고에 이어 쓰기 요청(동시 저장 충돌 시)
   const [continueReq, setContinueReq] = useState<{ id: string; draft: EditorValues } | null>(null)
+  const clearContinueReq = () => setContinueReq(null)
   // 이 화면에서 서버에 저장된 시각(회고 id → 시각). "저장됨" 표시용
   const [savedAtMap, setSavedAtMap] = useState<Record<string, number>>({})
   const markSaved = (id: string) => setSavedAtMap((m) => ({ ...m, [id]: Date.now() }))
@@ -662,13 +683,13 @@ function RetrosView() {
         const existingId = res.data.existingId
         return {
           message,
-          extra: (
+          extra: (discard) => (
             <button
               type="button"
               className="button xs secondary"
-              onClick={async () => {
-                // 쓰던 내용은 그 회고 안으로 합쳐지므로 임시 저장본은 지운다.
-                clearStoredDraft(retroDraftKey(week))
+              onClick={() => {
+                // 쓰던 내용은 그 회고 안으로 합쳐지므로 임시 저장본은 지운다(화면이 바뀔 때 다시 저장되지도 않게).
+                discard()
                 setContinueReq({ id: existingId, draft: values })
                 reload()
               }}
@@ -745,11 +766,17 @@ function RetrosView() {
     queueRef.current.set(retroId, task)
   }
 
-  const exportCsv = () => {
+  // 파일 저장 도구는 버튼을 눌렀을 때 처음 불러온다.
+  const exportCsv = async () => {
     if (items.length === 0) return
-    const ok = downloadCsv(csvFileName('주간회고', todayYmd()), retrosCsv(items))
-    if (ok) showSuccess(`회고 ${fmtNum(items.length)}개를 CSV 파일로 저장했어요.`)
-    else showErrorRef.current('파일을 저장하지 못했어요. 브라우저 설정을 확인해 주세요.')
+    try {
+      const [{ csvFileName, retrosCsv }, { downloadCsv }] = await Promise.all([import('@/lib/v5/csv'), import('@/lib/v5/share')])
+      const ok = downloadCsv(csvFileName('주간회고', todayYmd()), retrosCsv(items))
+      if (ok) showSuccess(`회고 ${fmtNum(items.length)}개를 엑셀 파일로 저장했어요.`)
+      else showErrorRef.current('파일을 저장하지 못했어요. 브라우저 설정을 확인해 주세요.')
+    } catch {
+      showErrorRef.current('파일을 저장하지 못했어요. 인터넷 연결을 확인하고 다시 눌러 주세요.')
+    }
   }
 
   const thisWeekRange = thisWeek ? isoWeekRangeText(thisWeek) : ''
@@ -853,6 +880,7 @@ function RetrosView() {
                 editable={!sample}
                 savedAt={savedAtMap[selectedRetro.id]}
                 editRequest={continueReq?.id === selectedRetro.id}
+                onEditRequestHandled={clearContinueReq}
                 editOnMount={continueReq?.id === selectedRetro.id ? continueReq.draft : null}
                 onToggle={(idx) => onToggle(selectedRetro.id, idx)}
                 onSave={(values) => onSave(selectedRetro.id, values)}
@@ -922,7 +950,7 @@ function RetrosView() {
             <div className="v5p-section-head">
               <h2>{selectedRetro ? '다른 주 회고' : '지난 회고'}</h2>
               <span className="v5p-toolbar-right">
-                <ExportCsvButton onExport={exportCsv} disabled={items.length === 0} />
+                <ExportCsvButton onExport={() => void exportCsv()} disabled={items.length === 0} />
               </span>
             </div>
             {otherRetros.length === 0 ? (
@@ -940,6 +968,7 @@ function RetrosView() {
                     editable={!sample}
                     savedAt={savedAtMap[retro.id]}
                     editRequest={continueReq?.id === retro.id}
+                    onEditRequestHandled={clearContinueReq}
                     editOnMount={continueReq?.id === retro.id ? continueReq.draft : null}
                     onToggle={(idx) => onToggle(retro.id, idx)}
                     onSave={(values) => onSave(retro.id, values)}

@@ -8,7 +8,6 @@ import {
   forbidden,
   handleDbError,
   handleRouteError,
-  isMissingTableError,
   isUuid,
   loadRecentStocks,
   loadStaffMap,
@@ -17,7 +16,6 @@ import {
   selectAllPages,
   type SupabaseAdmin
 } from '@/lib/v2/server'
-import { sampleKeywordsPayload } from '@/lib/v2/sample-data'
 import { KEYWORD_STATUSES, PRIORITIES, type KeywordRadarItem, type KeywordsPayload } from '@/lib/v2/types'
 
 // 키워드·트렌드 레이더 — "지금 다뤄야 할 검색 키워드/이슈" 팀 공유 보드.
@@ -102,7 +100,6 @@ export async function GET(request: Request) {
 
     const error = openRes.error || doneRes.error
     if (error) {
-      if (isMissingTableError(error)) return NextResponse.json(sampleKeywordsPayload())
       return handleDbError(error, READ_ERROR)
     }
 
@@ -130,8 +127,8 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const body = createSchema.parse(await request.json())
     const { profile, supabaseAdmin } = await authedContext(request)
+    const body = createSchema.parse(await request.json())
 
     const { data, error } = await supabaseAdmin
       .from(V2_TABLES.keywordRadar)
@@ -154,8 +151,8 @@ export async function POST(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
-    const body = patchSchema.parse(await request.json())
     const { profile, supabaseAdmin, isAdmin } = await authedContext(request)
+    const body = patchSchema.parse(await request.json())
 
     const { data: existing, error: loadError } = await supabaseAdmin
       .from(V2_TABLES.keywordRadar)
@@ -163,7 +160,7 @@ export async function PATCH(request: Request) {
       .eq('id', body.id)
       .maybeSingle()
     if (loadError) return handleDbError(loadError, SAVE_ERROR)
-    if (!existing) return NextResponse.json({ error: '이미 삭제된 키워드예요. 목록을 새로고침합니다.' }, { status: 404 })
+    if (!existing) return NextResponse.json({ error: '이미 삭제된 키워드예요. 목록을 새로 불러올게요.' }, { status: 404 })
     if (!isAdmin && existing.created_by !== profile.id) return forbidden('추가한 사람과 관리자만 바꿀 수 있어요.')
 
     const patch: Record<string, unknown> = {}
@@ -177,7 +174,7 @@ export async function PATCH(request: Request) {
 
     const { data, error } = await supabaseAdmin.from(V2_TABLES.keywordRadar).update(patch).eq('id', body.id).select(SELECT).maybeSingle()
     if (error) return handleDbError(error, SAVE_ERROR)
-    if (!data) return NextResponse.json({ error: '이미 삭제된 키워드예요. 목록을 새로고침합니다.' }, { status: 404 })
+    if (!data) return NextResponse.json({ error: '이미 삭제된 키워드예요. 목록을 새로 불러올게요.' }, { status: 404 })
     return noStoreJson({ ok: true, item: data })
   } catch (e) {
     return handleRouteError(e, SAVE_ERROR)

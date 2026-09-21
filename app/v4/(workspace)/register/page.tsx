@@ -1,8 +1,9 @@
 'use client'
 
+import dynamic from 'next/dynamic'
+import Link from 'next/link'
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { PageHeader } from '@/components/v4/app-shell'
-import { BulkRegister } from '@/components/v4/bulk-register'
 import { useV4Me } from '@/components/v4/me-context'
 import { MyVideoList, type MyVideo } from '@/components/v4/my-video-list'
 import { DAILY_TARGET, deleteMyVideo, fetchDailyTarget, fetchTodayCount, patchMyVideo, registerVideo, type ContentType } from '@/components/v4/register-api'
@@ -12,9 +13,33 @@ import { EmptyState, FormatToggle } from '@/components/v4/ui'
 import { ListSkeleton } from '@/components/v4/skeleton'
 import { analyzePaste, looksLikeStockName, toBulkText } from '@/components/v4/paste-detect'
 import { buildVideoIndex, diagnoseYoutubeUrl, duplicateChoice, duplicateMessage, findDuplicate, groupTodayByStock } from '@/components/v4/register-logic'
-import { UNDO_IDLE, deleteSafety, undoReducer } from '@/components/v4/undo-state'
-import { isShortsUrl, normalizeStockName, normalizeYoutubeUrl, readJson, readStorage, todayKst, writeStorage } from '@/components/v4/register-utils'
+import { UNDO_IDLE, canUndoNow, undoReducer } from '@/components/v4/undo-state'
+import { isShortsUrl, msUntilNextKstMidnight, normalizeStockName, normalizeYoutubeUrl, readJson, readStorage, todayKst, writeStorage } from '@/components/v4/register-utils'
+import { useStableCallback } from '@/components/v4/use-stable-callback'
 import { authedFetchJson } from '@/lib/session/authed-fetch'
+
+// 여러 개 붙여넣기는 쓰는 사람만 내려받는다 (하나씩 등록 화면이 더 빨리 열린다).
+const loadBulk = () => import('@/components/v4/bulk-register').then((m) => m.BulkRegister)
+const BulkRegister = dynamic(loadBulk, { ssr: false, loading: () => <ListSkeleton rows={3} /> })
+
+// 글자를 칠 때마다 다시 그리지 않도록 바깥에 둔 고정 문구
+const IDLE_HINT = (
+  <>
+    <span>주소를 붙여넣고 Enter. 형식과 종목은 마지막에 쓴 그대로 남아 있어요.</span>
+    <span className="v4-kbd-hint"> / 주소 칸으로 이동 · Esc 지우기 · Ctrl+Enter 어느 칸에서든 등록</span>
+    <span>
+      {' '}
+      <Link className="link" href="/v4/help">
+        사용 방법 보기
+      </Link>
+    </span>
+  </>
+)
+
+// 한글 입력 중(조합 중)에 누른 Enter 는 글자를 확정하는 키다. 등록으로 보면 안 된다.
+function isImeEnter(e: { nativeEvent: KeyboardEvent; keyCode?: number }) {
+  return e.nativeEvent.isComposing || e.keyCode === 229
+}
 
 type Mode = 'single' | 'bulk'
 type SubmitOverride = { url?: string; type?: ContentType }
@@ -68,7 +93,10 @@ export default function VideoRegisterPage() {
   const [daily, setDaily] = useState<{ target: number; source: 'personal' | 'default' }>({ target: DAILY_TARGET, source: 'default' })
 
   const [undo, dispatchUndo] = useReducer(undoReducer, UNDO_IDLE)
-  const [nowMs, setNowMs] = useState(() => Date.now())
+  const [today, setToday] = useState(() => todayKst())
+  const undoRef = useRef(undo)
+  undoRef.current = undo
+  const dayRef = useRef(today)
 
   // 최신 입력값을 비동기 작업(등록 응답 뒤)에서 읽기 위한 사본
   const urlNowRef = useRef('')
@@ -172,16 +200,43 @@ export default function VideoRegisterPage() {
     }
   }, [myId])
 
-  // 되돌리기 시간(10초) 카운트다운
+  // 되돌리기 시간(10초)이 지나면 상태를 "지남"으로 바꾼다. (남은 초 표시는 결과 칸이 따로 센다 → 이 화면 전체가 다시 그려지지 않는다)
   useEffect(() => {
     if (undo.phase !== 'open') return
-    const timer = window.setInterval(() => {
-      const now = Date.now()
-      setNowMs(now)
-      dispatchUndo({ type: 'tick', now })
-    }, 500)
+    const timer = window.setInterval(() => dispatchUndo({ type: 'tick', now: Date.now() }), 1000)
     return () => window.clearInterval(timer)
   }, [undo.phase])
+
+  // 날짜가 바뀌면(한국 시간 0시) "오늘 등록 수"와 오늘 종목 묶음을 새로 센다. 다른 탭에 갔다 돌아왔을 때도 다시 확인한다.
+  useEffect(() => {
+    let timer = 0
+    const checkDay = () => {
+      const now = todayKst()
+      if (now !== dayRef.current) {
+        dayRef.current = now
+        setToday(now)
+      }
+    }
+    const arm = () => {
+      timer = window.setTimeout(() => {
+        checkDay()
+        void refreshToday()
+        arm()
+      }, msUntilNextKstMidnight(Date.now()) + 1000)
+    }
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return
+      checkDay()
+      void refreshToday()
+    }
+    arm()
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      window.clearTimeout(timer)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // "/" 키: 글을 쓰는 중이 아닐 때 주소 칸으로 바로 이동
   useEffect(() => {
@@ -231,7 +286,7 @@ export default function VideoRegisterPage() {
   const dupKnown = useMemo(() => findDuplicate(videoIndex, normalizedUrl), [videoIndex, normalizedUrl])
   const dupChoice = dupKnown ? duplicateChoice(dupKnown, stockName) : null
 
-  const todayGroups = useMemo(() => (isAdmin ? [] : groupTodayByStock(allItems, todayKst())), [allItems, isAdmin])
+  const todayGroups = useMemo(() => (isAdmin ? [] : groupTodayByStock(allItems, today)), [allItems, isAdmin, today])
 
   const changeFormat = (next: ContentType) => {
     setContentType(next)
@@ -401,12 +456,10 @@ export default function VideoRegisterPage() {
       }
       patchLocalItem(known.id, { stock_name: res.item.stock_name, content_type: res.item.content_type })
       rememberStocks([res.item.stock_name])
-      const now = Date.now()
-      setNowMs(now)
       dispatchUndo({
         type: 'registered',
-        now,
-        recent: { id: known.id, mode: 'restore', stock: res.item.stock_name, title: known.title || '', url, ordinal: null, prevStock: known.stock_name }
+        now: Date.now(),
+        recent: { id: known.id, mode: 'restore', stock: res.item.stock_name, title: known.title || '', url, ordinal: null, prevStock: known.stock_name || null }
       })
       highlight([known.id])
       finishInput(url)
@@ -474,20 +527,21 @@ export default function VideoRegisterPage() {
         return
       }
 
-      // "오늘 N번째"는 서버가 센 값을 쓴다 (다른 기기·화면에서 등록한 것도 포함)
-      const fresh = await refreshToday()
-      const ordinal = fresh ?? (todayCount ?? 0) + 1
-      if (fresh === null) setTodayCount(ordinal)
+      // 결과를 바로 보여 주고(다음 영상을 곧장 넣을 수 있게), "오늘 N번째"는 서버가 센 값으로 곧 바로잡는다.
+      const newId = result.video?.id || null
+      const guess = (todayCount ?? 0) + 1
+      setTodayCount(guess)
       rememberStocks([stock])
-      const now = Date.now()
-      setNowMs(now)
       dispatchUndo({
         type: 'registered',
-        now,
-        recent: { id: result.video?.id || null, mode: 'delete', stock, title: result.video?.title || '', url, ordinal, prevStock: null }
+        now: Date.now(),
+        recent: { id: newId, mode: 'delete', stock, title: result.video?.title || '', url, ordinal: guess, prevStock: null }
       })
-      highlight(result.video?.id ? [result.video.id] : [])
+      highlight(newId ? [newId] : [])
       finishInput(url)
+      void refreshToday().then((count) => {
+        if (count !== null && newId) dispatchUndo({ type: 'ordinal', id: newId, ordinal: count })
+      })
       void loadMine().then((list) => {
         if (list && list.length >= PAGE_SIZE && !olderStartedRef.current) {
           olderStartedRef.current = true
@@ -504,13 +558,19 @@ export default function VideoRegisterPage() {
   const failUndo = (id: string, message: string) => dispatchUndo({ type: 'failed', id, message, now: Date.now() })
 
   const onUndo = async () => {
-    const recent = undo.recent
-    if (!recent || !recent.id || undo.phase !== 'open') return
+    const current = undoRef.current
+    const recent = current.recent
+    // 시간이 지났거나(카운트다운 표시가 조금 늦을 수 있어요) 이미 되돌리는 중이면 아무것도 하지 않는다.
+    if (!recent || !recent.id || !canUndoNow(current, Date.now())) return
     const id = recent.id
     dispatchUndo({ type: 'begin', id, now: Date.now() })
 
     if (recent.mode === 'restore') {
-      const res = await patchMyVideo(id, { stock_name: recent.prevStock || recent.stock })
+      if (!recent.prevStock) {
+        failUndo(id, '이전 종목을 알 수 없어서 되돌리지 못했어요. 아래 "종목이 틀렸나요?" 칸에서 직접 고쳐 주세요.')
+        return
+      }
+      const res = await patchMyVideo(id, { stock_name: recent.prevStock })
       if (!res.ok) {
         failUndo(id, res.message)
         return
@@ -521,18 +581,9 @@ export default function VideoRegisterPage() {
       return
     }
 
-    // 지우기: 방금 새로 등록한 영상만 지운다. 예전에 등록해 둔 영상을 실수로 지우지 않도록 목록을 다시 확인한다.
-    const list = await loadMine()
-    if (list === null) {
-      failUndo(id, '목록을 확인하지 못해서 지우지 않았어요. 인터넷 연결을 확인하고 다시 눌러 주세요.')
-      return
-    }
-    const safety = deleteSafety(list.find((item) => item.id === id), Date.now())
-    if (!safety.safe) {
-      failUndo(id, '예전에 등록해 둔 영상이라 자동으로 지우지 않았어요. 잘못 올렸다면 아래 목록에서 직접 삭제해 주세요.')
-      return
-    }
-    const res = await deleteMyVideo(id)
+    // 지우기: 방금 "새로" 등록한 영상만 지운다. 예전부터 있던 영상(내 다른 화면·다른 사람이 먼저 등록한 것)은
+    // 같은 주소로 다시 등록하면 덮어써지므로, 서버가 등록 기록을 보고 한 번 더 확인한다 (지우면 안 되는 영상이면 409).
+    const res = await deleteMyVideo(id, { onlyNew: true })
     if (!res.ok) {
       failUndo(id, res.message)
       return
@@ -548,7 +599,7 @@ export default function VideoRegisterPage() {
   }
 
   const onQuickFix = async (raw: string): Promise<{ ok: boolean; message: string }> => {
-    const recent = undo.recent
+    const recent = undoRef.current.recent
     if (!recent || !recent.id) return { ok: false, message: '' }
     const next = normalizeStockName(raw)
     if (!next) return { ok: false, message: '종목명을 적어 주세요.' }
@@ -571,6 +622,9 @@ export default function VideoRegisterPage() {
   }
 
   const onBulkFinished = ({ ids, stocks }: { ids: string[]; stocks: string[] }) => {
+    // 여러 개 붙여넣기로 같은 영상을 다시 등록했다면, "방금 등록 되돌리기"는 접는다 (예전부터 있던 영상을 지우지 않게).
+    const recentId = undoRef.current.recent?.id
+    if (recentId && ids.includes(recentId)) dispatchUndo({ type: 'dismiss' })
     if (stocks.length > 0) rememberStocks(stocks)
     highlight(ids)
     void loadMine()
@@ -579,16 +633,24 @@ export default function VideoRegisterPage() {
 
   const onUpdated = (id: string, patch: { stock_name: string; content_type: ContentType }) => {
     patchLocalItem(id, patch)
-    if (undo.recent?.id === id) dispatchUndo({ type: 'edited', id, stock: patch.stock_name })
+    if (undoRef.current.recent?.id === id) dispatchUndo({ type: 'edited', id, stock: patch.stock_name })
   }
 
   const onDeleted = (id: string) => {
     removeLocalItem(id)
-    if (undo.recent?.id === id) dispatchUndo({ type: 'dismiss' })
+    if (undoRef.current.recent?.id === id) dispatchUndo({ type: 'dismiss' })
     setListNotice('영상을 지웠어요. 오늘 등록 수도 다시 셌어요.')
     void refreshToday()
     void loadMine()
   }
+
+  // 무거운 자식(결과 칸·목록·여러 개 붙여넣기)에는 "늘 같은 함수"를 넘겨서, 글자를 칠 때마다 다시 그려지지 않게 한다.
+  const stableUndo = useStableCallback(() => void onUndo())
+  const stableRetry = useStableCallback(() => void submit())
+  const stableQuickFix = useStableCallback(onQuickFix)
+  const stableUpdated = useStableCallback(onUpdated)
+  const stableDeleted = useStableCallback(onDeleted)
+  const stableBulkFinished = useStableCallback(onBulkFinished)
 
   const firstRun = loaded && !loadError && items.length === 0
   const urlOk = diagnosis.ok
@@ -604,7 +666,7 @@ export default function VideoRegisterPage() {
     <>
       <PageHeader
         title="영상 등록"
-        subtitle="유튜브 주소를 붙여넣고 종목명만 적으면 끝입니다. 제목·조회수·좋아요·댓글은 유튜브에서 자동으로 채워져요."
+        subtitle="유튜브 주소를 붙여넣고 종목명만 적으면 끝이에요. 제목·조회수·좋아요·댓글은 유튜브에서 자동으로 채워져요."
         actions={<TodayChip count={todayCount} target={daily.target} source={daily.source} />}
       />
 
@@ -612,7 +674,14 @@ export default function VideoRegisterPage() {
         <button type="button" aria-pressed={mode === 'single'} className={`v4-mode-tab ${mode === 'single' ? 'active' : ''}`} onClick={() => switchMode('single')}>
           하나씩 등록
         </button>
-        <button type="button" aria-pressed={mode === 'bulk'} className={`v4-mode-tab ${mode === 'bulk' ? 'active' : ''}`} onClick={() => switchMode('bulk')}>
+        <button
+          type="button"
+          aria-pressed={mode === 'bulk'}
+          className={`v4-mode-tab ${mode === 'bulk' ? 'active' : ''}`}
+          onClick={() => switchMode('bulk')}
+          onPointerEnter={() => void loadBulk()}
+          onFocus={() => void loadBulk()}
+        >
           여러 개 붙여넣기
         </button>
       </div>
@@ -622,7 +691,7 @@ export default function VideoRegisterPage() {
         className="panel v4-reg-form"
         onKeyDown={(e) => {
           // Ctrl/Cmd + Enter: 어느 칸에 있든 바로 등록
-          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.nativeEvent.isComposing) {
+          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !isImeEnter(e)) {
             if ((e.target as HTMLElement).closest('[data-v4-quickfix]')) return
             e.preventDefault()
             void submit()
@@ -681,7 +750,7 @@ export default function VideoRegisterPage() {
                     clearUrlField()
                     return
                   }
-                  if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && !e.nativeEvent.isComposing && !stockName.trim()) {
+                  if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && !isImeEnter(e) && !stockName.trim()) {
                     // 종목을 아직 안 적었다면 등록 대신 종목 칸으로 이동
                     e.preventDefault()
                     focusStock()
@@ -843,17 +912,11 @@ export default function VideoRegisterPage() {
         <RegisterFeedback
           status={status}
           undo={undo}
-          nowMs={nowMs}
           busy={submitting}
-          onUndo={() => void onUndo()}
-          onRetry={() => void submit()}
-          onQuickFix={onQuickFix}
-          idleHint={
-            <>
-              <span>주소를 붙여넣고 Enter. 형식과 종목은 마지막에 쓴 그대로 남아 있어요.</span>
-              <span className="v4-kbd-hint"> / 주소 칸으로 이동 · Esc 지우기 · Ctrl+Enter 어느 칸에서든 등록</span>
-            </>
-          }
+          onUndo={stableUndo}
+          onRetry={stableRetry}
+          onQuickFix={stableQuickFix}
+          idleHint={IDLE_HINT}
         />
 
         <label className="v4-check v4-auto-submit" htmlFor="v4-reg-auto">
@@ -865,7 +928,7 @@ export default function VideoRegisterPage() {
 
       {bulkOpened ? (
         <div hidden={mode !== 'bulk'}>
-          <BulkRegister seed={bulkSeed} defaultFormat={contentType} stockChoices={stockChoices} existingIds={existingIds} onFinished={onBulkFinished} />
+          <BulkRegister seed={bulkSeed} defaultFormat={contentType} stockChoices={stockChoices} existingIds={existingIds} onFinished={stableBulkFinished} />
         </div>
       ) : null}
 
@@ -875,8 +938,8 @@ export default function VideoRegisterPage() {
         <details className="panel soft v4-firstrun" open>
           <summary>처음이신가요? 이렇게 하세요</summary>
           <ol>
-            <li>유튜브에서 영상을 올린 뒤, 영상 주소를 복사합니다.</li>
-            <li>위 칸에 붙여넣고(또는 &quot;붙여넣기&quot; 버튼), 다룬 종목명을 적습니다. 롱폼/숏폼도 확인하세요.</li>
+            <li>유튜브에서 영상을 올린 뒤, 영상 주소를 복사해요.</li>
+            <li>위 칸에 붙여넣고(또는 &quot;붙여넣기&quot; 버튼), 다룬 종목명을 적어요. 롱폼/숏폼도 확인하세요.</li>
             <li>Enter 를 누르면 등록 끝. 종목은 그대로 남아 있으니 바로 다음 영상 주소를 붙여넣을 수 있어요.</li>
             <li>잘못 등록했다면 등록 직후 10초 안에 &quot;되돌리기&quot;, 그 뒤에는 아래 목록에서 수정·삭제하세요.</li>
           </ol>
@@ -888,7 +951,7 @@ export default function VideoRegisterPage() {
           <div>
             <div className="panel-title">{isAdmin ? '최근 등록된 영상 (팀 전체)' : '내가 등록한 영상'}</div>
             <p className="panel-subtitle">
-              최근 20개 · 제목을 누르면 유튜브가 열립니다. 종목이나 형식이 틀렸다면 <strong>수정</strong>, 잘못 올렸다면 <strong>삭제</strong>를 누르세요.
+              최근 20개 · 제목을 누르면 유튜브가 열려요. 종목이나 형식이 틀렸다면 <strong>수정</strong>, 잘못 올렸다면 <strong>삭제</strong>를 누르세요.
               {isAdmin ? ' (관리자는 모든 영상을 고칠 수 있어요)' : ''}
             </p>
           </div>
@@ -922,10 +985,10 @@ export default function VideoRegisterPage() {
               </button>
             }
           >
-            위 칸에 유튜브 주소와 종목명을 넣으면 여기에 쌓입니다.
+            위 칸에 유튜브 주소와 종목명을 넣으면 여기에 쌓여요.
           </EmptyState>
         ) : (
-          <MyVideoList items={items} newIds={newIds} stockChoices={stockChoices} onUpdated={onUpdated} onDeleted={onDeleted} />
+          <MyVideoList items={items} newIds={newIds} stockChoices={stockChoices} onUpdated={stableUpdated} onDeleted={stableDeleted} />
         )}
       </div>
     </>

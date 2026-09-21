@@ -21,7 +21,7 @@ export function friendlyMessage(status: number, raw: unknown, fallback: string):
 }
 
 export type V3RequestOptions = {
-  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE'
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
   body?: unknown
   // 화면을 떠나거나 필터를 바꿔 더는 필요 없는 요청을 취소할 때 쓴다.
   signal?: AbortSignal
@@ -41,7 +41,15 @@ export async function v3Request<T = any>(path: string, opts: V3RequestOptions = 
     const res = await authedFetchJson<T>(path, init)
     // 본문을 읽는 도중에 취소되면 빈 값이 성공처럼 돌아올 수 있어서, 취소됐다면 결과를 버린다.
     if (opts.signal?.aborted) return { ok: false, status: 0, data: {} as T, error: null, aborted: true }
-    if (res.ok) return { ok: true, status: res.status, data: res.data, error: null }
+    if (res.ok) {
+      // 조회(GET)인데 내용이 비어 있으면(중간에서 화면 대신 다른 문서가 오는 경우) 성공으로 보지 않는다. 그대로 쓰면 화면이 깨진다.
+      const isRead = !opts.method || opts.method === 'GET'
+      const d = res.data as unknown
+      if (isRead && (!d || typeof d !== 'object' || Object.keys(d as object).length === 0)) {
+        return { ok: false, status: 502, data: {} as T, error: friendlyMessage(502, undefined, fallback) }
+      }
+      return { ok: true, status: res.status, data: res.data, error: null }
+    }
     return { ok: false, status: res.status, data: res.data, error: friendlyMessage(res.status, (res.data as any)?.error, fallback) }
   } catch (e) {
     if (opts.signal?.aborted || (e as { name?: string } | null)?.name === 'AbortError') {

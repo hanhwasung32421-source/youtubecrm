@@ -6,7 +6,6 @@ import { getBearerToken, getProfileByAccessToken } from '@/lib/auth/session'
 import { errorResponse } from '@/lib/api/error-response'
 import { V5_MISSING_TABLE_MESSAGE, V5_TABLES } from '@/lib/v5/tables'
 import { isAdminRoleType } from '@/lib/v5/menu'
-import type { StaffUser } from '@/lib/v5/types'
 
 // V5 테이블이 없을 때 PostgREST가 내는 오류.
 export function isMissingTableError(error: unknown) {
@@ -20,7 +19,7 @@ export function missingTableResponse() {
   return NextResponse.json({ error: V5_MISSING_TABLE_MESSAGE }, { status: 409 })
 }
 
-// 조회 전용 분석 응답(점수판/성공 공식/실험 목록): 브라우저가 15초는 그대로 쓰고, 45초 동안은 먼저 보여 주며 뒤에서 새로 받는다.
+// 조회 전용 분석 응답(점수판/실험 목록): 브라우저가 15초는 그대로 쓰고, 45초 동안은 먼저 보여 주며 뒤에서 새로 받는다.
 // 로그인한 사람마다 내용이 다르므로 private + Vary: Authorization(다른 계정에게 남의 응답이 보이면 안 된다).
 export const READ_CACHE_CONTROL = 'private, max-age=15, stale-while-revalidate=45'
 
@@ -85,7 +84,7 @@ export type Session = Awaited<ReturnType<typeof getProfileByAccessToken>> & { is
 
 export async function getSession(request: Request): Promise<Session> {
   const token = getBearerToken(request)
-  if (!token) throw new Error('로그인이 필요합니다.')
+  if (!token) throw new Error('로그인이 필요해요.')
   const session = await getProfileByAccessToken(token)
   return { ...session, isAdmin: isAdminRoleType(session.profile.role_type) }
 }
@@ -178,13 +177,6 @@ export async function loadUserMap(supabaseAdmin: Session['supabaseAdmin'], ids?:
   return map
 }
 
-export async function loadStaffUsers(supabaseAdmin: Session['supabaseAdmin']): Promise<StaffUser[]> {
-  const { data } = await supabaseAdmin.from(V5_TABLES.crmUsers).select('id, name, role_type, employment_status').order('name', { ascending: true })
-  return ((data || []) as Array<{ id: string; name: string; role_type: string; employment_status: string | null }>)
-    .filter((u) => u.role_type !== 'retired' && u.employment_status !== 'retired')
-    .map((u) => ({ id: u.id, name: u.name, role_type: u.role_type }))
-}
-
 // id 목록으로 영상을 조회(100개씩 나눠서). 없는 id는 결과에서 빠진다.
 export async function loadVideosByIds<T extends { id: string }>(supabaseAdmin: Session['supabaseAdmin'], ids: string[], columns: string): Promise<T[]> {
   const unique = Array.from(new Set(ids))
@@ -254,7 +246,6 @@ export const optionalText = z.preprocess(
   (v) => (typeof v === 'string' && v.trim() === '' ? null : v),
   z.string().trim().max(2000, '내용이 너무 길어요. 2000자 안으로 줄여 주세요.').nullable().optional()
 )
-export const amountSchema = z.coerce.number().int().min(0).max(1_000_000_000_000)
 export const uuidSchema = z.string().uuid('올바른 값이 아니에요.')
 
 // 작성자 본인 또는 관리자만 고치거나 지울 수 있다.

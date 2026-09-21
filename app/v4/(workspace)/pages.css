@@ -636,12 +636,6 @@
   animation: v4p-shimmer 1.4s ease infinite;
 }
 
-.v4-theme .v4p-skel-rows {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
 @keyframes v4p-shimmer {
   0% { background-position: 100% 50%; }
   100% { background-position: 0 50%; }
@@ -1620,10 +1614,6 @@
   line-height: 1.6;
   text-align: left;
   word-break: keep-all;
-}
-
-.v4-theme .v4p-termlabel {
-  display: inline;
 }
 
 /* ---- 표/타일 안의 눌러서 이동하는 것들 */

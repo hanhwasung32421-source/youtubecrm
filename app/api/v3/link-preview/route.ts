@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server'
 import { errorResponse } from '@/lib/api/error-response'
-import { extractYoutubeVideoId } from '@/lib/youtube/api'
 import { authenticate, loadActiveYoutubeApiKey } from '@/lib/v3/server'
-import { lookupYoutubeVideo, type LookupCode } from './youtube-lookup'
+import { checkRate, lookupYoutubeVideo, parseVideoId, type LookupCode } from './youtube-lookup'
 
 // 영상 등록 폼의 "이 영상이 맞나요?" 미리보기용. URL만으로 제목/썸네일/채널을 먼저 보여주고,
 // 실제 저장은 여전히 공용 POST /api/videos/create 가 담당한다(등록 시 다시 한 번 조회해 저장).
@@ -20,15 +19,32 @@ const MESSAGES: Record<LookupCode | 'no-key', string> = {
   unknown: '지금은 영상 정보를 확인할 수 없어요. 등록은 그대로 하실 수 있어요.'
 }
 
+// 화면에 그림으로 띄울 주소는 유튜브 이미지 서버(https)일 때만 내려 준다.
+function safeThumbnail(value: string | null): string | null {
+  if (!value) return null
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' && /(^|\.)(ytimg|ggpht)\.com$/i.test(url.hostname) ? url.toString() : null
+  } catch {
+    return null
+  }
+}
+
 export async function GET(request: Request) {
   const auth = await authenticate(request)
   if (!auth.ok) return auth.response
 
   try {
+    // 주소는 영상 번호(11자)를 꺼내는 데만 쓰고, 유튜브 공식 조회에는 그 번호만 보낸다(임의의 주소로는 어떤 요청도 보내지 않는다).
     const url = new URL(request.url).searchParams.get('url') || ''
-    const videoId = extractYoutubeVideoId(url)
+    const videoId = parseVideoId(url)
     if (!videoId) {
-      return NextResponse.json({ error: '유효한 유튜브 영상 주소가 아닙니다.', code: 'bad-url' }, { status: 400 })
+      return NextResponse.json({ error: '유튜브 영상 주소가 아니에요.', code: 'bad-url' }, { status: 400 })
+    }
+
+    // 한 사람이 짧은 시간에 너무 많이 부르면 유튜브 하루 한도가 줄어들어서 막는다(하루 15개 등록하는 직원에게는 충분한 양).
+    if (!checkRate(auth.profile.id)) {
+      return NextResponse.json({ error: '잠시 뒤에 다시 시도해 주세요.', code: 'unknown' }, { status: 429, headers: { 'Retry-After': '30' } })
     }
 
     const apiKey = await loadActiveYoutubeApiKey(auth.supabaseAdmin)
@@ -41,12 +57,12 @@ export async function GET(request: Request) {
     return NextResponse.json({
       title: meta.title,
       channelName: meta.channelName,
-      thumbnailUrl: meta.thumbnailUrl,
+      thumbnailUrl: safeThumbnail(meta.thumbnailUrl),
       publishedAt: meta.publishedAt,
       viewCount: meta.viewCount,
       durationSeconds: meta.durationSeconds
     })
   } catch (e) {
-    return errorResponse(e, '미리보기를 불러오지 못했습니다.')
+    return errorResponse(e, '미리보기를 불러오지 못했어요.')
   }
 }

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { Badge } from '@/components/v5/widget'
 import { progressCopy, undoSecondsLeft, type StockCount, type UndoEntry, type UndoState } from '@/components/v5/register-logic'
 import type { RegisterErrorInfo } from '@/components/v5/register-errors'
@@ -34,7 +34,7 @@ export function TodayGoal({ count, goal }: { count: number; goal: number }) {
 
 // ---- 오늘 등록한 종목별 개수 ----------------------------------------------------------------
 
-export function TodayStocks({ stocks }: { stocks: StockCount[] }) {
+export const TodayStocks = memo(function TodayStocks({ stocks }: { stocks: StockCount[] }) {
   if (stocks.length === 0) return null
   const total = stocks.reduce((sum, s) => sum + s.count, 0)
   return (
@@ -52,17 +52,17 @@ export function TodayStocks({ stocks }: { stocks: StockCount[] }) {
       </ul>
     </section>
   )
-}
+})
 
 // ---- 단축키 안내(키보드가 없는 기기에서는 CSS 가 숨긴다) ---------------------------------------------
 
-export function KeyboardHint() {
+export const KeyboardHint = memo(function KeyboardHint() {
   return (
     <div className="v5-kbd-hint">
       <kbd>Enter</kbd> 등록 · <kbd>Ctrl</kbd>+<kbd>Enter</kbd> 어느 칸에서든 등록 · <kbd>/</kbd> 주소칸으로 이동 · <kbd>Esc</kbd> 주소 지우기
     </div>
   )
-}
+})
 
 // ---- 결과 자리(높이 고정) --------------------------------------------------------------------
 
@@ -97,7 +97,7 @@ function UndoButton({ entry, state, onUndo, onExpire }: { entry: UndoEntry; stat
       className="button secondary sm"
       type="button"
       disabled={busy || seconds <= 0}
-      aria-label="방금 등록한 영상 되돌리기"
+      aria-label={state.phase === 'failed' ? '되돌리기 다시 시도' : '방금 등록한 영상 되돌리기'}
       onClick={onUndo}
     >
       {busy ? '되돌리는 중...' : state.phase === 'failed' ? '되돌리기 다시 시도' : '되돌리기'}
@@ -185,7 +185,7 @@ export function FeedbackSlot({
             <div
               className="v5-quickfix"
               onKeyDown={(e) => {
-                if (e.key === 'Escape') {
+                if (e.key === 'Escape' && !e.nativeEvent.isComposing) {
                   e.preventDefault()
                   e.stopPropagation()
                   setEditing(false)

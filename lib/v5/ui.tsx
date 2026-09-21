@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Drawer } from '@/components/v5/widget'
+import { todayYmd } from '@/lib/v5/format'
 
 // 성장 관리 4개 화면이 함께 쓰는 상호작용 조각: Esc 닫기, 기억되는 필터, 두 번 눌러 삭제, 폼 서랍.
 
@@ -35,6 +36,28 @@ export function useEscape(active: boolean, handler: () => void) {
       if (i >= 0) escapeStack.splice(i, 1)
     }
   }, [active])
+}
+
+// ---------------------------------------------------------------------------
+// 오늘 날짜(한국 시간). 화면을 밤새 켜 둬도 자정(한국 시간)이 지나면 새 날짜로 바뀐다("D+N", 이번 주 같은 값이 어제 것으로 남지 않게).
+// 첫 그림은 서버와 같은 값이고, 1분마다·탭으로 돌아올 때 날짜만 확인한다(바뀔 때만 다시 그린다).
+// ---------------------------------------------------------------------------
+export function useKstToday() {
+  const [today, setToday] = useState(todayYmd)
+  useEffect(() => {
+    const check = () => setToday((prev) => {
+      const next = todayYmd()
+      return next === prev ? prev : next
+    })
+    check()
+    const timer = window.setInterval(check, 60_000)
+    document.addEventListener('visibilitychange', check)
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', check)
+    }
+  }, [])
+  return today
 }
 
 // ---------------------------------------------------------------------------

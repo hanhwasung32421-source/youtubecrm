@@ -10,8 +10,6 @@ import { useUrlFilters } from '@/lib/v4/use-url-filters'
 import { useV4Query } from '@/lib/v4/use-v4-query'
 import type { Kpis, PeriodDays, StaffStat } from '@/lib/v4/analytics'
 import { STAFF_SPEC, rankingHref, type StaffFilters } from '@/lib/v4/page-filters'
-import { buildCsv, csvFilename } from '@/lib/v4/csv'
-import { downloadCsvFile } from '@/lib/v4/download'
 import { buildStaffTeamLite, staffStrength } from '@/lib/v4/insights'
 import { DAILY_TARGET, kstHourOf, todayStatus, type TodayState } from '@/lib/v4/staff-today'
 import { CopyLinkButton, CsvButton, GlossaryHint, GlossaryList, SyncStatsButton } from '@/lib/v4/page-tools'
@@ -145,8 +143,9 @@ function StaffScreen() {
   const perPerson = ratioOf(data?.team.videoCount, teamCount)
   const onSyncMessage = (message: string, tone: 'success' | 'error') => (tone === 'success' ? showSuccess(message) : showError(message))
 
-  const exportCsv = () => {
+  const exportCsv = async () => {
     if (rows.length === 0) return
+    const [{ buildCsv, csvFilename }, { downloadCsvFile }] = await Promise.all([import('@/lib/v4/csv'), import('@/lib/v4/download')])
     const headers = ['순위', '담당자', '영상 수', '조회수 합계', '영상당 평균 조회수', '롱폼 수', '숏폼 수', '좋아요 비율(%)', '오늘 등록 수', '오늘 목표', '한 줄 강점']
     const body = rows.map((r) => [
       r.rank,
@@ -162,14 +161,14 @@ function StaffScreen() {
       strengths.get(r.userId) ?? ''
     ])
     downloadCsvFile(csvFilename(`담당자비교_최근${period}일`), buildCsv(headers, body))
-    showSuccess(`담당자 ${fmtNumber(rows.length)}명의 표를 CSV로 저장했어요.`)
+    showSuccess(`담당자 ${fmtNumber(rows.length)}명의 표를 엑셀 파일로 저장했어요.`)
   }
 
   return (
     <>
       <PageHeader
         title="담당자 성과 비교"
-        subtitle="담당자별로 얼마나 올리고 얼마나 조회됐는지 비교합니다."
+        subtitle="담당자별로 얼마나 올리고 얼마나 조회됐는지 비교해 볼 수 있어요."
         actions={
           <>
             <CopyLinkButton getUrl={shareUrl} onResult={(ok) => (ok ? showSuccess('이 화면 링크를 복사했어요. 받은 사람도 같은 조건으로 볼 수 있어요.') : showError('링크를 복사하지 못했어요. 주소창의 주소를 직접 복사해 주세요.'))} />
@@ -195,7 +194,7 @@ function StaffScreen() {
           <ErrorPanel message={error} status={status} onRetry={reload} busy={fetching} />
         ) : noData ? (
           <EmptyPanel title="비교할 담당자가 아직 없어요">
-            이 화면은 담당자별로 올린 영상 수와 조회수를 나란히 보여줘요. 활동 중인 직원 계정이 있고 영상이 등록되면 여기에 나타납니다.
+            이 화면은 담당자별로 올린 영상 수와 조회수를 나란히 보여줘요. 활동 중인 직원 계정이 있고 영상이 등록되면 여기에 나타나요.
           </EmptyPanel>
         ) : (
           <>
@@ -218,7 +217,7 @@ function StaffScreen() {
                 <p className="v4p-hero-detail">
                   {leader.name}님이 영상 {fmtNumberOr(leader.videoCount)}개로 조회수 합계 <strong>{fmtShortOr(leader.totalViews)}회</strong>를 기록했어요.
                   {avgLeader && avgLeader.userId !== leader.userId ? (
-                    <> 영상 1개당 평균은 <strong>{avgLeader.name}님</strong>이 {fmtShortOr(avgLeader.avgViews)}회로 가장 높아요.</>
+                    <> 영상당 평균 조회수는 <strong>{avgLeader.name}님</strong>이 {fmtShortOr(avgLeader.avgViews)}회로 가장 높아요.</>
                   ) : null}
                 </p>
               ) : zeroViews ? (
@@ -249,7 +248,7 @@ function StaffScreen() {
                 hint={`담당자 ${fmtNumberOr(teamCount)}명, 1인 평균 ${perPerson === null ? '-' : perPerson.toFixed(1)}개예요.`}
                 loading={!data}
               />
-              <Kpi label="영상 1개당 평균 조회수" value={`${fmtShortOr(data?.team.avgViews)}회`} hint="팀 전체의 보통 수준이에요. 담당자별 평균과 비교해 보세요." loading={!data} term="avgViews" />
+              <Kpi label="영상당 평균 조회수" value={`${fmtShortOr(data?.team.avgViews)}회`} hint="팀 전체의 보통 수준이에요. 담당자별 평균과 비교해 보세요." loading={!data} term="avgViews" />
             </KpiRow>
 
             {hasTodayData || !data ? (
@@ -343,7 +342,7 @@ function StaffScreen() {
             <Card
               title="담당자별 자세히 보기"
               sub="조회수 합계가 높은 순이에요. 이름을 누르면 그 담당자의 영상 순위로 넘어가요. 막대 7개는 최근 7일 동안 하루에 몇 개 올렸는지 보여줘요."
-              actions={<CsvButton onExport={exportCsv} disabled={!data || rows.length === 0} />}
+              actions={<CsvButton onExport={() => void exportCsv()} disabled={!data || rows.length === 0} />}
             >
               {!data ? (
                 <SkelTable rows={5} />

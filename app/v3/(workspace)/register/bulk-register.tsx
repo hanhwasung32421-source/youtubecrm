@@ -1,9 +1,10 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { SegmentedType } from '@/components/v3/segmented'
 import { MAX_BULK_ROWS, parseBulk, shortUrl } from './bulk-parse'
-import { registerVideo, type ContentType } from './register-api'
+import { lookupVideo, registerVideo, type ContentType } from './register-api'
+import { isImeKey } from './register-logic'
 
 type RowState = 'queued' | 'running' | 'done' | 'failed'
 type Result = { state: RowState; error?: string }
@@ -27,7 +28,7 @@ type Row =
 
 const CONCURRENCY = 2
 
-export function BulkRegister({
+export const BulkRegister = memo(function BulkRegister({
   active,
   seed,
   stockListId,
@@ -67,9 +68,13 @@ export function BulkRegister({
     if (active && !touchOnly.current) textRef.current?.focus()
   }, [active, touchOnly])
 
-  // 하나씩 등록 칸에서 여러 주소를 붙여넣어 옮겨 온 경우 그 내용을 채운다.
+  // 하나씩 등록 칸에서 여러 주소를 붙여넣어 옮겨 온 경우 그 내용을 채운다(이전 표시는 비운다).
   useEffect(() => {
-    if (seed) setText(seed.text)
+    if (!seed) return
+    setText(seed.text)
+    setOverrides({})
+    setRemoved(new Set())
+    setResults({})
   }, [seed])
 
   const parsed = useMemo(() => parseBulk(text), [text])
@@ -141,7 +146,14 @@ export function BulkRegister({
           continue
         }
         setResult(row.videoId, { state: 'running' })
-        const result = await registerVideo({ url: row.url, contentType: row.type, stockName: row.stock })
+        // 다른 직원이 이미 올린 영상은 덮어쓰지 않고 건너뛴다. 내가 전에 등록한 영상은 메모를 그대로 두고 다시 등록한다.
+        const lookup = await lookupVideo(row.videoId)
+        if (lookup && lookup.found && !lookup.mine) {
+          setResult(row.videoId, { state: 'failed', error: '다른 직원이 이미 올린 영상이에요. 하나씩 등록에서 확인해 주세요.' })
+          continue
+        }
+        const memo = lookup && lookup.found ? lookup.video.content_category || undefined : undefined
+        const result = await registerVideo({ url: row.url, contentType: row.type, stockName: row.stock, contentCategory: memo })
         if (result.ok) {
           setResult(row.videoId, { state: 'done' })
           if (result.id) okIds.push(result.id)
@@ -171,8 +183,10 @@ export function BulkRegister({
   }
 
   const focusNextStock = (index: number) => {
-    const el = document.querySelector<HTMLInputElement>(`[data-bulk-stock="${index + 1}"]`)
-    el?.focus()
+    // 주소가 아닌 줄(종목 칸이 없는 줄)은 건너뛰고 그다음 종목 칸으로 간다.
+    const inputs = Array.from(document.querySelectorAll<HTMLInputElement>('input[data-bulk-stock]'))
+    const next = inputs.find((el) => Number(el.dataset.bulkStock) > index && !el.readOnly)
+    next?.focus()
   }
 
   const locked = running || !!disabled
@@ -293,9 +307,11 @@ export function BulkRegister({
                       readOnly={!editable}
                       onChange={(e) => patchOverride(row.videoId, { stock: e.target.value })}
                       onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                        if (e.key === 'Enter' && !isImeKey(e)) {
                           e.preventDefault()
                           focusNextStock(index)
+                        } else if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                          e.preventDefault() // 조합이 끝난 직후의 Enter(사파리)는 다음 칸으로 넘기지 않는다
                         }
                       }}
                     />
@@ -395,4 +411,4 @@ export function BulkRegister({
       ) : null}
     </div>
   )
-}
+})

@@ -1,11 +1,12 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { SegmentedType } from '@/components/v3/segmented'
 import { Tag } from '@/components/v3/ui'
 import { isTodayKst } from '@/lib/v3/engagement'
 import { formatDateTime, formatNumber } from '@/lib/v3/format'
 import { callMyVideo, type ContentType } from './register-api'
+import { isImeKey } from './register-logic'
 
 export type MineVideo = {
   id: string
@@ -232,6 +233,9 @@ function VideoRow({
                   setStock(e.target.value)
                   if (error) setError('')
                 }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && isImeKey(e) && !e.nativeEvent.isComposing) e.preventDefault()
+                }}
               />
             </div>
             <div className="field">
@@ -329,6 +333,10 @@ function VideoRow({
                     setFixValue(e.target.value)
                     if (fixError) setFixError('')
                   }}
+                  onKeyDown={(e) => {
+                    // 한글 조합을 끝내려고 누른 Enter가 저장으로 이어지지 않게 한다.
+                    if (e.key === 'Enter' && isImeKey(e) && !e.nativeEvent.isComposing) e.preventDefault()
+                  }}
                 />
                 <button type="submit" className="button xs" disabled={fixBusy}>
                   {fixBusy ? '저장 중…' : '저장'}
@@ -366,7 +374,7 @@ function VideoRow({
   )
 }
 
-export function MyVideosList({
+export const MyVideosList = memo(function MyVideosList({
   videos,
   highlightIds,
   quickFixId,
@@ -395,7 +403,7 @@ export function MyVideosList({
         </div>
         {today.length === 0 && earlier.length === 0 ? (
           <div className="data-table-row v3-vrow-open">
-            <div className="muted small">등록된 영상이 없습니다.</div>
+            <div className="muted small">등록된 영상이 없어요.</div>
           </div>
         ) : null}
         {today.map((video) => (
@@ -414,4 +422,4 @@ export function MyVideosList({
       ) : null}
     </>
   )
-}
+})

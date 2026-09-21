@@ -27,16 +27,6 @@ export function bucketize(cells: HeatCell[]) {
   return { byWeekday, byHour }
 }
 
-// 추천: API 추천(같은 칸 영상 2개 이상)을 우선, 없으면 1개짜리라도 참고용으로 상위 3개
-export function pickSlots(cells: HeatCell[], recommendations: HeatCell[]) {
-  if (recommendations.length > 0) return { picks: recommendations, isReference: false }
-  const fallback = cells
-    .filter((c) => c.count >= 1 && c.avgViews > 0)
-    .sort((a, b) => b.avgViews - a.avgViews || b.count - a.count)
-    .slice(0, 3)
-  return { picks: fallback, isReference: fallback.length > 0 }
-}
-
 // 칸 색의 진하기 (0 이면 칠하지 않음). 0.12 ~ 0.9
 export function heatAlpha(value: number, max: number) {
   if (!Number.isFinite(value) || !Number.isFinite(max) || value <= 0 || max <= 0) return 0

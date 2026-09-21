@@ -2,7 +2,8 @@
 
 import '../analysis.css'
 import Link from 'next/link'
-import { Suspense, useEffect, useMemo } from 'react'
+import dynamic from 'next/dynamic'
+import { Suspense, memo, useEffect, useMemo } from 'react'
 import { PageHeader } from '@/components/v3/app-shell'
 import { Toast, useToast } from '@/components/toast'
 import { Section, Tag } from '@/components/v3/ui'
@@ -14,10 +15,10 @@ import { formatCompactNumber, formatNumber, formatPct } from '@/lib/v3/format'
 import { pctChange } from '@/lib/v3/engagement'
 import { lifecycleHref } from '@/lib/v3/links'
 import { sortEngagementRows, type EngagementRow } from '@/lib/v3/sorting'
-import { engagementCsv } from '@/lib/v3/table-rows'
 import {
   AnswerCard,
   AnswerSkeleton,
+  ChartSkeleton,
   EmptyBlock,
   ErrorBlock,
   HowTo,
@@ -35,10 +36,14 @@ import {
   useShowMore
 } from '../analysis-parts'
 import { FilterBar, GlossaryHelp, ShareTools, Term, type FilterField } from '../analysis-tools'
-import { HistogramChart, ScatterChart, type ScatterDot } from '../analysis-charts'
+import type { ScatterDot } from '../analysis-charts'
 
+// 차트는 데이터가 오는 동안 따로 내려받는다(처음 화면을 가볍게).
+const HistogramChart = dynamic(() => import('../analysis-charts').then((m) => m.HistogramChart), { ssr: false, loading: () => <ChartSkeleton height={180} /> })
+const ScatterChart = dynamic(() => import('../analysis-charts').then((m) => m.ScatterChart), { ssr: false, loading: () => <ChartSkeleton height={280} /> })
+
+// 모든 비율은 % 단위(0~100)다.
 type EngagementResponse = {
-  summary: string
   videoCount: number
   weekCounts?: { thisWeek: number; lastWeek: number }
   kpis: {
@@ -49,10 +54,13 @@ type EngagementResponse = {
   distribution: { key: string; label: string; count: number }[]
   scatter: ScatterDot[]
   topComment: { id: string; label: string; sub?: string; value: number; viewCount?: number; youtubeUrl: string | null }[]
-  // 영상별 순위표 재료(정렬을 바꿔 볼 수 있다). 옛 응답에는 없을 수 있다.
+  // 영상별 순위표 재료(정렬을 바꿔 볼 수 있다). 정렬 기준마다 상위 rankLimit 개씩 들어 있다.
   videoRows?: EngagementRow[]
+  rankLimit?: number
+  // 영상이 너무 많아 오래된 영상이 계산에서 빠졌다
+  truncated?: boolean
+  loadedCount?: number
   staffOptions: { id: string; name: string }[]
-  staffIdFilter: string | null
 }
 
 // 구간 이름에 쉬운 뜻을 붙인다.
@@ -88,7 +96,48 @@ function EngagementSkeleton() {
   )
 }
 
-const HEADER_PROPS = { icon: '💬', title: '참여 현황', subtitle: '시청자가 좋아요·댓글로 얼마나 반응하는지 한눈에 봅니다.' }
+// 정렬 기준에 맞는 값을 오른쪽 큰 글자로, 나머지는 작은 글자로 보여 준다.
+function rowValue(row: EngagementRow, sort: string) {
+  const views = row.viewCount ? `조회수 ${formatCompactNumber(row.viewCount)}회` : ''
+  const withViews = (text: string) => (views ? `${views} · ${text}` : text)
+  if (sort === 'engagement') return { main: formatPct(row.engagementPct, 2), small: withViews(`100명 중 약 ${per100(row.engagementPct)}이 반응`) }
+  if (sort === 'views') return { main: `${formatNumber(row.viewCount)}회`, small: `참여율 ${formatPct(row.engagementPct, 2)}` }
+  if (sort === 'recent') return { main: formatPct(row.engagementPct, 2), small: withViews('참여율') }
+  return { main: formatPct(row.commentRatePct, 2), small: withViews(`100명 중 약 ${per100(row.commentRatePct)}이 댓글`) }
+}
+
+// 순위표의 한 줄. 더 보기를 눌러 줄이 늘어도 이미 그려진 줄은 다시 그리지 않는다.
+const RankRow = memo(function RankRow({ row, rank, sort }: { row: EngagementRow; rank: number; sort: string }) {
+  const value = rowValue(row, sort)
+  return (
+    <div className="v3a-row">
+      <span className="v3-rank">{rank}</span>
+      <div className="v3a-row-main">
+        <div className="v3a-row-title" title={row.title}>
+          {row.youtubeUrl ? (
+            <a className="v3-link" href={row.youtubeUrl} target="_blank" rel="noreferrer">
+              {row.title}
+            </a>
+          ) : (
+            row.title
+          )}
+          {row.stockName ? <Tag tone="blue">{row.stockName}</Tag> : null}
+        </div>
+        <div className="v3a-row-links">
+          <Link className="v3-link" href={lifecycleHref(row.id)}>
+            조회수 성장 곡선 보기
+          </Link>
+        </div>
+      </div>
+      <div className="v3a-row-value">
+        {value.main}
+        <small>{value.small}</small>
+      </div>
+    </div>
+  )
+})
+
+const HEADER_PROPS = { icon: '💬', title: '참여 현황', subtitle: '시청자가 좋아요·댓글로 얼마나 반응하는지 한눈에 봐요.' }
 
 // useSearchParams 는 Suspense 안에서만 쓸 수 있다(Next 16).
 export default function EngagementPage() {
@@ -149,9 +198,11 @@ function EngagementView() {
         publishedAt: null,
         youtubeUrl: t.youtubeUrl
       }))
-    return sortEngagementRows(base, filters.sort)
+    const sorted = sortEngagementRows(base, filters.sort)
+    // 서버는 정렬 기준마다 상위 N개의 합집합을 준다. 그중 이 정렬의 진짜 상위 N개까지만 순위로 보여 준다.
+    return data.rankLimit ? sorted.slice(0, data.rankLimit) : sorted
   }, [data, filters.sort])
-  const rowsMore = useShowMore(rows, 5, 10)
+  const rowsMore = useShowMore(rows, 10, 50)
 
   const staffOptions = data?.staffOptions || []
   const staffName = staffOptions.find((s) => s.id === filters.staff)?.name
@@ -179,7 +230,7 @@ function EngagementView() {
     >
       <ShareTools
         getLink={() => f.shareUrl()}
-        csv={{ baseName: '참여 현황 영상별 순위', rowCount: rows.length, build: () => engagementCsv(rows) }}
+        csv={{ baseName: '참여 현황 영상별 순위', rowCount: rows.length, build: async () => (await import('@/lib/v3/table-rows')).engagementCsv(rows) }}
         notify={{ success: showSuccess, error: showError }}
       />
     </FilterBar>
@@ -236,7 +287,7 @@ function EngagementView() {
       headline += ` ${change.text}.`
     }
   } else {
-    headline = `이번 주에 올린 영상이 아직 없어요. ${filters.period === 'all' ? '지금까지 영상 전체로는' : '고른 기간의 영상으로는'} 보는 사람 100명 중 약 ${per100(overall)}이 반응했어요.`
+    headline = `이번 주에 조회수가 잡힌 영상이 아직 없어요. ${filters.period === 'all' ? '지금까지 영상 전체로는' : '고른 기간의 영상으로는'} 보는 사람 100명 중 약 ${per100(overall)}이 반응했어요.`
   }
 
   const buckets = data.distribution.map((b) => ({ ...b, label: BUCKET_LABELS[b.key] || b.label }))
@@ -246,17 +297,7 @@ function EngagementView() {
       ? `${scope} 영상 중 ${formatNumber(biggest.count)}개(${formatPct((biggest.count / data.videoCount) * 100, 0)})가 ‘${BUCKET_LABELS[biggest.key] || biggest.label}’ 구간에 모여 있어요.`
       : null
 
-  const deltaText = thisWeekCount > 0 && weekChange !== null ? `${change.arrow} ${change.text}`.trim() : thisWeekCount > 0 ? '지난주 영상이 없어 비교하지 않았어요' : '이번 주 영상 없음'
-
-  // 정렬 기준에 맞는 값을 오른쪽 큰 글자로, 나머지는 작은 글자로 보여 준다.
-  const rowValue = (row: EngagementRow) => {
-    const views = row.viewCount ? `조회수 ${formatCompactNumber(row.viewCount)}회` : ''
-    const withViews = (text: string) => (views ? `${views} · ${text}` : text)
-    if (filters.sort === 'engagement') return { main: formatPct(row.engagementPct, 2), small: withViews(`100명 중 약 ${per100(row.engagementPct)}이 반응`) }
-    if (filters.sort === 'views') return { main: `${formatNumber(row.viewCount)}회`, small: `참여율 ${formatPct(row.engagementPct, 2)}` }
-    if (filters.sort === 'recent') return { main: formatPct(row.engagementPct, 2), small: withViews('참여율') }
-    return { main: formatPct(row.commentRatePct, 2), small: withViews(`100명 중 약 ${per100(row.commentRatePct)}이 댓글`) }
-  }
+  const deltaText = thisWeekCount > 0 && weekChange !== null ? `${change.arrow} ${change.text}`.trim() : thisWeekCount > 0 ? '지난주 영상이 없어 비교하지 않았어요' : '이번 주 조회수가 잡힌 영상 없음'
 
   return (
     <>
@@ -305,7 +346,10 @@ function EngagementView() {
               hint="조회수 대비 댓글 비율이에요. 댓글은 좋아요보다 남기기 어려워서, 높으면 팬이 생기고 있다는 신호예요."
             />
           </StatGrid>
-          <p className="v3a-note">분석 대상: 조회수가 있는 영상 {formatNumber(data.videoCount)}개 (조회수 0인 영상은 제외)</p>
+          <p className="v3a-note">
+            분석 대상: 조회수가 있는 영상 {formatNumber(data.videoCount)}개 (조회수 0인 영상은 제외)
+            {data.truncated ? ` · 영상이 많아서 가장 최근에 등록한 ${formatNumber(data.loadedCount ?? 0)}개까지만 계산했어요.` : ''}
+          </p>
 
           <GlossaryHelp page="engagement" keys={['engagement', 'commentRate']} />
 
@@ -313,7 +357,7 @@ function EngagementView() {
           <Section
             title="영상별 반응 순위"
             count={rows.length}
-            description="조회수 100회 이상 영상만 순위에 넣어요. 위의 ‘순위 정렬’로 기준을 바꿔 볼 수 있어요. 반응이 좋은 영상은 후속편이나 같은 종목 영상을 만들기 좋아요."
+            description={`조회수 100회 이상 영상만 순위에 넣어요. 위의 ‘순위 정렬’로 기준을 바꿔 볼 수 있어요. 반응이 좋은 영상은 후속편이나 같은 종목 영상을 만들기 좋아요.${data.rankLimit && rows.length >= data.rankLimit ? ` (위쪽 ${formatNumber(data.rankLimit)}개까지만 보여요.)` : ''}`}
           >
             {rows.length === 0 ? (
               <EmptyBlock title="아직 순위에 넣을 영상이 없어요" actionLabel="조회수 새로고침 누르기" actionHref="/v3/lifecycle">
@@ -322,35 +366,9 @@ function EngagementView() {
             ) : (
               <>
                 <div className="v3a-list">
-                  {rowsMore.visible.map((row, index) => {
-                    const value = rowValue(row)
-                    return (
-                      <div className="v3a-row" key={row.id}>
-                        <span className="v3-rank">{index + 1}</span>
-                        <div className="v3a-row-main">
-                          <div className="v3a-row-title" title={row.title}>
-                            {row.youtubeUrl ? (
-                              <a className="v3-link" href={row.youtubeUrl} target="_blank" rel="noreferrer">
-                                {row.title}
-                              </a>
-                            ) : (
-                              row.title
-                            )}
-                            {row.stockName ? <Tag tone="blue">{row.stockName}</Tag> : null}
-                          </div>
-                          <div className="v3a-row-links">
-                            <Link className="v3-link" href={lifecycleHref(row.id)}>
-                              조회수 성장 곡선 보기
-                            </Link>
-                          </div>
-                        </div>
-                        <div className="v3a-row-value">
-                          {value.main}
-                          <small>{value.small}</small>
-                        </div>
-                      </div>
-                    )
-                  })}
+                  {rowsMore.visible.map((row, index) => (
+                    <RankRow key={row.id} row={row} rank={index + 1} sort={filters.sort} />
+                  ))}
                 </div>
                 <MoreButton remaining={rowsMore.remaining} onClick={rowsMore.more} />
               </>

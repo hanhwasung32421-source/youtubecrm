@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { MAX_BULK_ROWS, parseBulkText, removeLine, type ParsedLine } from '@/components/v4/register-bulk'
 import { registerVideo, type ContentType } from '@/components/v4/register-api'
 import { normalizeStockName } from '@/components/v4/register-utils'
@@ -36,7 +36,7 @@ function effectiveFormat(row: Row, fallback: ContentType): ContentType {
   return row.shorts ? 'shortform' : fallback
 }
 
-export function BulkRegister({
+export const BulkRegister = memo(function BulkRegister({
   seed,
   defaultFormat,
   stockChoices,
@@ -238,7 +238,7 @@ export function BulkRegister({
               reparse(e.target.value)
             }}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.nativeEvent.isComposing) {
+              if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.nativeEvent.isComposing && e.keyCode !== 229) {
                 e.preventDefault()
                 void run('ready')
               }
@@ -246,7 +246,7 @@ export function BulkRegister({
           />
           <div className="v4-hint-slot" id="v4-bulk-help">
             <span className="v4-hint">
-              한 줄에 <strong>주소 종목명</strong> 형태로 적어 주세요. 종목명을 빼면 아래 공통 종목이 쓰입니다. 쇼츠 주소는 숏폼으로 자동 표시돼요.
+              한 줄에 <strong>주소 종목명</strong> 형태로 적어 주세요. 종목명을 빼면 아래 공통 종목이 쓰여요. 쇼츠 주소는 숏폼으로 자동 표시돼요.
             </span>
           </div>
         </div>
@@ -339,7 +339,7 @@ export function BulkRegister({
                           disabled={!editable}
                           onChange={(e) => patchRow(row.key, { stock: e.target.value, stockEdited: true })}
                           onKeyDown={(e) => {
-                            if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                            if (e.key === 'Enter' && !e.nativeEvent.isComposing && e.keyCode !== 229) {
                               e.preventDefault()
                               focusNextStock(e.currentTarget)
                             }
@@ -448,4 +448,4 @@ export function BulkRegister({
       ) : null}
     </div>
   )
-}
+})

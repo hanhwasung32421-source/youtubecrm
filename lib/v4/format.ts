@@ -20,27 +20,6 @@ export function fmtPercent(ratio: number | null | undefined, digits = 2) {
   return `${(n * 100).toFixed(digits)}%`
 }
 
-export function fmtSignedPercent(ratio: number | null | undefined, digits = 0) {
-  const n = Number(ratio || 0)
-  if (!Number.isFinite(n)) return '0%'
-  const sign = n > 0 ? '+' : ''
-  return `${sign}${(n * 100).toFixed(digits)}%`
-}
-
-export function fmtDateTimeKst(iso: string | null | undefined) {
-  if (!iso) return '-'
-  const date = new Date(iso)
-  if (Number.isNaN(date.getTime())) return '-'
-  return new Intl.DateTimeFormat('ko-KR', {
-    timeZone: 'Asia/Seoul',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false
-  }).format(date)
-}
-
 export function fmtDateKst(iso: string | null | undefined) {
   if (!iso) return '-'
   const date = new Date(iso)
@@ -74,12 +53,6 @@ export function shortYmd(ymd: string) {
 }
 
 export const WEEKDAY_LABELS = ['일', '월', '화', '수', '목', '금', '토'] as const
-
-export function contentTypeLabel(contentType: string | null | undefined) {
-  if (contentType === 'shortform') return '숏폼'
-  if (contentType === 'longform') return '롱폼'
-  return '기타'
-}
 
 // ---------------------------------------------------------------- 분석 화면용 쉬운 표기 (Round 1 추가)
 

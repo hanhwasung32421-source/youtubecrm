@@ -12,30 +12,12 @@ const ISO_WEEK_RE = /^(\d{4})-W(\d{2})$/
 
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
 
-export function formatKrw(value: number | null | undefined) {
-  if (!isNum(value)) return '-'
-  return `₩${krw.format(Math.round(value))}`
-}
-
-// 대시보드 KPI처럼 자리가 좁은 곳에서 "1.2억", "3,500만"으로 줄여 쓴다.
-export function formatKrwCompact(value: number | null | undefined) {
-  if (!isNum(value)) return '-'
-  const abs = Math.abs(value)
-  if (abs >= 100_000_000) return `${(value / 100_000_000).toFixed(abs >= 1_000_000_000 ? 0 : 1).replace(/\.0$/, '')}억`
-  if (abs >= 10_000) return `${krw.format(Math.round(value / 10_000))}만`
-  return krw.format(Math.round(value))
-}
-
-export function formatNumber(value: number | null | undefined) {
-  if (!isNum(value)) return '-'
-  return krw.format(value)
-}
-
 // 조회수처럼 큰 숫자를 좁은 칸에 "1.2만", "3,500만", "1.2억" 으로. 1만 미만은 그대로(1,234).
 export function formatCount(value: number | null | undefined) {
   if (!isNum(value)) return '-'
   const abs = Math.abs(value)
-  if (abs < 10_000) return krw.format(Math.round(value))
+  // 9,999.6 처럼 반올림하면 1만이 되는 값은 "10,000" 대신 "1만"으로 넘어간다.
+  if (Math.abs(Math.round(value)) < 10_000) return krw.format(Math.round(value))
   if (abs < 100_000_000) {
     // 1만 ~ 9,999만: 10만 미만은 소수 한 자리(1.2만), 이상은 정수(123만)
     const man = value / 10_000
@@ -48,32 +30,11 @@ export function formatCount(value: number | null | undefined) {
   return `${Math.abs(eok) < 10 ? eok.toFixed(1).replace(/\.0$/, '') : krw.format(Math.round(eok))}억`
 }
 
-// 비율(0~1)을 퍼센트로. 분모가 0이거나 숫자가 아니면 "-".
-export function formatPercent(ratio: number | null | undefined, digits = 1) {
-  if (!isNum(ratio)) return '-'
-  const text = (ratio * 100).toFixed(digits)
-  return `${text.replace(/\.0+$/, '')}%`
-}
-
-// 나눗셈: 분모가 0/NaN/Infinity 이면 null.
-export function safeDivide(numerator: number | null | undefined, denominator: number | null | undefined): number | null {
-  if (!isNum(numerator) || !isNum(denominator) || denominator === 0) return null
-  const result = numerator / denominator
-  return Number.isFinite(result) ? result : null
-}
-
 // 변화율 표시: "+32%", "-8%", 0 은 "0%". 숫자가 아니면 "-".
 export function formatSignedPercent(value: number | null | undefined) {
   if (!isNum(value)) return '-'
   const rounded = Math.round(value * 100) / 100
   return `${rounded > 0 ? '+' : ''}${rounded}%`
-}
-
-export function toYmd(date: Date) {
-  const y = date.getFullYear()
-  const m = String(date.getMonth() + 1).padStart(2, '0')
-  const d = String(date.getDate()).padStart(2, '0')
-  return `${y}-${m}-${d}`
 }
 
 // 오늘 날짜(KST, YYYY-MM-DD). 서버가 UTC로 돌아도 같은 값이 나온다.
@@ -82,9 +43,10 @@ export function todayYmd() {
 }
 
 export function addDays(ymd: string, days: number) {
+  // UTC 로 계산해서 서머타임이 있는 시간대의 브라우저에서도 하루가 어긋나지 않는다.
   const [y, m, d] = ymd.split('-').map(Number)
-  const date = new Date(y, m - 1, d + days)
-  return toYmd(date)
+  const date = new Date(Date.UTC(y, m - 1, d + days))
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`
 }
 
 // 두 날짜(YYYY-MM-DD) 사이 일수. b - a. 형식이 틀리면 0.
@@ -157,13 +119,6 @@ export function formatKstFull(value: string | number | Date | null | undefined) 
   return p ? `${p.y}-${pad2(p.m)}-${pad2(p.d)} ${pad2(p.hh)}:${pad2(p.mm)} (한국 시간)` : ''
 }
 
-// 예전 이름 유지: 이제 한국 시간 "9/21 (월) 14:30" 형식.
-export function formatDateTime(value: string | null | undefined) {
-  if (!value) return '-'
-  const p = kstParts(value)
-  return p ? formatKstShort(value) : value
-}
-
 // "방금 전 / 5분 전 / 3시간 전 / 어제 / 4일 전 / 9/21 (월)". 미래 시각이나 잘못된 값은 절대 시각으로.
 export function formatRelative(value: string | number | Date | null | undefined, now: number = Date.now()) {
   const p = kstParts(value)
@@ -183,12 +138,6 @@ export function formatRelative(value: string | number | Date | null | undefined,
   if (dayDiff <= 1) return '어제'
   if (dayDiff < 7) return `${dayDiff}일 전`
   return `${p.m}/${p.d} (${p.weekday})`
-}
-
-export function formatShortDate(ymd: string) {
-  if (!YMD_RE.test(ymd)) return '-'
-  const [, m, d] = ymd.split('-').map(Number)
-  return `${m}/${d}`
 }
 
 // ---------------------------------------------------------------------------
@@ -240,23 +189,4 @@ export function isoWeekRangeText(label: string) {
     return `${m}월 ${d}일`
   }
   return `${fmt(range.start)} ~ ${fmt(range.end)}`
-}
-
-// 시작일로부터 오늘까지 며칠째인지(시작일 당일 = 1일째).
-export function daysSince(ymd: string) {
-  return Math.max(diffDays(ymd, todayYmd()) + 1, 1)
-}
-
-// 실험 진행 일수(D+N): 시작일 당일이 D+0. 시작일이 미래거나 형식이 틀리면 0.
-export function daysRunningFrom(startedOn: string, today: string = todayYmd()) {
-  return Math.max(diffDays(startedOn, today), 0)
-}
-
-// datetime-local input 값(YYYY-MM-DDTHH:mm)으로 변환
-export function toDateTimeLocal(value: string | null | undefined) {
-  const date = value ? new Date(value) : new Date()
-  if (Number.isNaN(date.getTime())) return ''
-  const hh = String(date.getHours()).padStart(2, '0')
-  const mm = String(date.getMinutes()).padStart(2, '0')
-  return `${toYmd(date)}T${hh}:${mm}`
 }

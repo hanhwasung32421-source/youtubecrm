@@ -17,8 +17,8 @@ const SELECT = 'id, video_id, rating, note, reviewed_by, created_at'
 
 export async function POST(request: Request) {
   try {
-    const body = createSchema.parse(await request.json())
     const { profile, supabaseAdmin, isAdmin } = await authedContext(request)
+    const body = createSchema.parse(await request.json())
 
     const { data: video, error: videoError } = await supabaseAdmin
       .from(TABLES.videos)

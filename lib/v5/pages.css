@@ -17,15 +17,6 @@
   font-size: 12.5px;
 }
 
-.v5-theme .v5p-sample code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
-  background: var(--panel, #fff);
-  padding: 1px 6px;
-  border-radius: 6px;
-  color: var(--text, #14161f);
-}
-
 .v5-theme .v5p-answer {
   display: flex;
   align-items: center;
@@ -91,12 +82,6 @@
   min-width: 140px;
   padding: 8px 12px;
   font-size: 13px;
-}
-
-.v5-theme .v5p-loading {
-  margin-top: 24px;
-  color: var(--muted, #6b7280);
-  font-size: 14px;
 }
 
 .v5-theme .v5p-error {
@@ -545,12 +530,6 @@
   border-bottom: none;
 }
 
-.v5-theme .v5p-score-top {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
 .v5-theme .v5p-score-main {
   flex: 1;
   min-width: 0;
@@ -587,59 +566,6 @@
 .v5-theme .v5p-score-detail > summary {
   font-size: 12px;
   color: var(--muted, #6b7280);
-}
-
-.v5-theme .v5p-bars {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 10px;
-}
-
-.v5-theme .v5p-bar-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(80px, 1fr) minmax(70px, auto);
-  align-items: center;
-  gap: 12px;
-  font-size: 13px;
-}
-
-.v5-theme .v5p-bar-label {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.v5-theme .v5p-bar-track {
-  height: 10px;
-  border-radius: 6px;
-  background: var(--bg-soft, #eef0f7);
-  overflow: hidden;
-}
-
-.v5-theme .v5p-bar-fill {
-  height: 100%;
-  border-radius: 6px;
-  background: var(--primary, #4f46e5);
-}
-
-.v5-theme .v5p-bar-fill.excellent {
-  background: var(--success, #16a34a);
-}
-
-.v5-theme .v5p-bar-fill.fair {
-  background: var(--warning, #f59e0b);
-}
-
-.v5-theme .v5p-bar-fill.poor {
-  background: var(--danger, #dc2626);
-}
-
-.v5-theme .v5p-bar-value {
-  font-variant-numeric: tabular-nums;
-  font-weight: 700;
-  text-align: right;
 }
 
 .v5-theme .v5p-formula {
@@ -865,15 +791,6 @@
 
   .v5-theme .v5p-answer-text {
     font-size: 16px;
-  }
-
-  .v5-theme .v5p-bar-row {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 4px;
-  }
-
-  .v5-theme .v5p-bar-value {
-    text-align: left;
   }
 
   .v5-theme .v5p-score-detail {

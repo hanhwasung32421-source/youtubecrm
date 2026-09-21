@@ -59,10 +59,3 @@ export function nearestPoint(points: { x: number; y: number }[], px: number, py:
   }
   return best
 }
-
-// 분모가 0이거나 결과가 이상하면 null
-export function safeDivide(numerator: number, denominator: number): number | null {
-  if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator === 0) return null
-  const result = numerator / denominator
-  return Number.isFinite(result) ? result : null
-}

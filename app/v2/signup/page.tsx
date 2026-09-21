@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { PasswordField } from '@/components/v2/password-field'
+import { koreanOr } from '@/components/v2/register-utils'
 import { setCachedV2Me } from '@/components/v2/session-context'
 import { createSupabaseBrowserClient } from '@/lib/supabase/browser-client'
 import { clearMeCache, fetchMe } from '@/lib/session/me-client'
@@ -41,16 +42,26 @@ export default function SignupPage() {
   const phoneMidRef = useRef<HTMLInputElement | null>(null)
   const phoneLastRef = useRef<HTMLInputElement | null>(null)
   const antiBotRef = useRef<HTMLInputElement | null>(null)
+  const busyRef = useRef(false)
+  const challengeSeq = useRef(0)
+  const timers = useRef<number[]>([])
 
   const refresh = async () => {
     setAntiBotCode('')
+    // "새로 만들기"를 연달아 눌렀을 때 늦게 도착한 옛 숫자가 새 숫자를 덮어쓰지 않게 마지막 요청만 쓴다.
+    const seq = ++challengeSeq.current
     try {
       const res = await fetch('/api/auth/challenge')
       const data = (await res.json()) as { code: string }
-      setChallengeCode(data.code)
+      if (seq === challengeSeq.current) setChallengeCode(data.code)
     } catch {
-      setChallengeCode('----')
+      if (seq === challengeSeq.current) setChallengeCode('----')
     }
+  }
+
+  // 화면을 떠난 뒤에 예약된 이동·커서 옮기기가 실행되지 않게 한다.
+  const later = (fn: () => void, ms: number) => {
+    timers.current.push(window.setTimeout(fn, ms))
   }
 
   useEffect(() => {
@@ -58,6 +69,11 @@ export default function SignupPage() {
     clearMeCache()
     setCachedV2Me(null)
     void refresh()
+    const pending = timers.current
+    return () => {
+      for (const t of pending) window.clearTimeout(t)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const setFieldError = (key: FieldKey, text: string) => setFieldErrors((prev) => ({ ...prev, [key]: text }))
@@ -90,23 +106,23 @@ export default function SignupPage() {
       const data = await res.json().catch(() => ({}))
 
       if (!res.ok) {
-        setEmailCheckError(data?.error || '이메일 중복확인에 실패했습니다.')
+        setEmailCheckError(koreanOr(data?.error, '이메일 중복확인을 하지 못했어요. 잠시 뒤에 다시 시도해 주세요.'))
         return
       }
 
       if (data.exists) {
         setEmailChecked(false)
         setEmailCheckedValue('')
-        setEmailCheckError('이미 가입된 이메일입니다.')
+        setEmailCheckError('이미 가입된 이메일이에요. 로그인 화면에서 로그인해 주세요.')
         return
       }
 
       setEmailChecked(true)
       setEmailCheckedValue(email.trim())
-      setMessage('사용 가능한 이메일입니다.')
-      setTimeout(() => loginIdRef.current?.focus(), 0)
-    } catch (e: any) {
-      setEmailCheckError(e?.message || '이메일 중복확인 중 오류가 발생했습니다.')
+      setMessage('사용할 수 있는 이메일이에요.')
+      later(() => loginIdRef.current?.focus(), 0)
+    } catch (e: unknown) {
+      setEmailCheckError(e instanceof TypeError ? '인터넷 연결을 확인하고 다시 시도해 주세요.' : '이메일 중복확인 중 문제가 생겼어요. 잠시 뒤에 다시 시도해 주세요.')
     } finally {
       setLoading(false)
     }
@@ -149,7 +165,11 @@ export default function SignupPage() {
     }
     if (!validate()) return
 
+    // 가입 요청이 두 번 나가지 않게 한다(두 번째는 "이미 가입된 이메일"로 보여 헷갈린다).
+    if (busyRef.current) return
+    busyRef.current = true
     setLoading(true)
+    let leaving = false
 
     try {
       const res = await fetch('/api/auth/signup', {
@@ -169,7 +189,7 @@ export default function SignupPage() {
 
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
-        const text: string = data?.error || '회원가입에 실패했습니다.'
+        const text = koreanOr(data?.error, '회원가입을 하지 못했어요. 잠시 뒤에 다시 시도해 주세요.')
         const isAntiBot = /자동가입방지/.test(text)
         // 서버가 알려 준 문제를 해당 칸 아래에 붙여 준다.
         if (isAntiBot) {
@@ -192,10 +212,9 @@ export default function SignupPage() {
       })
 
       if (signInError || !signInData.session?.access_token) {
-        setMessage('회원가입이 완료되었습니다. 로그인 화면으로 이동해 주세요.')
-        setTimeout(() => {
-          router.push('/v2/login')
-        }, 1000)
+        setMessage('가입이 끝났어요. 로그인 화면으로 이동할게요.')
+        leaving = true
+        later(() => router.push('/v2/login'), 1000)
         return
       }
 
@@ -203,22 +222,27 @@ export default function SignupPage() {
       void fetch('/api/auth/log-login', {
         method: 'POST',
         headers: { Authorization: `Bearer ${signInData.session.access_token}` }
-      })
+      }).catch(() => undefined)
 
       try {
         await fetchMe(signInData.session.access_token)
       } catch {
-        setMessage('회원가입이 완료되었습니다. 자동 로그인 후 화면 이동에 실패했습니다.')
+        setMessage('가입은 끝났어요. 화면을 옮기지 못했으니 로그인 화면에서 로그인해 주세요.')
         return
       }
 
-      setMessage('회원가입이 완료되어 자동 로그인됩니다.')
+      setMessage('가입이 끝나서 바로 로그인했어요.')
+      leaving = true
       router.push(V2_HOME_HREF)
-    } catch (e: any) {
-      setError(e?.message || '회원가입 중 오류가 발생했습니다.')
+    } catch (e: unknown) {
+      setError(e instanceof TypeError ? '인터넷 연결을 확인하고 다시 시도해 주세요.' : '가입하는 중에 문제가 생겼어요. 잠시 뒤에 다시 시도해 주세요.')
       await refresh()
     } finally {
-      setLoading(false)
+      // 화면이 넘어가는 중에는 버튼을 계속 잠가 두어 두 번 누르는 일을 막는다.
+      if (!leaving) {
+        busyRef.current = false
+        setLoading(false)
+      }
     }
   }
 
@@ -271,7 +295,7 @@ export default function SignupPage() {
               </button>
             </div>
             <div className="v2-field-help" id="v2-su-email-help">
-              이미 가입한 이메일인지 확인해요. Enter를 눌러도 됩니다.
+              이미 가입한 이메일인지 확인해요. Enter를 눌러도 돼요.
             </div>
             {emailCheckError ? <div className="v2-field-error" id="v2-su-email-error" role="alert">{emailCheckError}</div> : null}
           </div>
@@ -385,6 +409,7 @@ export default function SignupPage() {
                     readOnly={loading}
                     aria-label="전화번호 가운데 4자리"
                     aria-invalid={fieldErrors.phone ? true : undefined}
+                    aria-describedby={fieldErrors.phone ? 'v2-su-phone-error' : undefined}
                     onChange={(e) => {
                       const next = e.target.value.replace(/[^\d]/g, '').slice(0, 4)
                       setPhoneMid(next)
@@ -403,11 +428,12 @@ export default function SignupPage() {
                     readOnly={loading}
                     aria-label="전화번호 마지막 4자리"
                     aria-invalid={fieldErrors.phone ? true : undefined}
+                    aria-describedby={fieldErrors.phone ? 'v2-su-phone-error' : undefined}
                     onChange={(e) => {
                       const next = e.target.value.replace(/[^\d]/g, '').slice(0, 4)
                       setPhoneLast(next)
                       clearFieldError('phone')
-                      if (next.length === 4) setTimeout(() => antiBotRef.current?.focus(), 0)
+                      if (next.length === 4) later(() => antiBotRef.current?.focus(), 0)
                     }}
                   />
                 </div>

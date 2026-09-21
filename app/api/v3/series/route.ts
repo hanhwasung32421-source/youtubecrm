@@ -1,36 +1,9 @@
-import { NextResponse } from 'next/server'
-import { ApiFail, apiError, authenticate, chunk, cleanText, isMissingTableError, isUuid, loadVideosByIds, noStoreJson, readJson } from '@/lib/v3/server'
+import { ApiFail, apiError, authenticate, chunk, cleanText, isUuid, loadVideosByIds, noStoreJson, readJson } from '@/lib/v3/server'
 import { assertCanMove, assertNameFree, assertOwnVideos, loadMemberships } from '@/lib/v3/series-access'
 import { V3_TABLES } from '@/lib/v3/tables'
+import { timeMs } from '@/lib/v3/engagement'
 
 const MAX_INITIAL_VIDEOS = 100
-
-// 시리즈/캠페인 목록(간단, 시리즈 선택용). 성과 지표가 포함된 목록은 GET /api/v3/format-series 사용.
-export async function GET(request: Request) {
-  const auth = await authenticate(request)
-  if (!auth.ok) return auth.response
-  const { supabaseAdmin } = auth
-
-  try {
-    const { data, error } = await supabaseAdmin
-      .from(V3_TABLES.videoSeries)
-      .select('id, name, stock_name')
-      .order('created_at', { ascending: false })
-      .limit(500)
-
-    if (error) {
-      if (isMissingTableError(error)) return NextResponse.json({ items: [], sample: true })
-      throw error
-    }
-
-    return NextResponse.json({
-      items: (data || []).map((row: any) => ({ id: row.id, name: row.name, stockName: row.stock_name })),
-      sample: false
-    })
-  } catch (e) {
-    return apiError(e, '시리즈 목록을 불러오지 못했어요.')
-  }
-}
 
 // 새 시리즈 생성 + 초기 영상 묶기
 //   body: { name (필수), stockName?, videoIds? }
@@ -56,6 +29,9 @@ export async function POST(request: Request) {
 
     // 영상이 실제로 있는지, 내 영상인지, 다른 시리즈에서 옮겨도 되는지 미리 확인한다.
     let movedCount = 0
+    let previous: { video_id: string; series_id: string }[] = []
+    // 시리즈 안의 순서는 added_at 으로 정한다. 올린 날짜가 이른 영상이 앞에 오도록 1밀리초씩 차이를 둔다.
+    let orderedIds = videoIds
     if (videoIds.length > 0) {
       const videos = await loadVideosByIds(supabaseAdmin, videoIds)
       if (videos.length !== videoIds.length) throw new ApiFail(404, '일부 영상을 찾을 수 없어요. 화면을 새로 고친 뒤 다시 골라 주세요.')
@@ -63,6 +39,8 @@ export async function POST(request: Request) {
       const memberships = await loadMemberships(supabaseAdmin, videoIds)
       assertCanMove(memberships, null, profile, isAdmin)
       movedCount = memberships.length
+      previous = memberships.map((m) => ({ video_id: m.video_id, series_id: m.series_id }))
+      orderedIds = [...videos].sort((x, y) => (timeMs(x.published_at || x.created_at) || 0) - (timeMs(y.published_at || y.created_at) || 0) || x.id.localeCompare(y.id)).map((v) => v.id)
     }
 
     const { data: series, error: seriesError } = await supabaseAdmin
@@ -72,18 +50,21 @@ export async function POST(request: Request) {
       .single()
     if (seriesError) throw seriesError
 
-    if (videoIds.length > 0) {
+    if (orderedIds.length > 0) {
+      const baseMs = Date.now()
       // video_id 는 unique → 이미 다른 시리즈에 있던 영상은 이쪽으로 옮겨진다(위에서 권한 확인 완료).
-      for (const part of chunk(videoIds, 50)) {
+      for (const [chunkIndex, part] of chunk(orderedIds, 50).entries()) {
         const { error: memberError } = await supabaseAdmin
           .from(V3_TABLES.videoSeriesMembers)
           .upsert(
-            part.map((videoId) => ({ series_id: series.id, video_id: videoId })),
+            part.map((videoId, i) => ({ series_id: series.id, video_id: videoId, added_at: new Date(baseMs + chunkIndex * 50 + i).toISOString() })),
             { onConflict: 'video_id' }
           )
         if (memberError) {
           // 반쪽짜리 시리즈가 남지 않도록 방금 만든 시리즈를 되돌린다.
           await supabaseAdmin.from(V3_TABLES.videoSeries).delete().eq('id', series.id)
+          // 다른 시리즈에서 옮겨 오던 영상은 원래 시리즈로 돌려놓는다.
+          if (previous.length > 0) await supabaseAdmin.from(V3_TABLES.videoSeriesMembers).upsert(previous, { onConflict: 'video_id' })
           throw memberError
         }
       }

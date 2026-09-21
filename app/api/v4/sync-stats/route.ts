@@ -236,7 +236,7 @@ export async function POST(request: Request) {
       }
     }
 
-    // 조회수를 새로 받았으니, 15초 동안 기억해 둔 기간별 영상 목록을 비워 다음 조회에 새 숫자가 바로 나오게 한다.
+    // 조회수를 새로 받았으니, 잠깐 기억해 둔 기간별 영상 목록을 비워 다음 조회에 새 숫자가 바로 나오게 한다.
     invalidatePeriodRows()
 
     const updated = changedRows.length - updateFailed + unchangedIds.length
@@ -262,6 +262,8 @@ export async function POST(request: Request) {
       accountName
     })
   } catch (e) {
-    return v4ErrorResponse(e, '통계 새로고침 실패')
+    // 중간에 실패했어도 일부 영상은 이미 갱신됐을 수 있으니 기억해 둔 목록은 비운다.
+    invalidatePeriodRows()
+    return v4ErrorResponse(e, '조회수를 새로 받지 못했어요')
   }
 }

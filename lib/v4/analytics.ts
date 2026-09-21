@@ -4,6 +4,8 @@
 
 import { addDaysToYmd, getKstDayEndIso, getKstDayStartIso, getKstYmd, getYmdList } from '@/lib/attendance/time'
 
+const KST_OFFSET_MS = 9 * 60 * 60 * 1000
+
 export const PERIOD_OPTIONS = [7, 30, 90] as const
 export type PeriodDays = (typeof PERIOD_OPTIONS)[number]
 
@@ -45,11 +47,7 @@ export function getPeriodRange(days: PeriodDays, now = new Date()): PeriodRange 
 export const VIDEO_COLUMNS =
   'id, youtube_video_id, title, title_override, stock_name, content_type, published_at, created_at, view_count, like_count, comment_count, youtube_url, thumbnail_url, primary_owner_user_id, last_synced_at'
 
-// 화면별로 꼭 필요한 컬럼만 읽어 6,000행 이상도 가볍게 가져온다. (id, created_at 은 페이지 병합/기간 분할에 항상 필요)
-export const KPI_COLUMNS = 'id, content_type, created_at, view_count, like_count, comment_count'
-export const STOCK_COLUMNS = 'id, stock_name, published_at, created_at, view_count, primary_owner_user_id'
-export const TIMING_COLUMNS = 'id, published_at, created_at, view_count'
-export const STAFF_COLUMNS = 'id, primary_owner_user_id, content_type, created_at, view_count, like_count'
+// 분석 화면이 함께 쓰는 컬럼만 읽어 6,000행 이상도 가볍게 가져온다. (썸네일 주소처럼 안 쓰는 컬럼은 뺀다. id, created_at 은 페이지 병합/기간 분할에 항상 필요)
 export const RANKING_COLUMNS =
   'id, youtube_video_id, title, title_override, stock_name, content_type, published_at, created_at, view_count, like_count, comment_count, youtube_url, primary_owner_user_id'
 
@@ -96,12 +94,12 @@ function safeDiv(a: number, b: number) {
   return b > 0 ? a / b : 0
 }
 
-// KST 기준 YYYY-MM-DD (created_at 기준 등록일)
+// KST 기준 YYYY-MM-DD (created_at 기준 등록일). 영상 수천 개를 훑을 때 느리지 않도록 날짜 계산으로 바로 구한다.
 export function kstYmdOf(iso: string | null | undefined) {
   if (!iso) return ''
-  const date = new Date(iso)
-  if (Number.isNaN(date.getTime())) return ''
-  return getKstYmd(date)
+  const ms = new Date(iso).getTime()
+  if (!Number.isFinite(ms)) return ''
+  return new Date(ms + KST_OFFSET_MS).toISOString().slice(0, 10)
 }
 
 // ---------------------------------------------------------------- KPI
@@ -230,19 +228,23 @@ export type StockAggregate = {
   prevVideoCount: number
   changeRatio: number
   trend: StockTrend
-  sizeClass: 'xl' | 'lg' | 'md' | 'sm'
 }
 
 export function aggregateStocks(current: VideoRow[], previous: VideoRow[]): StockAggregate[] {
-  type Acc = { videoCount: number; totalViews: number; last: string | null; owners: Set<string> }
+  type Acc = { videoCount: number; totalViews: number; last: string | null; lastMs: number; owners: Set<string> }
   const cur = new Map<string, Acc>()
   for (const v of current) {
     const key = stockKey(v)
-    const acc = cur.get(key) || { videoCount: 0, totalViews: 0, last: null, owners: new Set<string>() }
+    const acc = cur.get(key) || { videoCount: 0, totalViews: 0, last: null, lastMs: -Infinity, owners: new Set<string>() }
     acc.videoCount += 1
     acc.totalViews += num(v.view_count)
+    // '+00:00' / 'Z' 표기가 섞여 있어도 맞게 비교하도록 시각(ms)으로 견준다.
     const when = v.published_at || v.created_at
-    if (!acc.last || when > acc.last) acc.last = when
+    const whenMs = new Date(when).getTime()
+    if (Number.isFinite(whenMs) && whenMs > acc.lastMs) {
+      acc.lastMs = whenMs
+      acc.last = when
+    }
     if (v.primary_owner_user_id) acc.owners.add(v.primary_owner_user_id)
     cur.set(key, acc)
   }
@@ -275,19 +277,13 @@ export function aggregateStocks(current: VideoRow[], previous: VideoRow[]): Stoc
       prevViews,
       prevVideoCount,
       changeRatio,
-      trend,
-      sizeClass: 'sm' as const
+      trend
     }
   })
 
-  rows.sort((a, b) => b.totalViews - a.totalViews || b.videoCount - a.videoCount)
-  // 타일 크기 = 총 조회수 분위. 상위 10% xl, 다음 20% lg, 다음 30% md, 나머지 sm.
-  const n = rows.length
-  return rows.map((row, index) => {
-    const q = n > 0 ? index / n : 1
-    const sizeClass = row.totalViews <= 0 ? 'sm' : q < 0.1 ? 'xl' : q < 0.3 ? 'lg' : q < 0.6 ? 'md' : 'sm'
-    return { ...row, sizeClass }
-  })
+  // 총 조회수 → 영상 수 → 이름 순으로 순서를 확정한다 (같은 값이어도 새로 고칠 때마다 순서가 바뀌지 않게).
+  rows.sort((a, b) => b.totalViews - a.totalViews || b.videoCount - a.videoCount || a.stockName.localeCompare(b.stockName, 'ko'))
+  return rows
 }
 
 // ---------------------------------------------------------------- 업로드 타이밍 히트맵
@@ -297,7 +293,7 @@ export type HeatCell = { weekday: number; hour: number; count: number; totalView
 export function kstWeekdayHour(iso: string) {
   const ms = new Date(iso).getTime()
   if (Number.isNaN(ms)) return null
-  const kst = new Date(ms + 9 * 60 * 60 * 1000)
+  const kst = new Date(ms + KST_OFFSET_MS)
   return { weekday: kst.getUTCDay(), hour: kst.getUTCHours() }
 }
 

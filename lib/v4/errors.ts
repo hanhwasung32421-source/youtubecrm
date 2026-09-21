@@ -3,7 +3,6 @@
 
 export const NETWORK_ERROR_MESSAGE = '인터넷 연결을 확인하고 다시 시도해 주세요.'
 export const LOGIN_REQUIRED_MESSAGE = '로그인이 만료됐어요. 다시 로그인해 주세요.'
-export const GENERIC_ERROR_MESSAGE = '문제가 생겼어요. 잠시 후 다시 시도해 주세요.'
 
 type DbErrorLike = { code?: string; message?: string; details?: string }
 

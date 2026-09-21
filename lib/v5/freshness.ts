@@ -12,3 +12,8 @@ export function markMutated() {
 export function recentlyMutated(now: number = Date.now()) {
   return now - lastMutationAt < FRESH_WINDOW_MS
 }
+
+// 저장해 둔 값(at: 받은 시각)보다 나중에 저장/수정/삭제가 있었나 — 있었다면 그 값은 "방금 받은 값"으로 믿지 않는다.
+export function mutatedSince(at: number) {
+  return lastMutationAt > at
+}

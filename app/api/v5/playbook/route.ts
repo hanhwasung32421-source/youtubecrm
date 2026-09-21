@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { mapPlaybook, PLAYBOOK_SELECT, playbookInputSchema, type PlaybookRow } from '@/lib/v5/playbook'
 import { SAMPLE_PLAYBOOK } from '@/lib/v5/sample-data'
 import { V5_TABLES } from '@/lib/v5/tables'
-import { badRequest, countMissingVideos, fetchAllPages, getSession, handleRouteError, isMissingTableError, jsonCached, jsonNoStore, missingTableResponse, readJson } from '@/lib/v5/api'
+import { badRequest, countMissingVideos, fetchAllPages, getSession, handleRouteError, isMissingTableError, jsonNoStore, missingTableResponse, readJson } from '@/lib/v5/api'
 
 // 팀 전체가 함께 만드는 라이브러리라 조회는 관리자/직원 구분 없이 전체 공개한다.
 export async function GET(request: Request) {
@@ -25,13 +25,14 @@ export async function GET(request: Request) {
       )
     } catch (error) {
       if (isMissingTableError(error)) {
-        return NextResponse.json({ sample: true, items: SAMPLE_PLAYBOOK, top: SAMPLE_PLAYBOOK.slice(0, 3) })
+        return NextResponse.json({ sample: true, items: SAMPLE_PLAYBOOK })
       }
       throw error
     }
 
     const items = await mapPlaybook(supabaseAdmin, all.rows, session)
-    return jsonCached({ sample: false, items, top: items.slice(0, 3), truncated: all.truncated })
+    // 영상 등록 화면에서도 "써봤어요"가 계속 올라가므로 브라우저가 옛 목록을 들고 있지 않게 한다(화면은 저장해 둔 값을 먼저 보여 주고 뒤에서 새로 받는다).
+    return jsonNoStore({ sample: false, items, truncated: all.truncated })
   } catch (e) {
     return handleRouteError(e, '성공 공식을 불러오지 못했어요.')
   }

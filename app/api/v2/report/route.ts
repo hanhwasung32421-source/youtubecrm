@@ -1,5 +1,3 @@
-import { NextResponse } from 'next/server'
-import { addDays, kstDayStart, kstYmd } from '@/lib/v2/dates'
 import {
   cachedJson,
   checklistFor,
@@ -9,20 +7,16 @@ import {
   loadChecklistMap,
   loadStaffMap,
   loadVideos,
+  missingTableResponse,
   requireV2Admin,
   slimVideo
 } from '@/lib/v2/server'
-import { sampleReportPayload } from '@/lib/v2/sample-data'
 import type { DiscoverabilityRow, ReportPayload } from '@/lib/v2/types'
 
-const REPORT_LIMIT = 1000
+// 기간(7일·30일)을 화면에서 나누므로, 하루 60~90개 기준 30일 치(약 2,700개)가 들어오도록 3,000개까지 받는다.
+const REPORT_LIMIT = 3000
 // 점수 계산과 순위 표에 쓰는 칸만 읽는다 (설명·썸네일 주소 등 긴 값은 읽지 않는다).
 const COLUMNS = 'id, title, stock_name, content_type, youtube_url, published_at, view_count, like_count, primary_owner_user_id, created_at'
-
-function timeOf(iso: string | null | undefined): number {
-  const t = iso ? new Date(iso).getTime() : NaN
-  return Number.isNaN(t) ? 0 : t
-}
 
 // 검색 성과 리포트: 영상별 발견성 점수(조회 속도 40% + 좋아요율 30% + SEO 체크리스트 완료율 30%) 리더보드
 export async function GET(request: Request) {
@@ -38,7 +32,7 @@ export async function GET(request: Request) {
     try {
       ;[checklistMap, staffMap] = await Promise.all([loadChecklistMap(supabaseAdmin, videoIds), loadStaffMap(supabaseAdmin)])
     } catch (e) {
-      if (isMissingTableError(e)) return NextResponse.json(sampleReportPayload())
+      if (isMissingTableError(e)) return missingTableResponse()
       throw e
     }
 
@@ -50,15 +44,7 @@ export async function GET(request: Request) {
       })
       .sort((a, b) => b.score - a.score)
 
-    const sevenDaysAgo = timeOf(kstDayStart(addDays(kstYmd(), -6)).toISOString())
-    const recentItems = items.filter((row) => timeOf(row.video.published_at || row.video.created_at) >= sevenDaysAgo)
-    const top = recentItems[0] || items[0]
-
-    const insight = top
-      ? `이번 주 반응이 가장 좋은 영상은 ${top.ownerName}님의 「${top.video.title || '(제목 없음)'}」 — 하루 평균 ${Math.round(top.viewsPerDay).toLocaleString('ko-KR')}회 조회, 반응 점수 ${top.score}점입니다.`
-      : '표시할 영상이 없습니다. 영상을 등록하면 반응 점수가 계산됩니다.'
-
-    const payload: ReportPayload = { items, insight, capped: videos.length >= REPORT_LIMIT }
+    const payload: ReportPayload = { items, capped: videos.length >= REPORT_LIMIT }
     return cachedJson(payload)
   } catch (e) {
     return handleRouteError(e, '성과 요약을 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.')

@@ -11,10 +11,6 @@ export function abortError(): Error {
   return err
 }
 
-export function isAbortError(e: unknown): boolean {
-  return !!e && typeof e === 'object' && (e as { name?: string }).name === 'AbortError'
-}
-
 type Inflight = { promise: Promise<unknown>; controller: AbortController; refs: number }
 
 export function createSwrCore(

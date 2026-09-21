@@ -128,7 +128,8 @@ export function ShareTools({
 }: {
   getLink: () => string
   // build 는 눌렀을 때 부른다(최신 화면 값으로 만들기 위해). rows 가 0이면 버튼이 꺼진다.
-  csv?: { baseName: string; rowCount: number; build: () => string }
+  // 비동기여도 된다: CSV 만드는 코드는 버튼을 누를 때 처음 내려받는다.
+  csv?: { baseName: string; rowCount: number; build: () => string | Promise<string> }
   notify: Notify
 }) {
   const csvEmpty = !!csv && csv.rowCount === 0
@@ -151,16 +152,17 @@ export function ShareTools({
           className="button secondary xs"
           disabled={csvEmpty}
           title={csvEmpty ? '저장할 표가 비어 있어요' : '엑셀에서 열 수 있는 파일로 저장해요'}
-          onClick={() => {
+          onClick={async () => {
             try {
-              downloadTextFile(csvFilename(csv.baseName), csv.build())
-              notify.success(`표 ${csv.rowCount.toLocaleString('ko-KR')}줄을 CSV 파일로 저장했어요.`)
+              const text = await csv.build()
+              downloadTextFile(csvFilename(csv.baseName), text)
+              notify.success(`표 ${csv.rowCount.toLocaleString('ko-KR')}줄을 파일로 저장했어요. 엑셀에서 열 수 있어요.`)
             } catch {
               notify.error('파일로 저장하지 못했어요. 잠시 뒤 다시 시도해 주세요.')
             }
           }}
         >
-          표를 CSV로 저장
+          표를 엑셀용 파일(CSV)로 저장
         </button>
       ) : null}
     </>

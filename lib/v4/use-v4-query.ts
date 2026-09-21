@@ -34,7 +34,7 @@ export function useV4Query<T>(path: string | null, options: { fallback: string; 
       setState({ data: cached.data, dataPath: path, error: '', status: 200, fetching: false })
       return
     }
-    // 60초 안의 옛 값은 바로 보여주고, 뒤에서 새로 받는다.
+    // 30초 안의 옛 값은 바로 보여주고, 뒤에서 새로 받는다.
     setState((prev) => ({
       data: cached ? cached.data : prev.data,
       dataPath: cached ? path : prev.dataPath,

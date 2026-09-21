@@ -24,7 +24,6 @@ export function timeOf(iso: string | null | undefined): number | null {
 }
 
 // ── 급상승 영상 ──
-export type ViralSort = 'ratio' | 'views' | 'recent'
 export function sortViralItems<T extends { ratio: number; viewCount: number | null; publishedAt?: string | null }>(items: T[], sort: string): T[] {
   if (sort === 'views') return byNumberDesc(items, (i) => i.viewCount)
   if (sort === 'recent') return byNumberDesc(items, (i) => timeOf(i.publishedAt))

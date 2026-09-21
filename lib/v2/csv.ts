@@ -21,7 +21,8 @@ export function csvCell(value: CsvValue): string {
     text = value ? '예' : '아니요'
   } else {
     text = String(value)
-    if (FORMULA_START.test(text)) text = `'${text}`
+    // '-' 한 글자는 "값 없음" 표시일 뿐 수식이 될 수 없으므로 그대로 둔다.
+    if (text !== '-' && FORMULA_START.test(text)) text = `'${text}`
   }
   return NEEDS_QUOTES.test(text) ? `"${text.replace(/"/g, '""')}"` : text
 }

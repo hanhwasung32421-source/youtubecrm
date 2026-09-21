@@ -7,6 +7,15 @@ import type { ContentType } from './register-api'
 import { videoIdFromStoredUrl } from './youtube-url'
 
 // ─────────────────────────────────────────────────────────────
+// 한글 입력 중인 키
+// ─────────────────────────────────────────────────────────────
+// 한글 등을 조합하는 중에 누른 키인지. 이때의 Enter·Esc는 글자를 확정하는 용도라서 등록 같은 동작으로 이어지면 안 된다.
+// (사파리는 조합이 끝난 뒤에 Enter가 들어오는데, 그때도 keyCode가 229다.)
+export function isImeKey(e: { nativeEvent: { isComposing: boolean }; keyCode: number }): boolean {
+  return e.nativeEvent.isComposing || e.keyCode === 229
+}
+
+// ─────────────────────────────────────────────────────────────
 // 잘못된 주소를 구체적으로 설명
 // ─────────────────────────────────────────────────────────────
 const WRAP_START = /^[<(\[{"'“‘「『]+/
@@ -204,13 +213,13 @@ const FAILURES: Record<FailureKind, Omit<Failure, 'kind'>> = {
     focus: null
   },
   key: {
-    message: '유튜브 연결 설정에 문제가 있어 영상 정보를 가져오지 못했어요. 관리자에게 “유튜브 API 키 확인”을 요청해 주세요.',
+    message: '유튜브 연결 설정에 문제가 있어 영상 정보를 가져오지 못했어요. 관리자에게 “유튜브 연결 확인”을 요청해 주세요.',
     short: '유튜브 연결 설정 문제예요. 관리자에게 알려 주세요.',
     retry: false,
     focus: null
   },
   setup: {
-    message: '유튜브 연결 설정이 아직 끝나지 않아 등록하지 못했어요. 관리자에게 “유튜브 API 설정”을 요청해 주세요.',
+    message: '유튜브 연결 설정이 아직 끝나지 않아 등록하지 못했어요. 관리자에게 “유튜브 연결 설정”을 요청해 주세요.',
     short: '유튜브 연결 설정이 필요해요. 관리자에게 알려 주세요.',
     retry: false,
     focus: null
@@ -276,6 +285,27 @@ export type UndoPlan =
   | { kind: 'none' } // 남의 영상 등 되돌릴 수 없는 경우
 
 export type UndoEntry = { id: string; stock: string; plan: UndoPlan }
+
+// 등록하기 전에 이 영상이 어떤 상태였는지.
+//   new = 조회해서 "없다"고 확실히 확인했다 / mine = 내가 이미 등록해 둔 영상 / other = 다른 직원이 등록해 둔 영상
+//   unknown = 조회하지 못했다(시간 초과·오류)
+export type PriorState = 'new' | 'mine' | 'other' | 'unknown'
+
+// 되돌리기 계획. 이전에 있던 영상은 절대 지우지 않는다: 지우기(delete)는 "없었다"고 확인된 경우에만 준다.
+export function planUndo(input: { hasId: boolean; prior: PriorState; before?: { stock: string | null; type: ContentType } | null }): UndoPlan {
+  if (!input.hasId) return { kind: 'none' }
+  if (input.prior === 'new') return { kind: 'delete' }
+  if (input.prior === 'mine' && input.before) return { kind: 'restore', stock: input.before.stock, type: input.before.type }
+  return { kind: 'none' }
+}
+
+// 되돌리기를 줄 수 없을 때 화면에 보여 줄 안내(새로 만든 것이 없다는 점을 알려 준다)
+export function noUndoNote(prior: PriorState): string {
+  if (prior === 'other') {
+    return '다른 직원이 올렸던 영상을 내 영상으로 바꿨어요. 새로 만든 것은 없어서 되돌리기는 없어요. 종목이 틀렸다면 아래 목록 첫 줄에서 고칠 수 있어요.'
+  }
+  return '이 영상이 전에 등록돼 있었는지 확인하지 못했어요. 그래서 되돌리기는 없어요. 종목이 틀렸다면 아래 목록 첫 줄에서 고칠 수 있어요.'
+}
 
 export type UndoState =
   | { phase: 'idle' }

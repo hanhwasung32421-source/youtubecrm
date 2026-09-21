@@ -164,20 +164,8 @@
   margin-bottom: 0;
 }
 
-.v3-theme .v3a-fold-body .v3-scatter-wrap {
-  margin-top: 4px;
-}
 
 /* ── 불러오는 중 / 빈 화면 ──────────────────────────────────── */
-.v3-theme .v3a-loading {
-  padding: 40px 16px;
-  text-align: center;
-  color: var(--muted);
-  font-size: 14px;
-  border: 1px dashed var(--line-strong);
-  border-radius: 10px;
-  background: var(--bg-soft);
-}
 
 .v3-theme .v3a-empty {
   display: flex;
@@ -329,19 +317,7 @@
   color: var(--muted);
 }
 
-.v3-theme .v3a-card-foot {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
 
-.v3-theme .v3a-card-foot .input {
-  flex: 1 1 200px;
-  min-width: 0;
-  padding: 7px 10px;
-  font-size: 13px;
-}
 
 .v3-theme .v3a-badge {
   flex-shrink: 0;
@@ -525,19 +501,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-.v3-theme .v3a-series-add {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-}
 
-.v3-theme .v3a-series-add .select {
-  flex: 1 1 220px;
-  min-width: 0;
-  padding: 7px 10px;
-  font-size: 13px;
-}
 
 .v3-theme .v3a-field-error {
   margin: 0;

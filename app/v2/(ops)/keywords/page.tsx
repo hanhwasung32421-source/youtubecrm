@@ -6,18 +6,17 @@ import { PageHeader } from '@/components/v2/app-shell'
 import { useV2Me } from '@/components/v2/session-context'
 import { KeywordStatusTag, PriorityTag } from '@/components/v2/tags'
 import { Toast, useToast } from '@/components/toast'
-import { Answer, EmptyGuide, FieldError, HowTo, InlineConfirm, Kpi, KpiRow, LoadError, MoreButton, RefreshNote, Req, SampleNote, SkeletonList, SkeletonSummary, Stamp } from '@/lib/v2/analysis-ui'
+import { Answer, EmptyGuide, FieldError, HowTo, InlineConfirm, Kpi, KpiRow, LoadError, MoreButton, RefreshNote, Req, SkeletonList, SkeletonSummary, Stamp } from '@/lib/v2/analysis-ui'
 import { v2Delete, v2Patch, v2Post } from '@/lib/v2/client'
 import type { CsvValue } from '@/lib/v2/csv'
 import { formatKstDate, formatKstStamp } from '@/lib/v2/dates'
 import { ActiveFilters, type FilterChip } from '@/lib/v2/filters-ui'
 import { withQuery, type FilterSpec } from '@/lib/v2/filters'
-import { shortText } from '@/lib/v2/format'
+import { shortText, withTopicParticle } from '@/lib/v2/format'
 import { Term } from '@/lib/v2/glossary-ui'
 import { ShareBar } from '@/lib/v2/share-ui'
 import { useV2Query } from '@/lib/v2/swr'
 import { useUrlFilters } from '@/lib/v2/use-url-filters'
-import { V2_MISSING_TABLE_MESSAGE } from '@/lib/v2/tables'
 import {
   KEYWORD_STATUS_LABELS,
   PRIORITIES,
@@ -80,6 +79,8 @@ function KeywordsBody() {
   const payload = query.data ?? EMPTY
   const loaded = !query.loading
   const loadError = query.error
+  // 목록을 한 번도 못 받았다면 0개처럼 보이는 숫자를 보여 주지 않는다.
+  const dataMissing = Boolean(loadError) && !query.data
   const [form, setForm] = useState<Form>(initialForm)
   const [submitted, setSubmitted] = useState(false)
   const [formError, setFormError] = useState('')
@@ -110,14 +111,6 @@ function KeywordsBody() {
     if (editId) editStockRef.current?.focus()
   }, [editId])
 
-  const guardSample = () => {
-    if (payload.sample) {
-      showError(V2_MISSING_TABLE_MESSAGE)
-      return true
-    }
-    return false
-  }
-
   const setItems = (fn: (items: KeywordRadarItem[]) => KeywordRadarItem[], doneDelta = 0) => {
     query.setData((prev) => ({
       ...prev,
@@ -145,7 +138,7 @@ function KeywordsBody() {
       ;(errors.stockName ? stockRef : errors.keyword ? keywordRef : urlRef).current?.focus()
       return
     }
-    if (guardSample() || creatingRef.current) return
+    if (creatingRef.current) return
     creatingRef.current = true
     setSaving(true)
     const res = await v2Post<{ ok?: boolean; item?: KeywordRadarItem }>(
@@ -173,7 +166,7 @@ function KeywordsBody() {
 
   // 상태 변경: 누르면 바로 바뀌고, 저장에 실패하면 원래대로 되돌린다.
   const setStatus = async (item: KeywordRadarItem, status: KeywordStatus) => {
-    if (guardSample() || busyIds.has(item.id) || busyRef.current.has(item.id)) return
+    if (busyIds.has(item.id) || busyRef.current.has(item.id)) return
     busyRef.current.add(item.id)
     const before = item.status
     const delta = (status === 'done' ? 1 : 0) - (before === 'done' ? 1 : 0)
@@ -211,7 +204,6 @@ function KeywordsBody() {
     setEditSubmitted(true)
     setEditError('')
     if (editHasError) return
-    if (guardSample()) return
     editingRef.current = true
     setEditSaving(true)
     const res = await v2Patch<{ ok?: boolean; item?: KeywordRadarItem }>(
@@ -242,7 +234,7 @@ function KeywordsBody() {
   }
 
   const remove = async (item: KeywordRadarItem) => {
-    if (guardSample() || deletingRef.current) return
+    if (deletingRef.current) return
     deletingRef.current = true
     setDeletingId(item.id)
     const res = await v2Delete(`/api/v2/keywords?id=${encodeURIComponent(item.id)}`, '삭제하지 못했어요. 다시 시도해 주세요.')
@@ -315,7 +307,6 @@ function KeywordsBody() {
     <>
       <PageHeader title="키워드 모음" subtitle="지금 다루면 좋은 검색어를 팀이 함께 모아 두고, 누가 작업 중인지 확인하는 곳이에요." />
       <Toast toast={toast} />
-      <SampleNote show={payload.sample} />
       {(loaded && loadError) || query.expired ? <LoadError message={loadError} expired={query.expired} onRetry={query.reload} /> : null}
       <RefreshNote show={query.refreshing} />
 
@@ -340,7 +331,7 @@ function KeywordsBody() {
         </Answer>
       )}
 
-      {loaded ? (
+      {loaded && !dataMissing ? (
         <KpiRow>
           <Kpi label="대기 중" value={counts.waiting.toLocaleString('ko-KR')} unit="개" tone={counts.waiting > 0 ? 'warn' : 'neutral'} hint="아직 아무도 시작하지 않은 키워드예요." />
           <Kpi label="작업중" value={counts.in_progress.toLocaleString('ko-KR')} unit="개" hint="누군가 영상을 만들고 있는 키워드예요." />
@@ -446,11 +437,11 @@ function KeywordsBody() {
         <FieldError>{formError}</FieldError>
         {sameKeyword ? (
           <div className="v2a-field-warn" style={{ marginTop: 10 }}>
-            이미 같은 키워드가 있어요 ({KEYWORD_STATUS_LABELS[sameKeyword.status]}). 그래도 필요하면 그대로 추가하세요.
+            이미 같은 키워드가 있어요 ({KEYWORD_STATUS_LABELS[sameKeyword.status]}). 그래도 필요하면 그대로 추가해도 돼요.
           </div>
         ) : recentHit ? (
           <div className="v2a-field-warn" style={{ marginTop: 10 }}>
-            {recentHit.stock_name}은(는) 최근 7일 동안 {recentHit.count}번 다뤘어요 (마지막 {formatKstStamp(recentHit.last_at)}). 다른 각도의 내용인지 확인해 주세요.
+            {withTopicParticle(recentHit.stock_name)} 최근 7일 동안 {recentHit.count}번 다뤘어요 (마지막 {formatKstStamp(recentHit.last_at)}). 다른 각도의 내용인지 확인해 주세요.
           </div>
         ) : null}
       </form>
@@ -694,7 +685,7 @@ function KeywordsBody() {
           </div>
         )}
 
-        {filter === 'done' && doneCount > counts.done ? <p className="v2a-note" style={{ marginTop: 10 }}>완료한 키워드는 최근 것부터 {counts.done}개만 보여드려요.</p> : null}
+        {filter === 'done' && doneCount > counts.done ? <p className="v2a-note" style={{ marginTop: 10 }}>완료한 키워드는 최근 것부터 {counts.done}개만 보여 드려요.</p> : null}
 
         <MoreButton shown={shown.length} total={items.length} step={PAGE_STEP} onMore={() => setVisible((v) => v + PAGE_STEP)} />
       </div>
@@ -703,7 +694,11 @@ function KeywordsBody() {
         <div className="v2-section-title">
           <Term k="recent" />
         </div>
-        {payload.recentStocks.length === 0 ? (
+        {!loaded ? (
+          <div className="small muted">불러오는 중이에요…</div>
+        ) : dataMissing ? (
+          <div className="small muted">목록을 불러오지 못해 지금은 볼 수 없어요. 위쪽의 ‘다시 불러오기’를 눌러 주세요.</div>
+        ) : payload.recentStocks.length === 0 ? (
           <div className="small muted">
             최근 7일 동안 등록된 영상이 없어요. 영상이 등록되면 여기에 종목별로 모여요.{' '}
             <Link className="v2a-inline-link" href="/v2/register">

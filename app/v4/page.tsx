@@ -32,5 +32,5 @@ export default function V4EntryPage() {
     }
   }, [router])
 
-  return <div className="small muted" style={{ padding: 24 }}>이동 중입니다…</div>
+  return <div className="small muted" style={{ padding: 24 }}>이동하는 중이에요…</div>
 }

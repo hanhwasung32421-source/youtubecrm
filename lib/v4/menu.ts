@@ -19,11 +19,9 @@ export type MenuDefinition = {
 
 export const ADMIN_HOME_HREF = '/v4/dashboard'
 export const STAFF_HOME_HREF = '/v4/register'
-// 역할을 모를 때(예: 로그인 직후 확인 전)의 기본값. 역할을 알면 homeHrefForRole()을 쓴다.
-export const HOME_HREF = ADMIN_HOME_HREF
 export const LOGIN_HREF = '/v4/login'
 
-// 표시 순서 = 관리자 기준 순서. 직원은 getMenusForRole()에서 "영상 등록"을 맨 앞으로 옮긴다.
+// 표시 순서 = 관리자 기준 순서. 직원은 getMenusForRole()에서 "영상 등록"을 맨 앞으로 옮긴다. "사용 방법"은 두 역할 모두 맨 끝.
 export const MENU_DEFINITIONS: readonly MenuDefinition[] = [
   {
     key: 'growth_dashboard',
@@ -39,7 +37,7 @@ export const MENU_DEFINITIONS: readonly MenuDefinition[] = [
     href: '/v4/register',
     audience: 'all',
     group: '매일 하는 일',
-    description: '유튜브 주소와 종목명만 입력하면 영상이 등록됩니다'
+    description: '유튜브 주소와 종목명만 입력하면 영상이 등록돼요'
   },
   {
     key: 'content_ranking',
@@ -80,6 +78,14 @@ export const MENU_DEFINITIONS: readonly MenuDefinition[] = [
     audience: 'all',
     group: '개선 실험',
     description: '제목·썸네일을 바꿔 본 기록과 배운 점'
+  },
+  {
+    key: 'help',
+    label: '사용 방법',
+    href: '/v4/help',
+    audience: 'all',
+    group: '도움말',
+    description: '영상 등록 4단계, 키보드 단축키, 자주 묻는 질문'
   }
 ] as const
 

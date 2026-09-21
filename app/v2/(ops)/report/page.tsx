@@ -7,7 +7,7 @@ import { PageHeader } from '@/components/v2/app-shell'
 import { ContentTypeTag } from '@/components/v2/tags'
 import { Toast, useToast } from '@/components/toast'
 import { NextSteps } from '@/lib/v2/actions-ui'
-import { Answer, EmptyGuide, HowTo, Kpi, KpiRow, LoadError, MoreButton, RefreshNote, SampleNote, SkeletonSummary, SkeletonTable, Stamp } from '@/lib/v2/analysis-ui'
+import { Answer, EmptyGuide, HowTo, Kpi, KpiRow, LoadError, MoreButton, RefreshNote, SkeletonSummary, SkeletonTable, Stamp } from '@/lib/v2/analysis-ui'
 import type { CsvValue } from '@/lib/v2/csv'
 import { formatKstDate } from '@/lib/v2/dates'
 import { ActiveFilters, type FilterChip } from '@/lib/v2/filters-ui'
@@ -22,7 +22,7 @@ import { useV2Query } from '@/lib/v2/swr'
 import { useUrlFilters } from '@/lib/v2/use-url-filters'
 import { CONTENT_TYPE_LABELS, LIKE_RATE_TARGET, VIEW_VELOCITY_TARGET_PER_DAY, type DiscoverabilityRow, type ReportPayload } from '@/lib/v2/types'
 
-const EMPTY: ReportPayload = { items: [], insight: '' }
+const EMPTY: ReportPayload = { items: [] }
 const isPayload = (data: unknown) => Array.isArray((data as { items?: unknown } | null)?.items)
 const PAGE_STEP = 20
 const SORTS = ['score', 'views', 'likes'] as const
@@ -166,7 +166,6 @@ function ReportBody() {
     <>
       <PageHeader title="성과 요약" subtitle="어떤 영상과 담당자가 검색·조회에서 잘 되고 있는지 순위로 보여주고, 다음에 할 일을 알려 드려요." />
       <Toast toast={toast} />
-      <SampleNote show={payload.sample} />
       {(loaded && loadError) || query.expired ? <LoadError message={loadError} expired={query.expired} onRetry={query.reload} /> : null}
       <RefreshNote show={query.refreshing} />
 

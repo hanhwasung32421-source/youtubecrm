@@ -66,8 +66,9 @@ export function v4ErrorResponse(error: unknown, fallbackMessage: string) {
   }
   console.error('[v4]', fallbackMessage, error)
   const mapped = mapDbError(error)
-  // Postgres/JSON 원문은 절대 내려주지 않는다.
-  return NextResponse.json({ error: mapped.message || `${fallbackMessage}. 잠시 후 다시 시도해 주세요.` }, { status: mapped.status, headers: NO_STORE_HEADERS })
+  // Postgres/JSON 원문은 절대 내려주지 않는다. 문장 끝의 마침표는 겹치지 않게 다듬는다.
+  const sentence = fallbackMessage.trim().replace(/[.。]+$/, '')
+  return NextResponse.json({ error: mapped.message || `${sentence}. 잠시 후 다시 시도해 주세요.` }, { status: mapped.status, headers: NO_STORE_HEADERS })
 }
 
 // Supabase(PostgREST)는 한 번에 최대 1000행만 돌려준다. 그보다 많이 필요하면 range()로 나눠 끝까지 읽어야 한다.

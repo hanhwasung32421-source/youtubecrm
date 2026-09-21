@@ -1,8 +1,7 @@
 // V3 테이블(supabase/sql/v3/100_v3_engagement.sql)이 아직 생성되지 않았을 때
 // GET API가 돌려주는 샘플 데이터. 시드 기반 난수를 써서 새로고침해도 같은 숫자가 나오게 한다.
 
-export const SAMPLE_STOCK_NAMES = ['삼성전자', 'SK하이닉스', '에코프로', '현대차', 'LS머트리얼즈', '한미반도체', '알테오젠']
-export const SAMPLE_STAFF_NAMES = ['김도현', '이서연', '박준서', '최지우', '정하윤', '한민재']
+const SAMPLE_STOCK_NAMES = ['삼성전자', 'SK하이닉스', '에코프로', '현대차', 'LS머트리얼즈', '한미반도체', '알테오젠']
 
 function seeded(seed: number) {
   let state = seed % 2147483647

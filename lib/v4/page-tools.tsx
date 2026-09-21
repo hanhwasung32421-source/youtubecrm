@@ -1,12 +1,12 @@
 'use client'
 
-// 분석 화면 5곳이 함께 쓰는 도구 조각: 켜 둔 필터 요약(칩), 링크 복사, CSV 저장 버튼, 조회수 받기 버튼, 용어 설명.
+// 분석 화면 5곳이 함께 쓰는 도구 조각: 켜 둔 필터 요약(칩), 링크 복사, 엑셀 파일 저장 버튼, 조회수 받기 버튼, 용어 설명.
 // 스타일은 app/v4/(workspace)/pages.css (v4p- 접두어).
 
 import { useId, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
 import { v4Json } from '@/lib/v4/client'
-import { copyText } from '@/lib/v4/download'
+import { clearCache } from '@/lib/v4/fetch-cache'
+import { copyText } from '@/lib/v4/clipboard'
 import { GLOSSARY, type GlossaryKey } from '@/lib/v4/glossary'
 import { fmtNumber } from '@/lib/v4/format'
 
@@ -49,7 +49,7 @@ export function CopyLinkButton({ getUrl, onResult }: { getUrl: () => string; onR
   )
 }
 
-// ------------------------------------------------------------------ 표를 CSV 로 저장
+// ------------------------------------------------------------------ 표를 엑셀 파일(CSV)로 저장
 
 // 저장 중에는 진행 상황(n / total)과 취소 버튼을 보여준다. 실제 저장 동작은 onExport 가 한다.
 export type ExportProgress = { done: number; total: number } | null
@@ -59,7 +59,7 @@ export function CsvButton({
   onCancel,
   progress,
   disabled,
-  label = '표를 CSV로 저장'
+  label = '표를 엑셀 파일로 저장'
 }: {
   onExport: () => void
   onCancel?: () => void
@@ -70,7 +70,7 @@ export function CsvButton({
   const running = Boolean(progress)
   return (
     <span className="v4p-csv">
-      <button type="button" className="button secondary v4p-tool-btn" onClick={onExport} disabled={disabled || running} title="엑셀에서 바로 열 수 있는 파일로 저장해요">
+      <button type="button" className="button secondary v4p-tool-btn" onClick={onExport} disabled={disabled || running} title="엑셀에서 바로 열 수 있는 파일(CSV)로 저장해요">
         {running ? '저장 준비 중…' : label}
       </button>
       {progress ? (
@@ -111,6 +111,8 @@ export function SyncStatsButton({
       onMessage(res.message, 'error')
       return
     }
+    // 조회수가 바뀌었으니 다른 분석 화면에 남아 있는 옛 값도 버린다.
+    clearCache()
     const { total, updated, failed } = res.data
     onMessage(`영상 ${fmtNumber(total)}개 중 ${fmtNumber(updated)}개의 조회수를 새로 받았어요.${failed ? ` (실패 ${fmtNumber(failed)}개)` : ''}`, 'success')
     onDone()
@@ -171,15 +173,5 @@ export function GlossaryList({ terms, summary = '이게 뭐예요? (용어 설�
         ))}
       </div>
     </details>
-  )
-}
-
-// 낯선 말이 들어간 제목 옆에 붙이는 작은 도우미: 제목 + ? 버튼
-export function TermLabel({ term, children }: { term: GlossaryKey; children: ReactNode }) {
-  return (
-    <span className="v4p-termlabel">
-      {children}
-      <GlossaryHint term={term} />
-    </span>
   )
 }

@@ -67,7 +67,7 @@ export default function LoginPage() {
         })
         const data = await res.json().catch(() => ({}))
         if (!res.ok) {
-          fail(data?.error || '아이디를 찾을 수 없습니다.', 'id')
+          fail(/[가-힣]/.test(data?.error || '') ? data.error : '아이디를 찾지 못했어요. 다시 확인해 주세요.', 'id')
           return
         }
         loginEmail = data.email
@@ -80,7 +80,10 @@ export default function LoginPage() {
       })
 
       if (error || !data.session?.access_token) {
-        fail('아이디 또는 비밀번호가 맞지 않습니다. 다시 확인해 주세요.', 'pw')
+        // 연결이 끊긴 경우와 비밀번호가 틀린 경우를 구분해서 알려 준다.
+        const offline = !!error && (error.status === 0 || /fetch|network/i.test(error.message || ''))
+        if (offline) fail('인터넷 연결을 확인하고 다시 시도해 주세요.', 'pw')
+        else fail('아이디 또는 비밀번호가 맞지 않아요. 다시 확인해 주세요.', 'pw')
         return
       }
 
@@ -98,7 +101,7 @@ export default function LoginPage() {
       const next = safeNextPath(new URLSearchParams(window.location.search).get('next'))
       router.push(next || getHomeHref(me.roleType))
     } catch (e: any) {
-      fail(e?.message || '로그인 중 오류가 발생했습니다.', 'pw')
+      fail(/[가-힣]/.test(e?.message || '') ? e.message : '로그인 중 문제가 생겼어요. 인터넷 연결을 확인하고 다시 시도해 주세요.', 'pw')
     } finally {
       if (!leaving) {
         busy.current = false

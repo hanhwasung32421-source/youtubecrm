@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { PageHeader } from '@/components/v4/app-shell'
 import { useV4Me } from '@/components/v4/me-context'
@@ -14,8 +14,6 @@ import { useSearchField } from '@/lib/v4/use-search-field'
 import type { RankedVideo } from '@/lib/v4/analytics'
 import type { RankSortKey } from '@/lib/v4/ranking-query'
 import { RANKING_SPEC, type RankingFilters } from '@/lib/v4/page-filters'
-import { buildCsv, csvFilename, csvKstDateTime } from '@/lib/v4/csv'
-import { downloadCsvFile } from '@/lib/v4/download'
 import { fetchAllPages } from '@/lib/v4/export-all'
 import { ActiveFilters, CopyLinkButton, CsvButton, GlossaryHint, GlossaryList, SyncStatsButton, type ExportProgress, type FilterChip } from '@/lib/v4/page-tools'
 import { Card, EmptyPanel, ErrorPanel, FormatBadge, Formula, Hero, Kpi, KpiRow, Seg, SkelTable, SortHead } from '@/lib/v4/analysis-ui'
@@ -45,6 +43,66 @@ const EXPORT_PAGE = 200
 const NO_ITEMS: RankedItem[] = []
 const LOAD_ERROR = '영상 순위를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.'
 const RESET_KEYS: Array<keyof RankingFilters> = ['sort', 'dir', 'staff', 'format', 'q', 'dow', 'hour']
+
+// 순위 표 한 줄. "더 보기"로 줄이 수십~수백 개로 늘어도, 글자 하나 칠 때마다 전체를 다시 그리지 않도록 값이 그대로면 건너뛴다.
+type RankRowProps = {
+  row: RankedItem
+  index: number
+  rowStyle: CSSProperties
+  showOwner: boolean
+  detail: boolean
+  medal: boolean
+  onPickStock: (stockName: string) => void
+  onPickStaff: (staffId: string) => void
+}
+
+const RankRow = memo(function RankRow({ row, index, rowStyle, showOwner, detail, medal, onPickStock, onPickStaff }: RankRowProps) {
+  const publishedIso = row.publishedAt || row.createdAt
+  return (
+    <div className="v4p-tr" style={rowStyle} role="row">
+      <div className="v4p-cell-rank" role="cell">
+        <span className={`v4p-rank ${medal ? 'top' : ''}`}>{index + 1}</span>
+      </div>
+      <div className="v4p-title-cell" role="cell">
+        {row.youtubeUrl ? (
+          <a href={row.youtubeUrl} target="_blank" rel="noopener noreferrer" title={row.title}>
+            {row.title}
+          </a>
+        ) : (
+          <span className="t" title={row.title}>{row.title}</span>
+        )}
+        <div className="v4p-sub" title={fmtKstStamp(publishedIso)}>게시 {fmtKstMonthDay(publishedIso)}</div>
+      </div>
+      <div className="v4p-ellipsis" data-label="종목" role="cell">
+        <button type="button" className="v4p-cell-btn" title={`${row.stockName} — 이 종목 영상만 보기`} onClick={() => onPickStock(row.stockName)}>
+          {row.stockName}
+        </button>
+      </div>
+      {showOwner ? (
+        <div className="v4p-ellipsis" data-label="담당자" role="cell">
+          {row.ownerId ? (
+            <button type="button" className="v4p-cell-btn" title={`${row.ownerName} — 이 담당자 영상만 보기`} onClick={() => onPickStaff(row.ownerId ?? '')}>
+              {row.ownerName}
+            </button>
+          ) : (
+            row.ownerName
+          )}
+        </div>
+      ) : null}
+      <div className="v4p-td-r v4p-num" data-label="조회수" title={`${fmtNumberOr(row.viewCount)}회`} role="cell">{fmtNumberOr(row.viewCount)}</div>
+      <div className="v4p-td-r" data-label="조회 속도" role="cell">{fmtNumberOr(row.velocity)}회/일</div>
+      {detail ? (
+        <>
+          <div data-label="형식" role="cell"><FormatBadge contentType={row.contentType} /></div>
+          <div className="v4p-td-r" data-label="좋아요" role="cell">{fmtNumberOr(row.likeCount)}</div>
+          <div className="v4p-td-r" data-label="댓글" role="cell">{fmtNumberOr(row.commentCount)}</div>
+          <div className="v4p-td-r" data-label="올린 지" title={fmtKstStamp(publishedIso)} role="cell">{fmtNumberOr(row.daysSincePublished)}일</div>
+          <div className="v4p-td-r" data-label="좋아요 비율" role="cell">{fmtPercentOr(row.viewCount > 0 ? row.likeRate : null, 1)}</div>
+        </>
+      ) : null}
+    </div>
+  )
+})
 
 const SORT_LABEL: Record<RankSortKey, string> = {
   viewCount: '조회수',
@@ -95,7 +153,7 @@ function RankingScreen() {
   const sortDesc = dir === 'desc'
   const [queryText, setQueryText] = useSearchField(queryValue, (value) => set({ q: value }))
   // "자세히 보기" 는 보는 방식이라 필터와 따로, 이 브라우저에만 기억한다.
-  const [detail, setDetail] = useStoredState<boolean>('v4:ranking:detail', false)
+  const [detail, setDetail, detailReady] = useStoredState<boolean>('v4:ranking:detail', false)
 
   const buildPath = useCallback(
     (limit: number, offset: number) =>
@@ -145,7 +203,13 @@ function RankingScreen() {
   }, [path])
 
   const extra = path && more.path === path ? more.items : NO_ITEMS
-  const shown = useMemo(() => (data ? [...data.items, ...extra] : []), [data, extra])
+  // 다시 받아온 첫 쪽에 이미 이어받은 영상이 들어와도(순위가 바뀐 경우) 같은 영상이 두 줄로 보이지 않게 한다.
+  const shown = useMemo(() => {
+    if (!data) return NO_ITEMS
+    if (extra.length === 0) return data.items
+    const firstIds = new Set(data.items.map((v) => v.id))
+    return [...data.items, ...extra.filter((v) => !firstIds.has(v.id))]
+  }, [data, extra])
   const total = data?.total ?? 0
 
   const loadMore = async () => {
@@ -175,9 +239,16 @@ function RankingScreen() {
     })
   }
 
-  const collapse = () => setMore({ path: '', items: [] })
+  const collapse = () => {
+    // 이어받는 중이었다면 그 요청은 버린다 (접은 뒤에 도착해 다시 펼쳐지지 않게)
+    moreAbort.current?.abort()
+    moreAbort.current = null
+    loadingMoreRef.current = false
+    setLoadingMore(false)
+    setMore({ path: '', items: [] })
+  }
 
-  // ---- 표를 CSV 로 저장: 화면에 불러온 것만이 아니라 "조건에 맞는 전부" 를 200개씩 이어 받아 만든다.
+  // ---- 표를 엑셀 파일(CSV)로 저장: 화면에 불러온 것만이 아니라 "조건에 맞는 전부" 를 200개씩 이어 받아 만든다.
   const exportAll = async () => {
     if (exportAbort.current || !data) return
     const controller = new AbortController()
@@ -202,6 +273,7 @@ function RankingScreen() {
       } else if (result.rows.length === 0) {
         showError('저장할 영상이 없어요.')
       } else {
+        const [{ buildCsv, csvFilename, csvKstDateTime }, { downloadCsvFile }] = await Promise.all([import('@/lib/v4/csv'), import('@/lib/v4/download')])
         const headers = ['순위', '제목', '종목', ...(isAdmin ? ['담당자'] : []), '형식', '조회수', '조회 속도(회/일)', '좋아요', '댓글', '올린 지(일)', '좋아요 비율(%)', '게시 시각(한국 시간)', '유튜브 주소']
         const rows = result.rows.map((v, i) => [
           i + 1,
@@ -219,7 +291,7 @@ function RankingScreen() {
           v.youtubeUrl
         ])
         downloadCsvFile(csvFilename(`영상순위_최근${period}일`), buildCsv(headers, rows))
-        showSuccess(`영상 ${fmtNumber(result.rows.length)}개를 CSV로 저장했어요.${result.truncated ? ' (너무 많아 일부만 담았어요)' : ''}`)
+        showSuccess(`영상 ${fmtNumber(result.rows.length)}개를 엑셀 파일로 저장했어요.${result.truncated ? ' (너무 많아 일부만 담았어요)' : ''}`)
       }
     } catch (e) {
       if (!aliveRef.current) return
@@ -236,6 +308,9 @@ function RankingScreen() {
   const staffName = data?.staffOptions.find((s) => s.id === staff)?.name
   const slotFiltered = dow >= 0 || hour >= 0
   const filtered = Boolean(staffId || format || queryValue || slotFiltered)
+
+  const pickStock = useCallback((stockName: string) => set({ q: stockName }), [set])
+  const pickStaff = useCallback((staffId: string) => set({ staff: staffId }), [set])
 
   const toggleSort = (key: RankSortKey) => {
     if (sortKey === key) set({ dir: sortDesc ? 'asc' : 'desc' })
@@ -271,7 +346,8 @@ function RankingScreen() {
         ]
       : [])
   ]
-  const rowStyle = { '--cols': cols.map((c) => c.width).join(' ') } as CSSProperties
+  const colsCss = cols.map((c) => c.width).join(' ')
+  const rowStyle = useMemo(() => ({ '--cols': colsCss }) as CSSProperties, [colsCss])
   const has = (id: string) => cols.some((c) => c.id === id)
 
   const sortHead = (key: RankSortKey, label: string, title?: string) => (
@@ -294,7 +370,7 @@ function RankingScreen() {
     <>
       <PageHeader
         title="콘텐츠 성과 랭킹"
-        subtitle="어떤 영상이 잘 나가고 있는지 한눈에 봅니다."
+        subtitle="어떤 영상이 잘 나가고 있는지 한눈에 볼 수 있어요."
         actions={
           <>
             <CopyLinkButton getUrl={shareUrl} onResult={(ok) => (ok ? showSuccess('이 화면 링크를 복사했어요. 받은 사람도 같은 조건으로 볼 수 있어요.') : showError('링크를 복사하지 못했어요. 주소창의 주소를 직접 복사해 주세요.'))} />
@@ -366,12 +442,12 @@ function RankingScreen() {
             <KpiRow>
               <Kpi label={filtered ? '조건에 맞는 영상' : '등록한 영상'} value={`${fmtNumberOr(summary?.videoCount)}개`} hint="이 기간에 등록된 영상의 수예요." loading={!data} />
               <Kpi label="총 조회수" value={`${fmtShortOr(summary?.totalViews)}회`} hint="이 영상들이 지금까지 받은 조회수를 모두 더한 값이에요." loading={!data} />
-              <Kpi label="영상 1개당 평균 조회수" value={`${fmtShortOr(summary?.avgViews)}회`} hint="이 숫자보다 높으면 평균 이상으로 잘 나가는 영상이에요." loading={!data} term="avgViews" />
+              <Kpi label="영상당 평균 조회수" value={`${fmtShortOr(summary?.avgViews)}회`} hint="이 숫자보다 높으면 평균 이상으로 잘 나가는 영상이에요." loading={!data} term="avgViews" />
             </KpiRow>
 
             <Card
               title="영상 순위"
-              sub="기본은 조회수가 많은 순 Top 10이에요. 제목을 누르면 유튜브가 열려요. 종목이나 담당자 이름을 누르면 그 영상만 모아 볼 수 있어요."
+              sub="기본은 조회수가 많은 상위 10개예요. 제목을 누르면 유튜브가 열려요. 종목이나 담당자 이름을 누르면 그 영상만 모아 볼 수 있어요."
               actions={
                 <>
                   <CsvButton onExport={() => void exportAll()} onCancel={() => exportAbort.current?.abort()} progress={exportProgress} disabled={!data || failed || total === 0} />
@@ -427,7 +503,7 @@ function RankingScreen() {
               </div>
               <ActiveFilters chips={chips} onReset={clearFilters} />
 
-              {!data ? (
+              {!data || !detailReady ? (
                 <SkelTable rows={FIRST_PAGE} />
               ) : failed ? (
                 <ErrorPanel message={error} status={status} onRetry={reload} busy={fetching} />
@@ -458,49 +534,19 @@ function RankingScreen() {
                     {has('days') ? sortHead('daysSincePublished', '올린 지') : null}
                     {has('rate') ? sortHead('likeRate', '좋아요 비율', '조회수 대비 좋아요 수예요') : null}
                   </div>
-                  {shown.map((row, index) => {
-                    const publishedIso = row.publishedAt || row.createdAt
-                    return (
-                      <div className="v4p-tr" style={rowStyle} key={row.id} role="row">
-                        <div className="v4p-cell-rank" role="cell">
-                          <span className={`v4p-rank ${index < 3 && sortKey === 'viewCount' && sortDesc ? 'top' : ''}`}>{index + 1}</span>
-                        </div>
-                        <div className="v4p-title-cell" role="cell">
-                          {row.youtubeUrl ? (
-                            <a href={row.youtubeUrl} target="_blank" rel="noopener noreferrer" title={row.title}>
-                              {row.title}
-                            </a>
-                          ) : (
-                            <span className="t" title={row.title}>{row.title}</span>
-                          )}
-                          <div className="v4p-sub" title={fmtKstStamp(publishedIso)}>게시 {fmtKstMonthDay(publishedIso)}</div>
-                        </div>
-                        <div className="v4p-ellipsis" data-label="종목" role="cell">
-                          <button type="button" className="v4p-cell-btn" title={`${row.stockName} — 이 종목 영상만 보기`} onClick={() => set({ q: row.stockName })}>
-                            {row.stockName}
-                          </button>
-                        </div>
-                        {has('owner') ? (
-                          <div className="v4p-ellipsis" data-label="담당자" role="cell">
-                            {row.ownerId ? (
-                              <button type="button" className="v4p-cell-btn" title={`${row.ownerName} — 이 담당자 영상만 보기`} onClick={() => set({ staff: row.ownerId ?? '' })}>
-                                {row.ownerName}
-                              </button>
-                            ) : (
-                              row.ownerName
-                            )}
-                          </div>
-                        ) : null}
-                        <div className="v4p-td-r v4p-num" data-label="조회수" title={`${fmtNumberOr(row.viewCount)}회`} role="cell">{fmtNumberOr(row.viewCount)}</div>
-                        <div className="v4p-td-r" data-label="조회 속도" role="cell">{fmtNumberOr(row.velocity)}회/일</div>
-                        {has('format') ? <div data-label="형식" role="cell"><FormatBadge contentType={row.contentType} /></div> : null}
-                        {has('like') ? <div className="v4p-td-r" data-label="좋아요" role="cell">{fmtNumberOr(row.likeCount)}</div> : null}
-                        {has('comment') ? <div className="v4p-td-r" data-label="댓글" role="cell">{fmtNumberOr(row.commentCount)}</div> : null}
-                        {has('days') ? <div className="v4p-td-r" data-label="올린 지" title={fmtKstStamp(publishedIso)} role="cell">{fmtNumberOr(row.daysSincePublished)}일</div> : null}
-                        {has('rate') ? <div className="v4p-td-r" data-label="좋아요 비율" role="cell">{fmtPercentOr(row.viewCount > 0 ? row.likeRate : null, 1)}</div> : null}
-                      </div>
-                    )
-                  })}
+                  {shown.map((row, index) => (
+                    <RankRow
+                      key={row.id}
+                      row={row}
+                      index={index}
+                      rowStyle={rowStyle}
+                      showOwner={isAdmin}
+                      detail={detail}
+                      medal={index < 3 && sortKey === 'viewCount' && sortDesc}
+                      onPickStock={pickStock}
+                      onPickStaff={pickStaff}
+                    />
+                  ))}
                 </div>
               )}
 
@@ -529,8 +575,8 @@ function RankingScreen() {
               <Formula>
                 <p>조회 속도 = 조회수 ÷ 올린 뒤 지난 날짜(최소 1일). 하루에 평균 몇 번 봤는지를 뜻해요. 최근에 올린 영상도 공정하게 비교할 수 있어요.</p>
                 <p>좋아요 비율 = 좋아요 수 ÷ 조회수. 영상을 본 사람 중 얼마나 좋아요를 눌렀는지 보여줘요.</p>
-                <p>올린 날짜는 유튜브 게시일 기준이고, 없으면 CRM에 등록한 시각을 씁니다. 날짜와 시각에 마우스를 올리면 정확한 한국 시간이 나와요.</p>
-                <p>“표를 CSV로 저장”은 화면에 보이는 10~20개가 아니라, 지금 조건에 맞는 영상 전부를 저장해요.</p>
+                <p>올린 날짜는 유튜브 게시일 기준이고, 없으면 CRM에 등록한 시각을 써요. 날짜와 시각에 마우스를 올리면 정확한 한국 시간이 나와요.</p>
+                <p>“표를 엑셀 파일로 저장”은 화면에 보이는 10~20개가 아니라, 지금 조건에 맞는 영상 전부를 저장해요.</p>
               </Formula>
               <GlossaryList terms={['velocity', 'avgViews', 'likeRate']} />
             </Card>

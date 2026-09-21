@@ -9,14 +9,13 @@ import { Section, Tag } from '@/components/v3/ui'
 import { useV3Me } from '@/components/v3/auth-guard'
 import { v3Request } from '@/lib/v3/api-client'
 import { ConfirmButton, FieldError, InlineEditor } from '@/lib/v3/interact'
-import { markDirtyV3, useV3Data } from '@/lib/v3/use-v3-data'
+import { invalidateV3, useV3Data } from '@/lib/v3/use-v3-data'
 import { useUrlFilters } from '@/lib/v3/use-filters'
 import { VIRAL_FILTERS, chipLabel, defaultFilters, optionsFor } from '@/lib/v3/filters'
 import { formatCompactNumber, formatNumber } from '@/lib/v3/format'
 import { buildWhy, suggestFollowUps, type WhyTeam } from '@/lib/v3/viral-why'
 import { lifecycleHref, registerHref } from '@/lib/v3/links'
 import { sortViralItems } from '@/lib/v3/sorting'
-import { viralCsv } from '@/lib/v3/table-rows'
 import {
   AnswerCard,
   AnswerSkeleton,
@@ -80,7 +79,7 @@ type ViralResponse = {
 // 배수 표기: NaN/Infinity 가 들어와도 화면이 깨지지 않게
 const fx = (n: number) => (Number.isFinite(n) ? n.toFixed(1) : '—')
 
-const FALLBACK_HEADER = <PageHeader icon="🔥" title="급상승 영상" subtitle="조회수가 평소보다 빠르게 오르는 영상을 찾아 줍니다." />
+const HEADER_PROPS = { icon: '🔥', title: '급상승 영상', subtitle: '조회수가 평소보다 빠르게 오르는 영상을 찾아 줘요.' }
 
 // useSearchParams 는 Suspense 안에서만 쓸 수 있다(Next 16).
 export default function ViralPage() {
@@ -88,7 +87,7 @@ export default function ViralPage() {
     <Suspense
       fallback={
         <>
-          {FALLBACK_HEADER}
+          <PageHeader {...HEADER_PROPS} />
           <SkeletonShell label="급상승 영상을 찾는 중이에요…">
             <AnswerSkeleton />
             <StatsSkeleton count={3} />
@@ -152,10 +151,11 @@ function ViralView() {
       return next
     })
 
-  // 화면에서 먼저 바꿔 보여 준다(캐시에도 같이 반영). 저장이 끝난 뒤에는 다음 조회가 서버 최신 값을 받도록 표시해 둔다.
+  // 화면에서 먼저 바꿔 보여 준다. 다른 조건(직원·형식·기간)으로 저장해 둔 급상승 화면에는 옛 확인 상태가 남아 있으므로 함께 비운다.
+  // (invalidate 를 먼저 부르고 mutate 로 지금 화면의 저장본만 새 값으로 다시 채운다)
   const patchItem = (id: string, patch: Partial<ViralItem>) => {
+    invalidateV3('/api/v3/viral')
     mutate((prev) => ({ ...prev, items: prev.items.map((item) => (item.id === id ? { ...item, ...patch } : item)) }))
-    markDirtyV3('/api/v3/viral')
   }
 
   // 확인 표시: 화면에서 먼저 "확인 완료"로 옮기고, 저장에 실패하면 되돌린다.
@@ -166,7 +166,7 @@ function ViralView() {
     setAckingId(item.id)
     setCardError(item.id, null)
     patchItem(item.id, { acknowledged: true, actionNote: actionNote || null, ackedAt: new Date().toISOString(), ackedByName: me?.name || null })
-    const out = await v3Request('/api/v3/viral/ack', { method: 'POST', body: { videoId: item.id, actionNote: actionNote || undefined } }, '확인 표시를 저장하지 못했어요.')
+    const out = await v3Request<{ ack?: { at?: string; byName?: string | null } }>('/api/v3/viral/ack', { method: 'POST', body: { videoId: item.id, actionNote: actionNote || undefined } }, '확인 표시를 저장하지 못했어요.')
     ackLock.current = false
     setAckingId(null)
     if (!out.ok) {
@@ -175,6 +175,8 @@ function ViralView() {
       showError(out.error || '확인 표시를 저장하지 못했어요.')
       return
     }
+    // 서버가 기록한 시각·이름으로 맞춘다.
+    if (out.data?.ack?.at) patchItem(item.id, { ackedAt: out.data.ack.at, ackedByName: out.data.ack.byName ?? me?.name ?? null })
     setJustAcked({ item })
     setNotes((prev) => {
       const next = { ...prev }
@@ -197,7 +199,9 @@ function ViralView() {
     showSuccess('메모를 저장했어요.')
   }
 
-  const undoAck = async (item: ViralItem) => {
+  const undoAck = async (target: ViralItem) => {
+    // '실행 취소'로 들어온 item 은 확인하기 전 모습이라, 되돌릴 때 쓸 값은 지금 화면의 것에서 가져온다.
+    const item = data?.items.find((x) => x.id === target.id) ?? target
     setUndoingId(item.id)
     setCardError(item.id, null)
     setJustAcked((cur) => (cur?.item.id === item.id ? null : cur))
@@ -205,7 +209,7 @@ function ViralView() {
     const out = await v3Request('/api/v3/viral/ack', { method: 'DELETE', body: { videoId: item.id } }, '확인 취소에 실패했어요.')
     setUndoingId(null)
     if (!out.ok) {
-      patchItem(item.id, { acknowledged: true, actionNote: item.actionNote })
+      patchItem(item.id, { acknowledged: true, actionNote: item.actionNote, ackedAt: item.ackedAt ?? null, ackedByName: item.ackedByName ?? null })
       setCardError(item.id, out.error)
       showError(out.error || '확인 취소에 실패했어요.')
       return
@@ -250,13 +254,13 @@ function ViralView() {
     >
       <ShareTools
         getLink={() => f.shareUrl()}
-        csv={{ baseName: '급상승 영상', rowCount: sorted.length, build: () => viralCsv(sorted, team, { showOwner: isAdmin }) }}
+        csv={{ baseName: '급상승 영상', rowCount: sorted.length, build: async () => (await import('@/lib/v3/table-rows')).viralCsv(sorted, team, { showOwner: isAdmin }) }}
         notify={{ success: showSuccess, error: showError }}
       />
     </FilterBar>
   )
 
-  const header = <PageHeader icon="🔥" title="급상승 영상" subtitle="조회수가 평소보다 빠르게 오르는 영상을 찾아 줍니다." />
+  const header = <PageHeader {...HEADER_PROPS} />
 
   if (!data) {
     return (
@@ -378,7 +382,7 @@ function ViralView() {
                   {item.actionNote ? '메모 수정' : '메모 남기기'}
                 </button>
                 <Link className="button secondary xs" href={lifecycleHref(item.id)}>
-                  성장 곡선 보기
+                  조회수 성장 곡선 보기
                 </Link>
                 <ConfirmButton
                   label="확인 취소"
@@ -526,7 +530,7 @@ function ViralView() {
           </div>
         ) : null}
 
-        {!data.acksAvailable && data.items.length > 0 ? <SetupNote>“확인했어요” 기록을 저장하려면 이 SQL을 먼저 실행해 주세요 —</SetupNote> : null}
+        {!data.acksAvailable && data.items.length > 0 ? <SetupNote>아직 ‘확인했어요’ 기록을 저장할 준비가 안 됐어요. 관리자에게 알려 주세요.</SetupNote> : null}
 
         <StatGrid>
           <StatCard

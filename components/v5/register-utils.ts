@@ -1,6 +1,6 @@
 // 영상 등록 화면(한 개씩 / 여러 개 / 수정)이 함께 쓰는 순수 도우미 모음.
 
-import { authedFetchJson, authedPostJson } from '@/lib/session/authed-fetch'
+import { authedFetchJson, type AuthedJsonResult } from '@/lib/session/authed-fetch'
 import { classifyError, refineServerFailure, type RegisterErrorInfo } from './register-errors'
 
 export type ContentType = 'longform' | 'shortform'
@@ -38,7 +38,7 @@ export function parseBulkText(text: string): { lines: ParsedLine[]; duplicates: 
 
     const found = findYoutubeUrl(raw)
     if (!found) {
-      lines.push({ raw, videoId: null, canonicalUrl: '', stock: '', type: 'longform', problem: '유튜브 주소를 찾지 못했습니다.' })
+      lines.push({ raw, videoId: null, canonicalUrl: '', stock: '', type: 'longform', problem: '유튜브 주소를 찾지 못했어요.' })
       continue
     }
 
@@ -51,7 +51,7 @@ export function parseBulkText(text: string): { lines: ParsedLine[]; duplicates: 
       .trim()
 
     if (!videoId) {
-      lines.push({ raw, videoId: null, canonicalUrl: '', stock, type: 'longform', problem: describeUrlProblem(url) || '유효하지 않은 주소입니다.' })
+      lines.push({ raw, videoId: null, canonicalUrl: '', stock, type: 'longform', problem: describeUrlProblem(url) || '올바른 영상 주소가 아니에요.' })
       continue
     }
 
@@ -100,6 +100,25 @@ export function formatKstWhen(value: string) {
 export { classifyError, friendlyError, refineServerFailure } from './register-errors'
 export type { RegisterErrorInfo, RegisterErrorKind } from './register-errors'
 
+// ---- 서버 호출(시간 제한) --------------------------------------------------------
+// 인터넷이 애매하게 걸려 있으면 요청이 끝없이 기다릴 수 있다. 그러면 "등록 중..."이 영영 풀리지 않으므로
+// 정해진 시간이 지나면 끊고, 화면에는 "인터넷 연결" 안내(다시 시도 버튼 포함)를 보여 준다.
+export const TIMEOUT_MS = { lookup: 8_000, save: 20_000, list: 20_000, undo: 15_000 } as const
+
+export async function authedFetchJsonTimeout<T = any>(path: string, init: RequestInit = {}, timeoutMs: number = TIMEOUT_MS.save): Promise<AuthedJsonResult<T>> {
+  const controller = new AbortController()
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await authedFetchJson<T>(path, { ...init, signal: controller.signal })
+  } catch (e) {
+    // 시간 초과로 끊은 것은 인터넷 문제와 같은 안내를 쓴다(classifyError 가 TypeError 를 인터넷 오류로 본다).
+    if (controller.signal.aborted) throw new TypeError('timeout')
+    throw e
+  } finally {
+    window.clearTimeout(timer)
+  }
+}
+
 // ---- 등록 호출 -----------------------------------------------------------------
 
 export type RegisterInput = { videoId: string; contentType: ContentType; stockName: string; contentCategory?: string }
@@ -110,7 +129,7 @@ export type RegisterResult =
 // 로그인이 유지되는지 가볍게 확인한다(등록 API 는 로그인이 풀려도 401 대신 500 을 주기 때문).
 async function probeAuth(): Promise<{ status: number | null }> {
   try {
-    const res = await authedFetchJson('/api/v5/my-today')
+    const res = await authedFetchJsonTimeout('/api/v5/my-today', {}, TIMEOUT_MS.lookup)
     return { status: res.status }
   } catch {
     return { status: 0 }
@@ -140,12 +159,20 @@ async function probeOembed(videoId: string): Promise<{ status: number | null }> 
 export async function registerVideo(input: RegisterInput, options: { diagnose?: boolean } = {}): Promise<RegisterResult> {
   let error: RegisterErrorInfo
   try {
-    const res = await authedPostJson<{ ok?: boolean; video?: { id: string; title: string | null }; error?: string }>('/api/videos/create', {
-      youtubeUrl: canonicalWatchUrl(input.videoId),
-      contentType: input.contentType,
-      stockName: input.stockName,
-      contentCategory: input.contentCategory || undefined
-    })
+    const res = await authedFetchJsonTimeout<{ ok?: boolean; video?: { id: string; title: string | null }; error?: string }>(
+      '/api/videos/create',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          youtubeUrl: canonicalWatchUrl(input.videoId),
+          contentType: input.contentType,
+          stockName: input.stockName,
+          contentCategory: input.contentCategory || undefined
+        })
+      },
+      TIMEOUT_MS.save
+    )
     if (res.ok && res.data.video) return { ok: true, id: res.data.video.id, title: res.data.video.title || null }
     error = classifyError(res.data?.error || '', res.status)
   } catch (e) {

@@ -2,7 +2,9 @@
 
 // 브라우저 전용 도우미: 링크 복사, CSV 파일 저장. (순수 계산은 csv.ts / filters.ts)
 
-import { CSV_BOM, CSV_MIME } from '@/lib/v5/csv'
+// 엑셀이 한글을 깨뜨리지 않게 파일 맨 앞에 붙이는 표시(BOM)
+const CSV_BOM = String.fromCharCode(0xfeff)
+const CSV_MIME = 'text/csv;charset=utf-8'
 
 // 클립보드에 글자를 넣는다. 성공하면 true. (권한이 없는 브라우저는 예전 방식으로 한 번 더 시도)
 export async function copyText(text: string): Promise<boolean> {

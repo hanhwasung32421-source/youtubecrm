@@ -2,8 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { TABLES } from '@/lib/supabase/tables'
 import { V2_TABLES } from '@/lib/v2/tables'
-import { authedContext, handleDbError, handleRouteError, isMissingTableError, isUuid, noStoreJson, nowIso, serverError } from '@/lib/v2/server'
-import { sampleSeoChecklistsPayload } from '@/lib/v2/sample-data'
+import { authedContext, chunkIds, handleDbError, handleRouteError, isUuid, loadChecklistMap, mapLimit, noStoreJson, nowIso } from '@/lib/v2/server'
 import { SEO_CHECKLIST_FIELDS, type SeoChecklist, type SeoChecklistsPayload } from '@/lib/v2/types'
 
 // 등록 직후 & 최적화 보드에서 영상별 SEO 체크리스트를 읽고 토글한다.
@@ -39,23 +38,17 @@ export async function GET(request: Request) {
 
     // 직원은 본인이 등록한 영상의 체크리스트만 읽을 수 있다.
     if (!isAdmin) {
-      const { data: owned, error: ownedError } = await supabaseAdmin
-        .from(TABLES.videos)
-        .select('id')
-        .eq('primary_owner_user_id', profile.id)
-        .in('id', videoIds)
-      if (ownedError) return serverError(ownedError, '체크리스트를 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.')
-      videoIds = ((owned || []) as { id: string }[]).map((row) => row.id)
+      const ownedChunks = await mapLimit(chunkIds(videoIds), 3, async (ids) => {
+        const { data, error } = await supabaseAdmin.from(TABLES.videos).select('id').eq('primary_owner_user_id', profile.id).in('id', ids)
+        if (error) throw error
+        return (data || []) as { id: string }[]
+      })
+      videoIds = ownedChunks.flat().map((row) => row.id)
       if (videoIds.length === 0) return NextResponse.json({ items: [] } satisfies SeoChecklistsPayload)
     }
 
-    const { data, error } = await supabaseAdmin.from(V2_TABLES.seoChecklists).select(CHECKLIST_SELECT).in('video_id', videoIds)
-    if (error) {
-      if (isMissingTableError(error)) return NextResponse.json(sampleSeoChecklistsPayload(videoIds))
-      return handleDbError(error, '체크리스트를 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.')
-    }
-
-    const payload: SeoChecklistsPayload = { items: (data || []) as SeoChecklist[] }
+    const map = await loadChecklistMap(supabaseAdmin, videoIds)
+    const payload: SeoChecklistsPayload = { items: [...map.values()] }
     return NextResponse.json(payload)
   } catch (e) {
     return handleRouteError(e, '체크리스트를 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.')
@@ -64,8 +57,8 @@ export async function GET(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
-    const body = patchSchema.parse(await request.json())
     const { profile, supabaseAdmin, isAdmin } = await authedContext(request)
+    const body = patchSchema.parse(await request.json())
 
     const { data: video, error: videoError } = await supabaseAdmin
       .from(TABLES.videos)

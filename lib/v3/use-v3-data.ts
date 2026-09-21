@@ -19,11 +19,7 @@ export function invalidateV3(...prefixes: string[]) {
   for (const prefix of prefixes) core.invalidate(prefix)
 }
 
-// 화면에서 이미 고쳐 둔 값은 남겨 두고, 다음에 받을 때만 서버에서 새로 받게 한다.
-export function markDirtyV3(...prefixes: string[]) {
-  for (const prefix of prefixes) core.markDirty(prefix)
-}
-
+// 로그아웃할 때 부르면 메모리에 남은 화면 값을 모두 비운다.
 export function clearV3Cache() {
   core.clear()
 }

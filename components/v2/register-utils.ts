@@ -1,5 +1,16 @@
 // 영상 등록 화면에서 함께 쓰는 순수 함수 모음(서버 코드 없음).
 
+// 서버·라이브러리가 돌려준 문장이 한글일 때만 화면에 그대로 보여 주고, 영문 오류("Failed to fetch" 등)는 준비해 둔 문장으로 바꾼다.
+export function koreanOr(message: unknown, fallback: string): string {
+  return typeof message === 'string' && /[가-힣]/.test(message) ? message : fallback
+}
+
+// 한글 입력(IME)으로 글자를 조립하는 중인지. Chrome 은 isComposing 으로, Safari 는 조립을 끝내는 Enter 에서 keyCode 229 로 알려 준다.
+// 이 상태의 Enter·Esc 는 "글자 확정/취소"이므로 등록·저장 같은 동작으로 쓰면 안 된다.
+export function isImeKey(e: { keyCode?: number; nativeEvent?: { isComposing?: boolean } }): boolean {
+  return Boolean(e.nativeEvent?.isComposing) || e.keyCode === 229
+}
+
 // 유튜브 주소처럼 보이는 조각인지: (https://)(www.|m.|music.)youtube.com/… , youtu.be/… 만 인정한다.
 // 예전에는 "YouTube"라는 단어(공유 문구의 "제목 - YouTube")까지 주소로 착각했다.
 const YT_TOKEN = /^(?:https?:\/\/)?(?:[\w-]+\.)*(?:youtube\.com|youtube-nocookie\.com|youtu\.be)(?:[/?#:]|$)/i
@@ -148,7 +159,7 @@ export function describeRegisterError(message: string | undefined, status?: numb
     return { kind: 'forbidden', retry: false, text: '이 계정으로는 등록할 수 없어요. 관리자에게 계정 권한을 확인해 달라고 알려 주세요.' }
   }
   if (/API가 비활성|API 활성화|채널 ID/.test(m)) {
-    return { kind: 'config', retry: false, text: '아직 유튜브 연결 설정이 끝나지 않아 등록할 수 없어요. 관리자에게 유튜브 API 설정을 요청해 주세요.' }
+    return { kind: 'config', retry: false, text: '아직 유튜브 연결이 준비되지 않아 등록할 수 없어요. 관리자에게 알려 주세요.' }
   }
   if (/유효한 유튜브|유효하지 않|invalid url|주소가 올바르지/i.test(m)) {
     return { kind: 'invalid', retry: false, text: '유튜브 영상 주소로 인식하지 못했어요. 영상의 주소를 다시 복사해서 붙여 넣어 주세요.' }
@@ -180,7 +191,7 @@ export function friendlyRegisterError(message: string | undefined, status?: numb
 export function friendlyEditError(message: string | undefined, status: number | undefined, fallback: string): string {
   const m = String(message || '')
   if (status === 401 || /로그인이 필요/.test(m)) return '로그인 시간이 지났어요. 다시 로그인해 주세요.'
-  if (status === 403 || status === 404 || status === 400) return m || fallback
+  if (status === 403 || status === 404 || status === 400 || status === 409) return m || fallback
   return fallback
 }
 

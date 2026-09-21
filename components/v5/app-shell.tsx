@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
+import { Toast, useToast } from '@/components/toast'
 import { createSupabaseBrowserClient } from '@/lib/supabase/browser-client'
 import { clearMeCache } from '@/lib/session/me-client'
 import { findMenuByPath, getMenusForRole, type MenuDefinition } from '@/lib/v5/menu'
@@ -25,6 +26,7 @@ export function AppShellFrame({ children }: { children: React.ReactNode }) {
   const me = session.me
   const [loggingOut, setLoggingOut] = useState(false)
   const navRef = useRef<HTMLElement | null>(null)
+  const { toast, showError } = useToast()
 
   const logout = async () => {
     if (loggingOut) return
@@ -36,6 +38,7 @@ export function AppShellFrame({ children }: { children: React.ReactNode }) {
       router.replace('/v5/login')
     } catch {
       setLoggingOut(false)
+      showError('로그아웃하지 못했어요. 인터넷 연결을 확인하고 다시 눌러 주세요.')
     }
   }
 
@@ -135,7 +138,7 @@ export function AppShellFrame({ children }: { children: React.ReactNode }) {
               </button>
             </div>
           ) : session.status === 'error' ? (
-            <div className="small muted">계정을 확인하지 못했습니다.</div>
+            <div className="small muted">계정을 확인하지 못했어요.</div>
           ) : (
             <SkeletonRegion label="계정 확인 중" className="sidebar-account">
               <Skeleton circle height={34} />
@@ -154,7 +157,7 @@ export function AppShellFrame({ children }: { children: React.ReactNode }) {
           children
         ) : session.status === 'error' ? (
           <div className="v5-empty">
-            <div className="v5-empty-title">화면을 불러오지 못했습니다</div>
+            <div className="v5-empty-title">화면을 불러오지 못했어요</div>
             <div className="v5-empty-body">{session.message}</div>
             <div className="v5-empty-action">
               <button className="button sm" type="button" onClick={session.retry}>
@@ -174,6 +177,7 @@ export function AppShellFrame({ children }: { children: React.ReactNode }) {
           </SkeletonRegion>
         )}
       </section>
+      <Toast toast={toast} />
     </div>
   )
 }

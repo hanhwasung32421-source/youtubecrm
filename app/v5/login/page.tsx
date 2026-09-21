@@ -88,7 +88,7 @@ export default function LoginPage() {
         })
         const data = await res.json().catch(() => ({}))
         if (!res.ok) {
-          setError(data?.error || '아이디를 찾을 수 없습니다.')
+          setError(data?.error || '아이디를 찾을 수 없어요. 다시 확인해 주세요.')
           idRef.current?.focus()
           return
         }
@@ -102,7 +102,7 @@ export default function LoginPage() {
       })
 
       if (error || !data.session?.access_token) {
-        setError('아이디 또는 비밀번호가 맞지 않습니다.')
+        setError('아이디나 비밀번호가 맞지 않아요. 다시 확인해 주세요.')
         setPassword('')
         pwRef.current?.focus()
         return
@@ -122,9 +122,9 @@ export default function LoginPage() {
       // 직원 = 영상 등록, 관리자 = 성장 실험 화면으로.
       const me = await fetchMe(data.session.access_token)
       moved = true // 화면이 바뀔 때까지 버튼을 계속 잠가 둔다.
-      router.push(readNextFromSearch(window.location.search) ?? getHomeHref(me.roleType))
+      router.replace(readNextFromSearch(window.location.search) ?? getHomeHref(me.roleType))
     } catch (e: any) {
-      setError(e instanceof TypeError ? '인터넷 연결을 확인해 주세요.' : e?.message || '로그인 중 오류가 발생했습니다.')
+      setError(e instanceof TypeError ? '인터넷 연결을 확인해 주세요.' : typeof e?.message === 'string' && /[가-힣]/.test(e.message) ? e.message : '로그인하지 못했어요. 잠시 뒤 다시 시도해 주세요.')
     } finally {
       if (!moved) {
         submittingRef.current = false
@@ -161,7 +161,7 @@ export default function LoginPage() {
           }}
         >
           <img className="auth-logo" src="/logo-ant.png" alt="" width={56} height={56} />
-          <h1 className="auth-title">여왕개미미디어 CRM</h1>
+          <h1 className="auth-title">여왕개미미디어</h1>
           <p className="auth-subtitle">{returning ? '로그인이 풀렸어요. 다시 로그인하면 하던 화면으로 돌아가요.' : '영상 등록부터 성장 관리까지, 한곳에서'}</p>
           <div className="field">
             <label className="label" htmlFor="v5-login-id">

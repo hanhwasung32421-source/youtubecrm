@@ -93,7 +93,7 @@ export function buildStockAdvice(items: StockLite[]): StockAdvice {
 
 // ---------------------------------------------------------------- 업로드 시간대
 
-export const TIMING_RELIABLE_MIN = 3 // 한 칸에 영상이 이 개수 미만이면 "표본이 적어요"
+export const TIMING_RELIABLE_MIN = 3 // 한 칸에 영상이 이 개수 미만이면 "영상이 적어요"
 
 export type SlotCell = { weekday: number; hour: number; count: number; totalViews: number; avgViews: number }
 
@@ -114,7 +114,7 @@ export function isThinCell(count: number): boolean {
 }
 
 // 추천 시간대 딱 한 곳. 영상이 충분한(3개 이상) 칸 중 평균 조회수가 가장 높은 칸을 먼저 고르고,
-// 그런 칸이 없으면 2개짜리 → 1개짜리 순으로 물러서되 "표본이 적어요" 를 함께 알린다.
+// 그런 칸이 없으면 2개짜리 → 1개짜리 순으로 물러서되 "영상이 적어요" 를 함께 알린다.
 export function buildTimingAdvice(cells: SlotCell[]): SlotAdvice | null {
   let totalViews = 0
   let totalCount = 0
@@ -142,7 +142,7 @@ export function buildTimingAdvice(cells: SlotCell[]): SlotAdvice | null {
     lowSample,
     sentence: `${name}에 올려 보세요. 이 시간대 영상 ${pick.count}개가 평균 ${fmtShort(pick.avgViews)}회 조회됐어요${compare}.`,
     evidence: `이 시간대에 올린 영상 ${pick.count}개가 평균 ${fmtShort(pick.avgViews)}회 조회됐어요${compare}.`,
-    caveat: lowSample ? `표본이 적어요. 영상이 ${pick.count}개뿐이라 우연일 수 있어요. 3개 이상 쌓이면 더 믿을 수 있어요.` : ''
+    caveat: lowSample ? `영상이 적어요. ${pick.count}개뿐이라 우연일 수 있어요. 3개 이상 쌓이면 더 믿을 수 있어요.` : ''
   }
 }
 
@@ -170,7 +170,7 @@ export function staffStrength(row: StaffRowLite, team: StaffTeamLite): string {
   if (row.videoCount <= 0) return '이 기간에 등록한 영상이 없어요.'
   const strengths: string[] = []
   if (team.avgViews > 0 && row.avgViews / team.avgViews >= 1.2) {
-    strengths.push(`영상 1개당 평균 조회수가 팀 평균의 ${fmtMultiple(row.avgViews / team.avgViews)}배예요`)
+    strengths.push(`영상당 평균 조회수가 팀 평균의 ${fmtMultiple(row.avgViews / team.avgViews)}배예요`)
   }
   if (team.likeRate > 0 && row.likeRate / team.likeRate >= 1.2) strengths.push('좋아요 비율이 팀 평균보다 높아요')
   if (team.meanVideoCount > 0 && row.videoCount / team.meanVideoCount >= 1.2) strengths.push('영상을 팀 평균보다 많이 올렸어요')

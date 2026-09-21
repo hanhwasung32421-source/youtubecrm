@@ -327,39 +327,6 @@ body:has(.v3-theme) {
 }
 
 /* 콜아웃 */
-.v3-theme .v3-callout {
-  display: flex;
-  gap: 12px;
-  padding: 14px 16px;
-  border-radius: 8px;
-  background: var(--bg-soft);
-  border: 1px solid var(--line);
-  line-height: 1.7;
-}
-
-.v3-theme .v3-callout.info {
-  background: rgba(44, 88, 200, 0.06);
-  border-color: rgba(44, 88, 200, 0.2);
-}
-
-.v3-theme .v3-callout.warning {
-  background: rgba(217, 130, 43, 0.08);
-  border-color: rgba(217, 130, 43, 0.3);
-}
-
-.v3-theme .v3-callout.success {
-  background: rgba(47, 158, 110, 0.07);
-  border-color: rgba(47, 158, 110, 0.25);
-}
-
-.v3-theme .v3-callout-icon {
-  font-size: 18px;
-  line-height: 1.4;
-}
-
-.v3-theme .v3-callout strong {
-  font-weight: 700;
-}
 
 /* 문서 섹션 */
 .v3-theme .v3-section {
@@ -402,51 +369,6 @@ body:has(.v3-theme) {
 }
 
 /* KPI 카드 */
-.v3-theme .v3-kpi-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.v3-theme .v3-kpi {
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 14px 16px;
-  background: var(--panel);
-  min-width: 0;
-}
-
-.v3-theme .v3-kpi-label {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--muted);
-}
-
-.v3-theme .v3-kpi-value {
-  margin-top: 6px;
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.v3-theme .v3-kpi-delta {
-  margin-top: 4px;
-  font-size: 12px;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.v3-theme .v3-delta-up {
-  color: #1f7a52;
-}
-
-.v3-theme .v3-delta-down {
-  color: #b8392f;
-}
 
 /* 노션 데이터베이스 풍 테이블 */
 .v3-theme .data-table {
@@ -479,21 +401,8 @@ body:has(.v3-theme) {
   border-bottom: none;
 }
 
-.v3-theme .data-table-row.v3-row-total {
-  background: var(--bg-soft);
-  font-weight: 700;
-}
-
 .v3-theme .data-table-row.v3-row-editing {
   background: rgba(44, 88, 200, 0.05);
-}
-
-.v3-theme .v3-cell-main {
-  font-weight: 600;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .v3-theme .v3-cell-sub {
@@ -576,45 +485,6 @@ body:has(.v3-theme) {
 }
 
 /* 월 선택 */
-.v3-theme .v3-month-nav {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 2px;
-  background: var(--panel);
-}
-
-.v3-theme .v3-month-nav button {
-  border: none;
-  background: transparent;
-  color: var(--muted);
-  padding: 4px 8px;
-  cursor: pointer;
-  border-radius: 6px;
-  font-size: 14px;
-}
-
-.v3-theme .v3-month-nav button:hover {
-  background: var(--bg-soft);
-  color: var(--text);
-}
-
-.v3-theme .v3-month-nav input {
-  border: none;
-  background: transparent;
-  font: inherit;
-  font-weight: 600;
-  color: var(--text);
-  padding: 4px 6px;
-  width: 128px;
-  text-align: center;
-}
-
-.v3-theme .v3-month-nav input:focus {
-  outline: none;
-}
 
 /* 샘플 배너: 작고 조용하게 한 줄 */
 .v3-theme .v3-sample-banner {
@@ -649,140 +519,13 @@ body:has(.v3-theme) {
   min-width: 0;
 }
 
-.v3-theme .v3-chart-legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 14px;
-  margin-top: 10px;
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.v3-theme .v3-chart-legend span {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.v3-theme .v3-chart-legend i {
-  width: 10px;
-  height: 10px;
-  border-radius: 3px;
-  display: inline-block;
-}
-
-.v3-theme .v3-donut-wrap {
-  display: grid;
-  grid-template-columns: 160px minmax(0, 1fr);
-  gap: 18px;
-  align-items: center;
-}
-
-.v3-theme .v3-donut-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 13px;
-}
-
-.v3-theme .v3-donut-list > div {
-  display: grid;
-  grid-template-columns: 12px minmax(0, 1fr) auto auto;
-  gap: 8px;
-  align-items: center;
-}
-
-.v3-theme .v3-donut-list i {
-  width: 10px;
-  height: 10px;
-  border-radius: 3px;
-  display: inline-block;
-}
-
-.v3-theme .v3-bar-tip {
-  font-size: 11px;
-  fill: #66655f;
-}
-
 /* 비교용 인쇄 스타일 표 (형식 · 시리즈 효과 비교 등) */
-.v3-theme .v3-print-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 14px;
-  border: 1px solid var(--line);
-}
-
-.v3-theme .v3-print-table th,
-.v3-theme .v3-print-table td {
-  padding: 9px 14px;
-  border-bottom: 1px solid var(--line);
-  text-align: left;
-}
-
-.v3-theme .v3-print-table th {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--muted);
-  background: var(--bg-soft);
-}
-
-.v3-theme .v3-print-table td.num,
-.v3-theme .v3-print-table th.num {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
-.v3-theme .v3-print-table tr.section td {
-  font-weight: 700;
-  background: rgba(55, 53, 47, 0.03);
-}
-
-.v3-theme .v3-print-table tr.total td {
-  font-weight: 700;
-  border-top: 2px solid var(--line-strong);
-  background: var(--bg-soft);
-}
-
-.v3-theme .v3-print-table tr.indent td:first-child {
-  padding-left: 32px;
-  color: #5f5e5a;
-}
-
-.v3-theme .v3-print-table tr:last-child td {
-  border-bottom: none;
-}
-
-.v3-theme .v3-video-item {
-  display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) auto auto;
-  gap: 12px;
-  align-items: center;
-  padding: 9px 4px;
-  border-bottom: 1px solid var(--line);
-  font-size: 14px;
-}
-
-.v3-theme .v3-video-item:last-child {
-  border-bottom: none;
-}
 
 .v3-theme .v3-rank {
   font-size: 12px;
   font-weight: 700;
   color: var(--muted);
   text-align: center;
-}
-
-.v3-theme .v3-formula {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
-  background: var(--bg-soft);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 10px 12px;
-  color: #5f5e5a;
-  line-height: 1.7;
-  white-space: pre-wrap;
 }
 
 .v3-theme .v3-link {
@@ -816,136 +559,12 @@ body:has(.v3-theme) {
   gap: 4px;
 }
 
-.v3-theme .v3-scatter-box {
-  grid-column: 2;
-  grid-row: 1;
-  position: relative;
-  height: 320px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel);
-  overflow: hidden;
-}
-
-.v3-theme .v3-scatter-gridline {
-  position: absolute;
-  background: var(--line);
-}
-
-.v3-theme .v3-scatter-gridline-h {
-  left: 0;
-  right: 0;
-  height: 1px;
-}
-
-.v3-theme .v3-scatter-gridline-v {
-  top: 0;
-  bottom: 0;
-  width: 1px;
-}
-
-.v3-theme .v3-scatter-dot {
-  position: absolute;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  transform: translate(-50%, 50%);
-  background: var(--primary);
-  border: 2px solid #ffffff;
-  box-shadow: 0 0 0 1px rgba(44, 88, 200, 0.35);
-  cursor: default;
-}
-
-.v3-theme .v3-scatter-dot.amber {
-  background: var(--warning);
-  box-shadow: 0 0 0 1px rgba(217, 130, 43, 0.35);
-}
-
-.v3-theme .v3-scatter-dot.violet {
-  background: var(--violet);
-  box-shadow: 0 0 0 1px rgba(155, 126, 222, 0.35);
-}
-
-.v3-theme .v3-scatter-axis-x {
-  grid-column: 2;
-  grid-row: 2;
-  text-align: center;
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.v3-theme .v3-scatter-axis-y {
-  grid-column: 1;
-  grid-row: 1;
-  writing-mode: vertical-rl;
-  transform: rotate(180deg);
-  text-align: center;
-  font-size: 12px;
-  color: var(--muted);
-}
-
 /* 바이럴 신호 카드 */
-.v3-theme .v3-viral-card {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  border: 1px solid rgba(217, 130, 43, 0.35);
-  background: rgba(217, 130, 43, 0.06);
-  border-radius: 8px;
-  padding: 14px 16px;
-}
-
-.v3-theme .v3-viral-card.acked {
-  border-color: var(--line);
-  background: var(--panel);
-  opacity: 0.75;
-}
 
 /* 영상 선택 리스트(성장 곡선 / 시리즈) */
-.v3-theme .v3-picker-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  max-height: 420px;
-  overflow-y: auto;
-}
-
-.v3-theme .v3-picker-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 8px 10px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--panel);
-  cursor: pointer;
-  font-size: 13px;
-  text-align: left;
-  width: 100%;
-}
-
-.v3-theme .v3-picker-item:hover {
-  background: var(--bg-soft);
-}
-
-.v3-theme .v3-picker-item.selected {
-  border-color: var(--primary);
-  background: var(--primary-soft);
-}
-
-@media (max-width: 1100px) {
-  .v3-theme .v3-kpi-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .v3-theme .v3-donut-wrap {
-    grid-template-columns: 1fr;
-  }
-}
 
 @media print {
   .v3-theme .sidebar,
-  .v3-theme .v3-no-print,
   .v3-theme .document-head .page-badge,
   .v3-theme .app-toast {
     display: none !important;
@@ -1061,22 +680,6 @@ body:has(.v3-theme) {
   margin-right: 2px;
 }
 
-.v3-theme .v3-reg-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border-radius: 8px;
-  font-size: 14px;
-  background: rgba(47, 158, 110, 0.1);
-  color: #1f7a52;
-}
-
-.v3-theme .v3-reg-status.error {
-  background: rgba(217, 130, 43, 0.12);
-  color: #8a4f12;
-}
-
 .v3-theme .v3-reg-more summary {
   cursor: pointer;
   font-size: 13px;
@@ -1086,23 +689,6 @@ body:has(.v3-theme) {
 
 .v3-theme .v3-reg-more[open] summary {
   margin-bottom: 8px;
-}
-
-.v3-theme .v3-reg-preview {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 13px;
-  color: var(--muted);
-  min-height: 40px;
-}
-
-.v3-theme .v3-reg-preview img {
-  width: 64px;
-  height: 36px;
-  object-fit: cover;
-  border-radius: 4px;
-  border: 1px solid var(--line);
 }
 
 .v3-theme .v3-reg-guide {
@@ -1545,10 +1131,6 @@ body:has(.v3-theme) {
   width: 100%;
   max-width: 520px;
   padding: 32px 20px;
-}
-
-.v3-theme .v3-reg-preview {
-  min-height: 44px;
 }
 
 /* ── 로그아웃 · 계정 영역 ── */
@@ -2162,10 +1744,6 @@ body:has(.v3-theme) {
   .v3-theme .v3-vrow {
     padding: 12px 10px;
   }
-
-  .v3-theme .v3-reg-status {
-    align-items: flex-start;
-  }
 }
 
 /* ── 움직임 줄이기: 반짝임·강조 전환·회전을 모두 멈춘다 ── */
@@ -2691,5 +2269,138 @@ body:has(.v3-theme) {
   .v3-theme .v3-progress-fill {
     background: Highlight;
     forced-color-adjust: none;
+  }
+}
+
+/* ═════════════════════════════════════════════════════════════
+   사용 방법(도움말) 화면
+   ═════════════════════════════════════════════════════════════ */
+.v3-theme .v3-help {
+  display: grid;
+  gap: 8px;
+  max-width: 760px;
+}
+
+.v3-theme .v3-help-steps {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.v3-theme .v3-help-steps li {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.v3-theme .v3-help-num {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.v3-theme .v3-help-step-title {
+  font-weight: 600;
+  line-height: 28px;
+}
+
+.v3-theme .v3-help-text {
+  margin: 0;
+  font-size: 14px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.v3-theme .v3-help-cta {
+  margin: 14px 0 0;
+}
+
+.v3-theme .v3-help-keys {
+  display: grid;
+  gap: 0;
+  margin: 0 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.v3-theme .v3-help-keys > div {
+  display: grid;
+  grid-template-columns: minmax(150px, 240px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+}
+
+.v3-theme .v3-help-keys > div:first-child {
+  border-top: none;
+}
+
+.v3-theme .v3-help-keys dt,
+.v3-theme .v3-help-keys dd {
+  margin: 0;
+  font-size: 14px;
+}
+
+.v3-theme .v3-help-keys kbd {
+  display: inline-block;
+  padding: 2px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--bg-soft);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.v3-theme .v3-help-faq {
+  display: grid;
+  gap: 8px;
+}
+
+.v3-theme .v3-help-faq details {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.v3-theme .v3-help-faq summary {
+  cursor: pointer;
+  padding: 12px 14px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.v3-theme .v3-help-faq details[open] summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.v3-theme .v3-help-faq details p {
+  margin: 0;
+  padding: 12px 14px;
+  font-size: 14px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+@media (max-width: 720px) {
+  .v3-theme .v3-help-keys > div {
+    grid-template-columns: 1fr;
+    gap: 4px;
   }
 }

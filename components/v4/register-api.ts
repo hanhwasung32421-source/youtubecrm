@@ -18,13 +18,8 @@ export type ContentType = 'longform' | 'shortform'
 
 export const DAILY_TARGET = DEFAULT_DAILY_TARGET // 직원 1명의 하루 기본 목표 (안내용 숫자일 뿐, 강제하지 않는다)
 
-// 예전 호출부(일괄 등록 등)가 쓰던 함수. 문장 규칙은 registerErrorCopy 로 옮겼다.
-export function friendlyRegisterError(status: number, raw?: string | null) {
-  return registerErrorCopy(status, raw).message
-}
-
 function isNetworkError(e: unknown) {
-  return e instanceof TypeError || /failed to fetch|network|load failed/i.test(String((e as any)?.message || ''))
+  return e instanceof TypeError || /failed to fetch|network|load failed/i.test(String((e as { message?: unknown } | null)?.message || ''))
 }
 
 // 공유 API는 watch?v=ID / youtu.be/ID 만 이해한다. shorts·live·embed 주소도 통일해서 보낸다.
@@ -39,7 +34,7 @@ export type RegisterResult =
 
 // 로그인이 풀렸는지 가볍게 확인한다 (V4 API 는 진짜 401 을 돌려준다).
 // 공유 등록 API 는 로그인이 풀려도 500 "영상 저장 실패"만 돌려주므로, 원인을 알 수 없는 실패 때 이것으로 구분한다.
-export async function isSessionExpired(): Promise<boolean> {
+async function isSessionExpired(): Promise<boolean> {
   try {
     const { status } = await authedFetchJson('/api/v4/my-today')
     return status === 401
@@ -124,9 +119,11 @@ export async function loadMyVideoMemo(id: string): Promise<string | null> {
   }
 }
 
-export async function deleteMyVideo(id: string): Promise<MutationResult<null>> {
+// onlyNew: "되돌리기"에서 쓴다. 서버가 "방금 새로 등록한 영상"인지 다시 확인하고, 예전에 있던 영상이면 지우지 않는다(409).
+export async function deleteMyVideo(id: string, options: { onlyNew?: boolean } = {}): Promise<MutationResult<null>> {
   try {
-    const { ok, status, data } = await authedFetchJson<{ error?: string }>(`/api/v4/my-videos/${encodeURIComponent(id)}`, { method: 'DELETE' })
+    const query = options.onlyNew ? '?onlyNew=1' : ''
+    const { ok, status, data } = await authedFetchJson<{ error?: string }>(`/api/v4/my-videos/${encodeURIComponent(id)}${query}`, { method: 'DELETE' })
     // 이미 지워진 영상(404)은 목적을 이룬 것과 같다.
     if (!ok && status !== 404) return { ok: false, message: mutationErrorCopy(status, data?.error, '지우지'), auth: status === 401 }
     return { ok: true, item: null }

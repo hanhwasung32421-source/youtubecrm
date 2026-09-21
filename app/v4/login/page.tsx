@@ -28,8 +28,9 @@ function friendlyLoginError(raw?: string | null) {
   if (/invalid login credentials|invalid_credentials/i.test(text)) return '아이디 또는 비밀번호가 맞지 않아요. 다시 확인해 주세요.'
   if (/email not confirmed/i.test(text)) return '이메일 확인이 아직 끝나지 않았어요.'
   if (/rate limit|too many/i.test(text)) return '시도가 너무 많아요. 잠시 후 다시 해 주세요.'
-  if (/network|failed to fetch/i.test(text)) return '인터넷 연결을 확인해 주세요.'
-  return text || '로그인에 실패했습니다.'
+  if (/network|failed to fetch|load failed/i.test(text)) return '인터넷 연결을 확인해 주세요.'
+  // 한글 문장은 그대로, 영어 문장은 알아듣기 어려우니 쉬운 말로 바꾼다.
+  return /[가-힣]/.test(text) ? text : '로그인하지 못했어요. 잠시 후 다시 해 주세요.'
 }
 
 export default function LoginPage() {
@@ -100,7 +101,7 @@ export default function LoginPage() {
         })
         const data = await res.json().catch(() => ({}))
         if (!res.ok) {
-          setError(data?.error || '아이디를 찾을 수 없습니다.')
+          setError(data?.error || '아이디를 찾을 수 없어요. 아이디를 다시 확인해 주세요.')
           focusAfterRef.current = 'id'
           return
         }
@@ -128,14 +129,15 @@ export default function LoginPage() {
       void fetch('/api/auth/log-login', {
         method: 'POST',
         headers: { Authorization: `Bearer ${data.session.access_token}` }
-      })
+      }).catch(() => {})
 
       // 직원은 매일 하는 영상 등록, 관리자는 성장 현황이 첫 화면.
       const me = await fetchMe(data.session.access_token)
       navigating = true
       router.push(nextPath || homeHrefForRole(me.roleType))
     } catch (e: any) {
-      setError(e?.message || '로그인 중 오류가 발생했습니다.')
+      setError(friendlyLoginError(e?.message) || '로그인 중 문제가 생겼어요. 잠시 후 다시 해 주세요.')
+      focusAfterRef.current = 'pw'
     } finally {
       submittingRef.current = false
       // 이동 중에는 버튼을 계속 잠가 두어 두 번 눌리지 않게 한다.
@@ -157,7 +159,7 @@ export default function LoginPage() {
         >
           <img className="auth-logo" src="/logo-ant.png" alt="" width={56} height={56} />
           <h1 className="auth-title">여왕개미미디어 CRM</h1>
-          <p className="auth-subtitle">{nextPath ? '로그인하면 하던 화면으로 바로 돌아가요.' : '영상을 등록하고, 무엇이 잘 되는지 확인하는 공간입니다.'}</p>
+          <p className="auth-subtitle">{nextPath ? '로그인하면 하던 화면으로 바로 돌아가요.' : '영상을 등록하고, 무엇이 잘 되는지 확인하는 공간이에요.'}</p>
           <fieldset className="v4-auth-fields" disabled={loading}>
             <div className="field">
               <label className="label" htmlFor="v4-login-id">
@@ -208,7 +210,7 @@ export default function LoginPage() {
             ) : null}
           </div>
           <div className="small muted">
-            계정이 없나요? <Link className="link" href="/v4/signup">회원가입</Link>
+            계정이 없나요? <Link className="link" href="/v4/signup">회원가입하기</Link>
           </div>
         </form>
       </div>

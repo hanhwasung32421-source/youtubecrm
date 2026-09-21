@@ -1,10 +1,9 @@
 'use client'
 
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { Fragment, memo, useEffect, useRef, useState } from 'react'
 import { Badge, Skeleton, SkeletonRegion } from '@/components/v5/widget'
-import { CONTENT_TYPE_LABEL, formatKstWhen, friendlyError, kstYmd, type ContentType } from '@/components/v5/register-utils'
+import { CONTENT_TYPE_LABEL, TIMEOUT_MS, authedFetchJsonTimeout, formatKstWhen, friendlyError, kstYmd, type ContentType } from '@/components/v5/register-utils'
 import { SegmentedChoice } from '@/components/v5/segmented'
-import { authedFetchJson } from '@/lib/session/authed-fetch'
 
 export type MineVideo = {
   id: string
@@ -25,7 +24,8 @@ const num = (v: number | null | undefined) => (v ?? 0).toLocaleString('ko-KR')
 
 type Draft = { stock: string; type: ContentType; memo: string }
 
-export function MyVideosTable({
+// 글자를 칠 때마다 20줄을 다시 그리지 않도록 memo 로 감싼다(넘기는 함수는 화면 쪽에서 useCallback 으로 고정해 둔다).
+export const MyVideosTable = memo(function MyVideosTable({
   items,
   isAdmin,
   highlightIds,
@@ -38,6 +38,7 @@ export function MyVideosTable({
   onUpdated: (id: string, patch: Partial<MineVideo>) => void
   onDeleted: (id: string) => void
 }) {
+  const rootRef = useRef<HTMLDivElement | null>(null)
   const stockInputRef = useRef<HTMLInputElement | null>(null)
   const cancelDeleteRef = useRef<HTMLButtonElement | null>(null)
 
@@ -52,10 +53,19 @@ export function MyVideosTable({
 
   const busy = saving || deleting
 
+  // 편집·삭제확인 상자가 닫히면 그 줄의 버튼으로 포커스를 돌려 준다(키보드 사용자가 자리를 잃지 않게).
+  const focusRowButton = (kind: 'edit' | 'del', id: string) => {
+    window.setTimeout(() => rootRef.current?.querySelector<HTMLElement>(`[data-${kind}-for="${id}"]`)?.focus(), 0)
+  }
+
   // 삭제 확인은 실수로 남아 있지 않도록 몇 초 뒤 자동으로 닫는다.
   useEffect(() => {
     if (!confirmId || deleting) return
-    const timer = window.setTimeout(() => setConfirmId(null), 6000)
+    const id = confirmId
+    const timer = window.setTimeout(() => {
+      if (document.activeElement === cancelDeleteRef.current) focusRowButton('del', id)
+      setConfirmId(null)
+    }, 6000)
     return () => window.clearTimeout(timer)
   }, [confirmId, deleting])
 
@@ -78,6 +88,7 @@ export function MyVideosTable({
 
   const cancelEdit = () => {
     if (saving) return
+    if (editingId) focusRowButton('edit', editingId)
     setEditingId(null)
     setEditError('')
   }
@@ -93,22 +104,28 @@ export function MyVideosTable({
     const memo = draft.memo.trim()
     if (stock === v.stock_name && draft.type === v.content_type && memo === (v.content_category || '')) {
       setEditingId(null)
+      focusRowButton('edit', v.id)
       return
     }
     setSaving(true)
     setEditError('')
     try {
-      const res = await authedFetchJson<{ ok?: boolean; item?: Partial<MineVideo>; error?: string }>(`/api/v5/my-videos/${v.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stock_name: stock, content_type: draft.type, content_category: memo })
-      })
+      const res = await authedFetchJsonTimeout<{ ok?: boolean; item?: Partial<MineVideo>; error?: string }>(
+        `/api/v5/my-videos/${v.id}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ stock_name: stock, content_type: draft.type, content_category: memo })
+        },
+        TIMEOUT_MS.save
+      )
       if (!res.ok) {
         setEditError(friendlyError(res.data?.error || '', res.status))
         return
       }
       onUpdated(v.id, { stock_name: stock, content_type: draft.type, content_category: memo || null })
       setEditingId(null)
+      focusRowButton('edit', v.id)
     } catch (e) {
       setEditError(friendlyError(e))
     } finally {
@@ -121,7 +138,7 @@ export function MyVideosTable({
     setDeleting(true)
     setDeleteError(null)
     try {
-      const res = await authedFetchJson<{ ok?: boolean; error?: string }>(`/api/v5/my-videos/${v.id}`, { method: 'DELETE' })
+      const res = await authedFetchJsonTimeout<{ ok?: boolean; error?: string }>(`/api/v5/my-videos/${v.id}`, { method: 'DELETE' }, TIMEOUT_MS.save)
       if (!res.ok && res.status !== 404) {
         setDeleteError({ id: v.id, message: friendlyError(res.data?.error || '', res.status) })
         setConfirmId(null)
@@ -144,7 +161,7 @@ export function MyVideosTable({
   const colCount = isAdmin ? 9 : 8
 
   return (
-    <div className="panel v5-table-wrap v5-mv" style={{ padding: 0 }}>
+    <div ref={rootRef} className="panel v5-table-wrap v5-mv" style={{ padding: 0 }}>
       {/* 좁은 화면에서는 CSS 가 각 줄을 카드로 바꾼다. 표의 의미는 role 로 그대로 유지한다. */}
       <table className="v5-table compact" role="table" aria-label={isAdmin ? '등록된 영상 전체' : '내가 등록한 영상'}>
         <thead role="rowgroup">
@@ -197,14 +214,27 @@ export function MyVideosTable({
                       <span
                         className="v5-confirm-inline"
                         onKeyDown={(e) => {
-                          if (e.key === 'Escape') setConfirmId(null)
+                          if (e.key === 'Escape') {
+                            e.stopPropagation()
+                            setConfirmId(null)
+                            focusRowButton('del', v.id)
+                          }
                         }}
                       >
                         <span className="small">정말 삭제할까요?</span>
                         <button className="button danger xs" type="button" disabled={deleting} onClick={() => void confirmDelete(v)}>
                           {deleting ? '삭제 중...' : '삭제'}
                         </button>
-                        <button ref={cancelDeleteRef} className="button secondary xs" type="button" disabled={deleting} onClick={() => setConfirmId(null)}>
+                        <button
+                          ref={cancelDeleteRef}
+                          className="button secondary xs"
+                          type="button"
+                          disabled={deleting}
+                          onClick={() => {
+                            setConfirmId(null)
+                            focusRowButton('del', v.id)
+                          }}
+                        >
                           취소
                         </button>
                       </span>
@@ -213,7 +243,7 @@ export function MyVideosTable({
                         <a className="v5-link-cell" href={v.youtube_url} target="_blank" rel="noreferrer" aria-label={`${v.stock_name} 영상 열기 (새 창)`}>
                           열기
                         </a>
-                        <button className="button ghost xs" type="button" disabled={busy} aria-label={`${v.stock_name} 수정`} onClick={() => startEdit(v)}>
+                        <button className="button ghost xs" type="button" disabled={busy} aria-label={`${v.stock_name} 수정`} data-edit-for={v.id} onClick={() => startEdit(v)}>
                           수정
                         </button>
                         <button
@@ -221,6 +251,7 @@ export function MyVideosTable({
                           type="button"
                           disabled={busy}
                           aria-label={`${v.stock_name} 삭제`}
+                          data-del-for={v.id}
                           onClick={() => {
                             setEditingId(null)
                             setDeleteError(null)
@@ -240,7 +271,7 @@ export function MyVideosTable({
                       <div
                         className="v5-editor"
                         onKeyDown={(e) => {
-                          if (e.key === 'Escape') {
+                          if (e.key === 'Escape' && !e.nativeEvent.isComposing) {
                             e.stopPropagation()
                             cancelEdit()
                           } else if (e.key === 'Enter' && !e.nativeEvent.isComposing && (e.target as HTMLElement).tagName === 'INPUT') {
@@ -315,7 +346,7 @@ export function MyVideosTable({
       </table>
     </div>
   )
-}
+})
 
 // 목록을 불러오는 동안 보여 주는 자리표시. 실제 표/카드와 비슷한 높이로 잡아 화면이 덜 흔들린다.
 export function MyVideosSkeleton({ rows = 5 }: { rows?: number }) {

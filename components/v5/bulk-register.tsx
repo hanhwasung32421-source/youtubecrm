@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Badge } from '@/components/v5/widget'
-import { CONTENT_TYPE_LABEL, parseBulkText, registerVideo, type ContentType } from '@/components/v5/register-utils'
+import { parseDupResponse } from '@/components/v5/register-logic'
+import { CONTENT_TYPE_LABEL, TIMEOUT_MS, authedFetchJsonTimeout, parseBulkText, registerVideo, type ContentType } from '@/components/v5/register-utils'
 
 type RowStatus = 'idle' | 'queued' | 'running' | 'done' | 'failed'
 
@@ -17,7 +18,21 @@ type Row = {
   error: string
 }
 
-const CONCURRENCY = 2 // 유튜브 API 한도를 아끼려고 동시에 2개까지만 보낸다.
+const CONCURRENCY = 2 // 유튜브 조회 한도를 아끼려고 동시에 2개까지만 보낸다.
+
+// 등록하기 직전에 "다른 팀원이 이미 올린 영상"인지 확인한다. 그대로 등록하면 그 영상의 담당이 나로 바뀌기 때문이다.
+// 확인하지 못하면(인터넷 문제 등) 막지 않고 그대로 진행한다.
+async function ownerOtherThanMe(videoId: string): Promise<string | null> {
+  try {
+    const res = await authedFetchJsonTimeout<unknown>(`/api/v5/my-videos?videoId=${encodeURIComponent(videoId)}`, {}, TIMEOUT_MS.lookup)
+    if (!res.ok) return null
+    const parsed = parseDupResponse(res.data)
+    if (!parsed.ok || !parsed.info || parsed.info.mine) return null
+    return parsed.info.ownerName ? `${parsed.info.ownerName}님` : '다른 팀원'
+  } catch {
+    return null
+  }
+}
 
 export function BulkRegister({
   recentStocks,
@@ -45,6 +60,25 @@ export function BulkRegister({
   const [dupes, setDupes] = useState(0)
   const [running, setRunning] = useState(false)
   const [emptyNote, setEmptyNote] = useState('')
+  const aliveRef = useRef(true)
+
+  useEffect(() => {
+    aliveRef.current = true
+    return () => {
+      aliveRef.current = false
+    }
+  }, [])
+
+  // 등록하는 중에 탭을 닫거나 새로고침하면 남은 영상이 등록되지 않으므로 한 번 물어본다.
+  useEffect(() => {
+    if (!running) return
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [running])
 
   useEffect(() => {
     if (initialText && initialText.trim()) {
@@ -68,7 +102,7 @@ export function BulkRegister({
     const { lines, duplicates } = parseBulkText(source)
     if (lines.length === 0) {
       setRows(null)
-      setEmptyNote('붙여 넣은 내용이 없습니다. 한 줄에 영상 하나씩 적어 주세요.')
+      setEmptyNote('붙여 넣은 내용이 없어요. 한 줄에 영상 하나씩 적어 주세요.')
       return
     }
     setEmptyNote('')
@@ -131,11 +165,16 @@ export function BulkRegister({
         const job = jobs[cursor]
         cursor += 1
         patchRow(job.key, { status: 'running' })
+        const other = await ownerOtherThanMe(job.videoId)
+        if (other) {
+          patchRow(job.key, { status: 'failed', error: `${other}이 이미 올린 영상이라 건너뛰었어요. 그대로 올리면 내 영상으로 바뀌니, ‘한 개씩 등록’에서 확인하고 올려 주세요.` })
+          continue
+        }
         const res = await registerVideo({ videoId: job.videoId, contentType: job.type, stockName: job.stock })
         if (res.ok) {
           patchRow(job.key, { status: 'done', error: '' })
           usedStocks.push(job.stock)
-          onRegistered(res.id)
+          if (aliveRef.current) onRegistered(res.id)
         } else {
           // 한 개가 실패해도 나머지는 계속 등록한다.
           patchRow(job.key, { status: 'failed', error: res.message })
@@ -220,7 +259,7 @@ export function BulkRegister({
             }}
           />
           <div className={`v5-hint ${emptyNote ? 'warn' : ''}`}>
-            {emptyNote || '주소만 붙여 넣어도 됩니다. 종목이 없는 줄은 미리보기에서 채우거나 위의 공통 종목을 씁니다.'}
+            {emptyNote || '주소만 붙여 넣어도 돼요. 종목이 없는 줄은 미리보기에서 채우거나 위의 공통 종목을 써요.'}
           </div>
           <div>
             <button className="button" type="button" disabled={!text.trim()} onClick={() => build(text)}>
@@ -230,9 +269,9 @@ export function BulkRegister({
         </div>
       ) : (
         <div style={{ marginTop: 12 }}>
-          {dupes > 0 ? <div className="v5-hint warn">붙여 넣은 목록에서 같은 영상 {dupes}개는 한 번만 등록되도록 뺐습니다.</div> : null}
+          {dupes > 0 ? <div className="v5-hint warn">붙여 넣은 목록에서 같은 영상 {dupes}개는 한 번만 등록되도록 뺐어요.</div> : null}
           {stats.problems > 0 ? (
-            <div className="v5-hint warn">주소를 알아볼 수 없는 {stats.problems}줄은 등록되지 않습니다. 제외하거나 다시 붙여 넣어 주세요.</div>
+            <div className="v5-hint warn">주소를 알아볼 수 없는 {stats.problems}줄은 등록되지 않아요. 빼거나 다시 붙여 넣어 주세요.</div>
           ) : null}
 
           <div className="v5-table-wrap v5-bulk-wrap">
@@ -265,7 +304,7 @@ export function BulkRegister({
                         ) : (
                           <span className="v5-bulk-url">youtube.com/watch?v={r.videoId}</span>
                         )}
-                        {already && r.status === 'idle' ? <div className="v5-bulk-note">이미 등록된 영상 · 다시 등록하면 정보가 갱신됩니다</div> : null}
+                        {already && r.status === 'idle' ? <div className="v5-bulk-note">이미 등록된 영상 · 다시 등록하면 정보가 새로 바뀌어요</div> : null}
                       </td>
                       <td className="b-stock" role="cell">
                         {r.problem ? (
@@ -342,7 +381,7 @@ export function BulkRegister({
           {started ? (
             <div className={`v5-bulk-summary ${stats.failed > 0 && !running ? 'has-fail' : ''}`} role="status" aria-live="polite">
               {running || stats.active > 0
-                ? `${stats.total}개 중 ${stats.done}개 완료 · 등록 중입니다. 이 화면을 닫지 마세요.`
+                ? `${stats.total}개 중 ${stats.done}개 완료 · 등록하고 있어요. 이 화면을 닫지 마세요.`
                 : allFinished
                   ? `${stats.total}개 모두 등록됨`
                   : `${stats.total}개 중 ${stats.done}개 등록됨${stats.failed ? ` · ${stats.failed}개 실패` : ''}${stats.waitingMissing ? ` · ${stats.waitingMissing}개는 종목 입력 필요` : ''}`}
@@ -366,11 +405,11 @@ export function BulkRegister({
               </button>
             ) : (
               <button className="button secondary" type="button" disabled={running} onClick={() => setRows(null)}>
-                붙여넣기 다시
+                다시 붙여넣기
               </button>
             )}
           </div>
-          {stats.waitingMissing > 0 && !running ? <div className="v5-hint warn">종목이 비어 있는 {stats.waitingMissing}줄은 종목을 채워야 등록됩니다.</div> : null}
+          {stats.waitingMissing > 0 && !running ? <div className="v5-hint warn">종목이 비어 있는 {stats.waitingMissing}줄은 종목을 채워야 등록돼요.</div> : null}
         </div>
       )}
     </div>

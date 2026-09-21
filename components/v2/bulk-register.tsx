@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { authedPatchJson } from '@/lib/v2/client'
 import { authedPostJson } from '@/lib/session/authed-fetch'
 import { CONTENT_TYPES, CONTENT_TYPE_LABELS, type ContentType } from '@/lib/v2/types'
-import { friendlyRegisterError, parseBulkText, youtubeVideoId } from './register-utils'
+import { friendlyRegisterError, isImeKey, parseBulkText, youtubeVideoId } from './register-utils'
 import { Segmented } from './segmented'
 
 const CONCURRENCY = 2
@@ -312,7 +312,7 @@ export function BulkRegister({ initialText = '', notice, defaultType, stockChips
                             disabled={locked}
                             onChange={(e) => setEdit(row.key, { stock: e.target.value })}
                             onKeyDown={(e) => {
-                              if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                              if (e.key === 'Enter' && !isImeKey(e)) {
                                 e.preventDefault()
                                 focusNextStock(e.currentTarget)
                               }

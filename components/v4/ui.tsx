@@ -2,7 +2,6 @@
 
 import { PERIOD_OPTIONS, type PeriodDays } from '@/lib/v4/analytics'
 import { V4_SQL_FILE } from '@/lib/v4/tables'
-import { fmtNumber } from '@/lib/v4/format'
 import type { Delta } from '@/components/v4/delta'
 
 export function PeriodToggle({ value, onChange, disabled }: { value: PeriodDays; onChange: (next: PeriodDays) => void; disabled?: boolean }) {
@@ -30,8 +29,8 @@ export function SampleBanner({ show, what }: { show: boolean; what?: string }) {
   return (
     <div className="v4-banner" role="status">
       <span className="v4-banner-dot" />
-      <span>
-        샘플 데이터 표시 중{what ? `(${what})` : ''} · <code>{V4_SQL_FILE}</code> 실행 후 실제 데이터로 바뀝니다
+      <span title={`관리자가 ${V4_SQL_FILE} 를 실행하면 실제 데이터로 바뀌어요`}>
+        지금은 예시 데이터를 보여 주고 있어요{what ? `(${what})` : ''} · 데이터 준비가 끝나면 실제 데이터로 바뀌어요
       </span>
     </div>
   )
@@ -82,14 +81,6 @@ export function KpiCard({
   )
 }
 
-export function TrendArrow({ trend, ratio }: { trend: 'up' | 'down' | 'flat' | 'new'; ratio: number }) {
-  if (trend === 'new') return <span className="v4-trend new">NEW</span>
-  const pct = `${ratio > 0 ? '+' : ''}${Math.round(ratio * 100)}%`
-  if (trend === 'up') return <span className="v4-trend up">▲ {pct}</span>
-  if (trend === 'down') return <span className="v4-trend down">▼ {pct}</span>
-  return <span className="v4-trend flat">― {pct}</span>
-}
-
 export function FormatPill({ contentType }: { contentType: string }) {
   const short = contentType === 'shortform'
   return <span className={`v4-format ${short ? 'short' : 'long'}`}>{short ? '숏폼' : '롱폼'}</span>
@@ -132,15 +123,6 @@ export function EmptyState({ title, children, action }: { title?: string; childr
       {title ? <div className="v4-empty-title">{title}</div> : null}
       {children ? <div className="v4-empty-body">{children}</div> : null}
       {action ? <div className="v4-empty-action">{action}</div> : null}
-    </div>
-  )
-}
-
-export function StatLine({ label, value }: { label: string; value: number | string }) {
-  return (
-    <div className="row-between v4-statline">
-      <span className="muted small">{label}</span>
-      <span className="v4-num">{typeof value === 'number' ? fmtNumber(value) : value}</span>
     </div>
   )
 }

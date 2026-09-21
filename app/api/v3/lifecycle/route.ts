@@ -90,10 +90,16 @@ export async function GET(request: Request) {
       isAdmin ? loadStaffUsers(supabaseAdmin) : Promise.resolve([])
     ])
 
-    const countByVideo = await loadSnapshotCounts(
-      supabaseAdmin,
-      videos.slice(0, COUNT_LIMIT).map((v) => v.id)
-    )
+    // 기록 개수는 "있으면 좋은 정보"라서, 세다가 실패해도 목록은 그대로 보여 준다(개수만 빈 칸).
+    let countByVideo: Map<string, number> | null = null
+    try {
+      countByVideo = await loadSnapshotCounts(
+        supabaseAdmin,
+        videos.slice(0, COUNT_LIMIT).map((v) => v.id)
+      )
+    } catch (countError) {
+      console.error('lifecycle: snapshot count failed', countError)
+    }
 
     const items = videos.map((v, index) => ({
       id: v.id,
@@ -104,7 +110,7 @@ export async function GET(request: Request) {
       publishedAt: v.published_at,
       youtubeUrl: v.youtube_url,
       // 개수를 세지 않은 영상은 null (화면에서는 개수 표시를 생략)
-      snapshotCount: index < COUNT_LIMIT ? countByVideo.get(v.id) || 0 : null
+      snapshotCount: countByVideo && index < COUNT_LIMIT ? countByVideo.get(v.id) || 0 : null
     }))
 
     return cachedJson({ items, staffOptions: staff.map((s) => ({ id: s.id, name: s.name })) })

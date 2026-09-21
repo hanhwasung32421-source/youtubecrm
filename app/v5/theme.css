@@ -38,8 +38,6 @@ body:has(.v5-theme) {
 }
 
 .v5-theme .panel,
-.v5-theme .metric-card,
-.v5-theme .list-item,
 .v5-theme .document-head {
   border-radius: 16px;
   box-shadow: var(--shadow);
@@ -47,17 +45,8 @@ body:has(.v5-theme) {
   transition: box-shadow 0.15s ease;
 }
 
-.v5-theme .list-item:hover {
-  box-shadow: 0 4px 16px rgba(16, 24, 40, 0.1);
-}
-
 .v5-theme .button {
   border-radius: 10px;
-}
-
-.v5-theme .page-badge {
-  background: var(--primary-soft);
-  color: var(--primary);
 }
 
 .v5-theme .input,
@@ -83,7 +72,6 @@ body:has(.v5-theme) {
   letter-spacing: 0.02em;
 }
 
-.v5-theme .metric-card,
 .v5-theme .document-head {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -97,16 +85,6 @@ body:has(.v5-theme) {
 
 .v5-theme .button.secondary.active {
   border-color: var(--primary);
-}
-
-.v5-theme .list-item {
-  background: var(--panel);
-  border: 1px solid var(--line);
-}
-
-.v5-theme .list-item.selected {
-  border-color: var(--primary);
-  background: var(--primary-soft);
 }
 
 .v5-theme .pill {
@@ -125,19 +103,6 @@ body:has(.v5-theme) {
   border-color: var(--primary);
 }
 
-.v5-theme .doc-highlight {
-  border: 1px solid var(--line);
-  background: var(--primary-soft);
-  color: var(--text);
-  border-radius: 12px;
-}
-
-.v5-theme .empty-state {
-  background: var(--bg-soft);
-  border-color: var(--line-strong);
-  border-radius: 16px;
-}
-
 .v5-theme .message-success,
 .v5-theme .message-error {
   background: var(--panel);
@@ -152,23 +117,6 @@ body:has(.v5-theme) {
 .v5-theme .message-error {
   color: #b91c1c;
   background: rgba(220, 38, 38, 0.08);
-}
-
-.v5-theme .data-table {
-  background: var(--panel);
-  border-radius: 16px;
-}
-
-.v5-theme .data-table-row {
-  border-bottom: 1px solid var(--line);
-}
-
-.v5-theme .data-table-row:hover {
-  background: var(--bg-soft);
-}
-
-.v5-theme .data-table-row:nth-child(even) {
-  background: transparent;
 }
 
 /* ------------------------------------------------------------------
@@ -409,11 +357,6 @@ body:has(.v5-theme) {
 }
 
 /* KPI 카드 */
-.v5-theme .v5-kpi-grid {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 16px;
-}
 
 .v5-theme .v5-kpi {
   background: var(--panel);
@@ -514,29 +457,6 @@ body:has(.v5-theme) {
   display: none;
 }
 
-.v5-theme .v5-grade {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 8px;
-  font-weight: 800;
-  font-size: 12px;
-  background: var(--bg-soft);
-  color: var(--muted);
-}
-
-.v5-theme .v5-grade.A {
-  background: var(--primary);
-  color: #fff;
-}
-
-.v5-theme .v5-grade.B {
-  background: var(--primary-soft);
-  color: var(--primary);
-}
-
 .v5-theme .v5-tag {
   display: inline-flex;
   padding: 2px 8px;
@@ -571,60 +491,6 @@ body:has(.v5-theme) {
   border-radius: 6px;
 }
 
-/* 퍼널 */
-.v5-theme .v5-funnel {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.v5-theme .v5-funnel-row {
-  display: grid;
-  grid-template-columns: 64px 1fr 120px;
-  align-items: center;
-  gap: 12px;
-  font-size: 13px;
-}
-
-.v5-theme .v5-funnel-stage {
-  font-weight: 700;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.v5-theme .v5-funnel-track {
-  height: 22px;
-  border-radius: 7px;
-  background: var(--bg-soft);
-  overflow: hidden;
-  position: relative;
-}
-
-.v5-theme .v5-funnel-bar {
-  height: 100%;
-  border-radius: 7px;
-  background: var(--primary);
-  min-width: 4px;
-  display: flex;
-  align-items: center;
-  padding-left: 8px;
-  color: #fff;
-  font-size: 11px;
-  font-weight: 700;
-  transition: width 0.3s ease;
-  white-space: nowrap;
-}
-
-.v5-theme .v5-funnel-bar.won {
-  background: var(--success);
-}
-
-.v5-theme .v5-funnel-amount {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  font-weight: 700;
-}
-
 /* 도넛 */
 .v5-theme .v5-donut-wrap {
   display: grid;
@@ -651,156 +517,6 @@ body:has(.v5-theme) {
   height: 10px;
   border-radius: 3px;
   flex: none;
-}
-
-/* 일정 / 피드 */
-.v5-theme .v5-feed {
-  display: flex;
-  flex-direction: column;
-}
-
-.v5-theme .v5-feed-item {
-  display: grid;
-  grid-template-columns: 56px 1fr;
-  gap: 12px;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--line);
-  font-size: 13px;
-}
-
-.v5-theme .v5-feed-item:last-child {
-  border-bottom: none;
-}
-
-.v5-theme .v5-feed-date {
-  font-weight: 800;
-  font-variant-numeric: tabular-nums;
-  color: var(--text);
-  line-height: 1.3;
-}
-
-.v5-theme .v5-feed-date small {
-  display: block;
-  color: var(--muted);
-  font-weight: 600;
-  font-size: 11px;
-}
-
-.v5-theme .v5-feed-title {
-  font-weight: 700;
-  line-height: 1.4;
-}
-
-.v5-theme .v5-feed-sub {
-  color: var(--muted);
-  font-size: 12px;
-  margin-top: 2px;
-}
-
-.v5-theme .v5-feed-type {
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
-  background: var(--bg-soft);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 11px;
-  font-weight: 800;
-  color: var(--muted);
-}
-
-/* 칸반 */
-.v5-theme .v5-kanban {
-  display: grid;
-  grid-template-columns: repeat(7, minmax(220px, 1fr));
-  gap: 12px;
-  overflow-x: auto;
-  padding-bottom: 8px;
-}
-
-.v5-theme .v5-kanban.cols-4 {
-  grid-template-columns: repeat(4, minmax(240px, 1fr));
-}
-
-.v5-theme .v5-kanban-col {
-  background: var(--bg-soft);
-  border-radius: 14px;
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-height: 240px;
-}
-
-.v5-theme .v5-kanban-col-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 4px 6px;
-}
-
-.v5-theme .v5-kanban-col-title {
-  font-size: 13px;
-  font-weight: 800;
-}
-
-.v5-theme .v5-kanban-col-title span {
-  color: var(--muted);
-  font-weight: 700;
-  margin-left: 6px;
-}
-
-.v5-theme .v5-kanban-col-total {
-  font-size: 12px;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-  font-weight: 700;
-}
-
-.v5-theme .v5-exp-card {
-  background: var(--panel);
-  border-radius: 12px;
-  box-shadow: var(--shadow);
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  font-size: 13px;
-}
-
-.v5-theme .v5-exp-card-title {
-  font-weight: 700;
-  line-height: 1.4;
-}
-
-.v5-theme .v5-exp-card-meta {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.v5-theme .v5-exp-card-amount {
-  font-weight: 800;
-  font-variant-numeric: tabular-nums;
-  color: var(--text);
-}
-
-.v5-theme .v5-exp-card-next {
-  background: var(--bg-soft);
-  border-radius: 8px;
-  padding: 6px 8px;
-  font-size: 12px;
-  color: var(--text);
-}
-
-.v5-theme .v5-exp-card-actions {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
 }
 
 .v5-theme .button.xs {
@@ -889,16 +605,6 @@ body:has(.v5-theme) {
   gap: 10px;
 }
 
-.v5-theme .v5-form-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.v5-theme .v5-form-grid .full {
-  grid-column: span 2;
-}
-
 .v5-theme .v5-check {
   display: flex;
   align-items: center;
@@ -946,10 +652,6 @@ body:has(.v5-theme) {
   background: var(--bg-soft);
 }
 
-.v5-theme .v5-table tr.clickable {
-  cursor: pointer;
-}
-
 .v5-theme .v5-table .num {
   text-align: right;
   font-variant-numeric: tabular-nums;
@@ -958,26 +660,6 @@ body:has(.v5-theme) {
 
 .v5-theme .v5-table-wrap {
   overflow-x: auto;
-}
-
-/* 검색/필터 툴바 */
-.v5-theme .v5-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.v5-theme .v5-toolbar .input,
-.v5-theme .v5-toolbar .select {
-  width: auto;
-  min-width: 140px;
-  padding: 9px 12px;
-  font-size: 13px;
-}
-
-.v5-theme .v5-toolbar .input.search {
-  min-width: 220px;
 }
 
 .v5-theme .v5-segment {
@@ -1005,126 +687,6 @@ body:has(.v5-theme) {
   box-shadow: var(--shadow);
 }
 
-.v5-theme .v5-checklist {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.v5-theme .v5-checklist-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  background: var(--panel);
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--muted);
-  cursor: pointer;
-  user-select: none;
-}
-
-.v5-theme .v5-checklist-item.on {
-  border-color: rgba(22, 163, 74, 0.3);
-  background: rgba(22, 163, 74, 0.08);
-  color: #15803d;
-}
-
-.v5-theme .v5-checklist-item:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-
-.v5-theme .v5-detail-grid {
-  display: grid;
-  grid-template-columns: 1.1fr 1fr;
-  gap: 16px;
-}
-
-.v5-theme .v5-kv {
-  display: grid;
-  grid-template-columns: 96px 1fr;
-  gap: 6px 12px;
-  font-size: 13px;
-  margin: 0;
-}
-
-.v5-theme .v5-kv dt {
-  color: var(--muted);
-  font-weight: 700;
-}
-
-.v5-theme .v5-kv dd {
-  margin: 0;
-  word-break: break-all;
-}
-
-.v5-theme .v5-video-title {
-  font-weight: 700;
-  line-height: 1.4;
-  max-width: 360px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.v5-theme .v5-inline-note {
-  width: 100%;
-  min-height: 0;
-  padding: 6px 8px;
-  font-size: 12px;
-}
-
-/* 등록 폼 → 목록으로 "합류"하는 애니메이션, 점수 막대 */
-@keyframes v5-card-join {
-  from {
-    transform: translateY(-10px) scale(0.97);
-    opacity: 0;
-    box-shadow: 0 0 0 2px var(--primary);
-  }
-  to {
-    transform: translateY(0) scale(1);
-    opacity: 1;
-    box-shadow: var(--shadow);
-  }
-}
-
-.v5-theme .v5-card-join {
-  animation: v5-card-join 0.4s ease;
-}
-
-.v5-theme .v5-score-track {
-  height: 10px;
-  border-radius: 6px;
-  background: var(--bg-soft);
-  overflow: hidden;
-  flex: 1;
-}
-
-.v5-theme .v5-score-bar {
-  height: 100%;
-  border-radius: 6px;
-  background: var(--primary);
-}
-
-.v5-theme .v5-score-bar.excellent {
-  background: var(--success);
-}
-
-.v5-theme .v5-score-bar.good {
-  background: var(--primary);
-}
-
-.v5-theme .v5-score-bar.fair {
-  background: var(--warning);
-}
-
-.v5-theme .v5-score-bar.poor {
-  background: var(--danger);
-}
-
 .v5-theme .v5-rank-badge {
   display: inline-flex;
   align-items: center;
@@ -1144,35 +706,13 @@ body:has(.v5-theme) {
   color: #fff;
 }
 
-@media (max-width: 1400px) {
-  .v5-theme .v5-kpi-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-}
-
 @media (max-width: 1100px) {
   .v5-theme .v5-widget.span-2 {
     grid-column: span 1;
   }
-
-  .v5-theme .v5-detail-grid {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (max-width: 720px) {
-  .v5-theme .v5-kpi-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .v5-theme .v5-form-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .v5-theme .v5-form-grid .full {
-    grid-column: span 1;
-  }
-
   .v5-theme .v5-donut-wrap {
     grid-template-columns: 1fr;
   }
@@ -1928,10 +1468,6 @@ body:has(.v5-theme) {
     background: var(--primary-soft);
   }
 
-  .v5-theme .v5-card-join {
-    animation: none !important;
-  }
-
   .v5-theme .v5-submit[aria-busy="true"]::before {
     animation: none !important;
   }
@@ -2133,21 +1669,12 @@ body:has(.v5-theme) {
 
   /* 글자 크기 16px 이상이어야 아이폰이 입력칸을 멋대로 확대하지 않는다 */
   .v5-theme .input,
-  .v5-theme .select,
-  .v5-theme .textarea,
-  .v5-theme .input.v5-cell-input,
-  .v5-theme .select.v5-cell-input,
-  .v5-theme .v5-toolbar .input,
-  .v5-theme .v5-toolbar .select {
+.v5-theme .select,
+.v5-theme .textarea,
+.v5-theme .input.v5-cell-input,
+.v5-theme .select.v5-cell-input {
     font-size: 16px;
     min-height: 44px;
-  }
-
-  .v5-theme .v5-toolbar .input,
-  .v5-theme .v5-toolbar .select,
-  .v5-theme .v5-toolbar .input.search {
-    width: 100%;
-    min-width: 0;
   }
 
   .v5-theme .v5-submit {
@@ -2156,10 +1683,6 @@ body:has(.v5-theme) {
 
   .v5-theme .v5-type-toggle button {
     font-size: 15px;
-  }
-
-  .v5-theme .v5-confirm .v5-confirm-detail {
-    white-space: normal;
   }
 
   .v5-theme .v5-paste-note-actions {
@@ -2487,14 +2010,6 @@ body:has(.v5-theme) {
 
 .v5-theme .button.warning {
   background: #b45309;
-}
-
-.v5-theme .button.violet {
-  background: #7c3aed;
-}
-
-.v5-theme .v5-funnel-bar.won {
-  background: #15803d;
 }
 
 .v5-theme .v5-type-toggle button:disabled {
@@ -2884,5 +2399,154 @@ body:has(.v5-theme) {
 @media (prefers-reduced-motion: reduce) {
   .v5-theme .v5-goal-bar {
     transition: none !important;
+  }
+}
+
+/* ------------------------------------------------------------------
+   5차: 사용 방법(/v5/help) · 여러 개 붙여넣기 불러오는 중. 모두 .v5-theme 안에서만.
+------------------------------------------------------------------ */
+
+.v5-theme .v5-bulk-skel {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.v5-theme .v5-help .panel-title {
+  margin: 0 0 14px;
+  white-space: normal;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+}
+
+.v5-theme .v5-help-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 14px;
+}
+
+.v5-theme .v5-help-steps li {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.v5-theme .v5-help-num {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.v5-theme .v5-help-step-title {
+  font-weight: 800;
+  font-size: 15px;
+  line-height: 32px;
+}
+
+.v5-theme .v5-help-when {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.v5-theme .v5-help-text {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--text);
+}
+
+.v5-theme .v5-help-go {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.v5-theme .v5-help-foot,
+.v5-theme .v5-help-note {
+  margin: 14px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.v5-theme .v5-help-keys {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.v5-theme .v5-help-keys li {
+  display: grid;
+  grid-template-columns: minmax(120px, 160px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  font-size: 14px;
+}
+
+.v5-theme .v5-help-keycap kbd {
+  display: inline-block;
+  padding: 1px 8px;
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background: var(--panel);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.v5-theme .v5-help-faq {
+  display: grid;
+  gap: 8px;
+}
+
+.v5-theme .v5-help-faq details {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  padding: 0 14px;
+}
+
+.v5-theme .v5-help-faq summary {
+  cursor: pointer;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.v5-theme .v5-help-faq summary:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+.v5-theme .v5-help-faq details[open] {
+  padding-bottom: 12px;
+}
+
+.v5-theme .v5-help-faq details[open] summary {
+  color: var(--primary);
+}
+
+@media (max-width: 720px) {
+  .v5-theme .v5-help-keys li {
+    grid-template-columns: 1fr;
+    gap: 4px;
   }
 }

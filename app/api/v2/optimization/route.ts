@@ -1,4 +1,3 @@
-import { NextResponse } from 'next/server'
 import {
   authedContext,
   cachedJson,
@@ -9,12 +8,14 @@ import {
   loadLatestReviewMap,
   loadStaffMap,
   loadVideos,
+  missingTableResponse,
   slimVideo
 } from '@/lib/v2/server'
-import { sampleOptimizationPayload } from '@/lib/v2/sample-data'
 import { improvementScoreOf, type OptimizationPayload, type OptimizationRow } from '@/lib/v2/types'
 
-const VIDEO_LIMIT = 600
+// 관리자는 팀 전체(하루 60~90개)를 보므로 더 많이, 직원은 본인 영상만이라 600개면 몇 주 치가 충분하다.
+const STAFF_LIMIT = 600
+const ADMIN_LIMIT = 1000
 // 화면이 쓰는 칸만 읽는다. description 은 "비어 있는지"만 필요해서 읽은 뒤 응답에서는 뺀다.
 const COLUMNS = 'id, title, description, stock_name, content_type, youtube_url, published_at, view_count, primary_owner_user_id, created_at'
 
@@ -23,7 +24,8 @@ export async function GET(request: Request) {
   try {
     const { profile, supabaseAdmin, isAdmin } = await authedContext(request)
 
-    const videos = await loadVideos(supabaseAdmin, { userId: profile.id, isAdmin }, VIDEO_LIMIT, COLUMNS)
+    const limit = isAdmin ? ADMIN_LIMIT : STAFF_LIMIT
+    const videos = await loadVideos(supabaseAdmin, { userId: profile.id, isAdmin }, limit, COLUMNS)
     const videoIds = videos.map((v) => v.id)
 
     // 세 조회는 서로 기다릴 필요가 없어 한꺼번에 보낸다.
@@ -37,7 +39,7 @@ export async function GET(request: Request) {
         isAdmin ? loadStaffMap(supabaseAdmin) : Promise.resolve(null)
       ])
     } catch (e) {
-      if (isMissingTableError(e)) return NextResponse.json(sampleOptimizationPayload())
+      if (isMissingTableError(e)) return missingTableResponse()
       throw e
     }
 
@@ -62,7 +64,7 @@ export async function GET(request: Request) {
 
     items.sort((a, b) => b.improvementScore - a.improvementScore || (a.video.created_at < b.video.created_at ? 1 : -1))
 
-    const payload: OptimizationPayload = { items, capped: videos.length >= VIDEO_LIMIT }
+    const payload: OptimizationPayload = { items, capped: videos.length >= limit }
     return cachedJson(payload)
   } catch (e) {
     return handleRouteError(e, '영상 점검 목록을 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.')

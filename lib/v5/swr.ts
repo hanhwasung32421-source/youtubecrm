@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getAccessToken } from '@/lib/session/authed-fetch'
 import { errorText, v5Get } from '@/lib/v5/client'
-import { recentlyMutated } from '@/lib/v5/freshness'
+import { mutatedSince, recentlyMutated } from '@/lib/v5/freshness'
 
 // 조회(GET)용 아주 작은 "먼저 보여 주고 뒤에서 새로 받기"(stale-while-revalidate) 캐시.
 //  - 같은 주소를 60초 안에 다시 열면 저장해 둔 값을 바로 보여 주고, 뒤에서 조용히 새로 받는다.
@@ -109,11 +109,6 @@ export function writeV5Cache(url: string, data: unknown) {
   remember(url, data, ++seqCounter, prev?.at ?? Date.now())
 }
 
-export function clearV5Cache(prefix?: string) {
-  if (!prefix) cache.clear()
-  else for (const key of Array.from(cache.keys())) if (key.startsWith(prefix)) cache.delete(key)
-}
-
 export type QueryState<T> = {
   data: T | null
   // 사람이 읽을 오류 문장(없으면 '')
@@ -153,7 +148,8 @@ export function useV5Query<T>(url: string | null, opts: { errorFallback: string 
       if (hit && age <= SHOW_TTL_MS && !forceFresh) {
         dataRef.current = hit.data as T
         dataUrlRef.current = url
-        if (age <= FRESH_TTL_MS) {
+        // 이 값을 받은 뒤에 (다른 화면에서) 저장/삭제가 있었다면 4초 안이어도 뒤에서 새로 받는다.
+        if (age <= FRESH_TTL_MS && !mutatedSince(hit.at)) {
           setState((s) => ({ data: hit.data as T, error: '', status: 200, loading: false, validating: false, rev: s.rev + 1 }))
           return
         }

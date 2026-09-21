@@ -11,12 +11,15 @@ const idSchema = z.string().uuid()
 const patchSchema = z
   .object({
     stock_name: z.string().trim().min(1, '종목명을 입력해 주세요.').max(60, '종목명은 60자 이내로 입력해 주세요.').optional(),
-    content_type: z.enum(['longform', 'shortform'], { message: '형식은 롱폼 또는 숏폼이어야 합니다.' }).optional(),
+    content_type: z.enum(['longform', 'shortform'], { message: '형식은 롱폼 또는 숏폼으로 골라 주세요.' }).optional(),
     content_category: z.string().trim().max(100, '메모는 100자 이내로 입력해 주세요.').nullable().optional()
   })
   .strict()
 
-const COLUMNS = 'id, stock_name, content_type, content_category, primary_owner_user_id'
+const COLUMNS = 'id, stock_name, content_type, content_category, primary_owner_user_id, created_at'
+
+// 등록 직후 되돌리기(?undo=1)로 지울 수 있는 시간. 이보다 오래된 영상은 "전에 있던 영상"이라 지우지 않는다.
+const UNDO_DELETE_MAX_AGE_MS = 2 * 60 * 1000
 
 type Row = {
   id: string
@@ -24,14 +27,15 @@ type Row = {
   content_type: 'longform' | 'shortform'
   content_category: string | null
   primary_owner_user_id: string | null
+  created_at: string | null
 }
 
 function notFound() {
-  return NextResponse.json({ error: '영상을 찾을 수 없습니다. 이미 삭제되었을 수 있어요.' }, { status: 404 })
+  return NextResponse.json({ error: '영상을 찾지 못했어요. 이미 삭제됐을 수 있어요.' }, { status: 404 })
 }
 
 function forbidden() {
-  return NextResponse.json({ error: '본인이 등록한 영상만 고치거나 지울 수 있습니다.' }, { status: 403 })
+  return NextResponse.json({ error: '내가 등록한 영상만 고치거나 지울 수 있어요.' }, { status: 403 })
 }
 
 async function loadRow(supabaseAdmin: SupabaseAdmin, id: string): Promise<Row | null> {
@@ -65,7 +69,7 @@ export async function GET(request: Request, context: Ctx) {
     if (!isAdmin && row.primary_owner_user_id !== profile.id) return forbidden()
     return NextResponse.json({ video: publicRow(row) })
   } catch (e: any) {
-    return errorResponse(e, '영상 정보를 불러오지 못했습니다.')
+    return errorResponse(e, '영상 정보를 불러오지 못했어요.')
   }
 }
 
@@ -88,7 +92,7 @@ export async function PATCH(request: Request, context: Ctx) {
     if (parsed.data.content_type !== undefined) update.content_type = parsed.data.content_type
     if (parsed.data.content_category !== undefined) update.content_category = parsed.data.content_category?.trim() || null
     if (Object.keys(update).length === 0) {
-      return NextResponse.json({ error: '바꿀 내용이 없습니다.' }, { status: 400 })
+      return NextResponse.json({ error: '바꿀 내용이 없어요.' }, { status: 400 })
     }
 
     const row = await loadRow(supabaseAdmin, id)
@@ -106,7 +110,7 @@ export async function PATCH(request: Request, context: Ctx) {
 
     return NextResponse.json({ ok: true, video: publicRow(data as Row) })
   } catch (e: any) {
-    return errorResponse(e, '영상 정보를 고치지 못했습니다.')
+    return errorResponse(e, '영상 정보를 고치지 못했어요.')
   }
 }
 
@@ -123,11 +127,19 @@ export async function DELETE(request: Request, context: Ctx) {
     if (!row) return notFound()
     if (!isAdmin && row.primary_owner_user_id !== profile.id) return forbidden()
 
+    // 방금 등록을 되돌리는 요청이면, 정말 방금 새로 만들어진 영상일 때만 지운다(전에 있던 영상을 실수로 지우지 않도록).
+    if (new URL(request.url).searchParams.get('undo') === '1') {
+      const createdMs = row.created_at ? new Date(row.created_at).getTime() : NaN
+      if (!Number.isFinite(createdMs) || Date.now() - createdMs > UNDO_DELETE_MAX_AGE_MS) {
+        return NextResponse.json({ error: '이 영상은 방금 새로 등록한 것이 아니라서 지우지 않았어요.' }, { status: 409 })
+      }
+    }
+
     const { error } = await supabaseAdmin.from(SHARED_TABLES.videos).delete().eq('id', id)
     if (error) throw new Error(error.message)
 
     return NextResponse.json({ ok: true })
   } catch (e: any) {
-    return errorResponse(e, '영상을 삭제하지 못했습니다.')
+    return errorResponse(e, '영상을 삭제하지 못했어요.')
   }
 }

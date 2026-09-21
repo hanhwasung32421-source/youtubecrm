@@ -46,16 +46,6 @@ export function VideoListSkeleton({ rows = 3 }: { rows?: number }) {
   )
 }
 
-// 링크 미리보기 자리(주소를 붙여넣고 잠시 기다리는 동안)
-export function PreviewSkeleton() {
-  return (
-    <div className="v3-reg-preview" aria-hidden>
-      <Skel w={64} h={36} r={4} />
-      <Skel w="55%" h={14} />
-    </div>
-  )
-}
-
 // 사이드바 메뉴가 준비되기 전(역할에 따라 순서가 달라서 그때까지 자리만 잡는다)
 export function NavSkeleton() {
   return (

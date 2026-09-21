@@ -1,5 +1,7 @@
 import { addDaysToYmd, getKstDayStartIso, getKstYmd } from '@/lib/attendance/time'
+import { SCORE_SORTS, type ScoreSort } from '@/lib/v5/filters'
 import { computeScoreboard, EARLY_WINDOW_HOURS, isEarlyGrowthCandidate, type SnapshotRow } from '@/lib/v5/scoring'
+import { sortScoreRows } from '@/lib/v5/score-view'
 import { V5_TABLES } from '@/lib/v5/tables'
 import { SCORE_TIERS, type VideoRef } from '@/lib/v5/types'
 import { badRequest, chunk, fetchAllPages, getSession, handleRouteError, IN_CHUNK, jsonCached, loadUserMap } from '@/lib/v5/api'
@@ -13,6 +15,8 @@ const VIDEO_MAX_PAGES = 12
 const SNAPSHOT_PARALLEL = 5
 const SNAPSHOT_MAX_GROUPS = 80
 const SNAPSHOT_GROUP_ROWS = 1000
+// 한 묶음(영상 100개)의 스냅샷이 1,000행을 넘으면 이어서 읽는다(최대 이만큼 페이지).
+const SNAPSHOT_GROUP_PAGES = 4
 const HOUR_MS = 3_600_000
 // 응답으로 내려주는 순위 행 수. 합계/평균/분포는 항상 전체 기준으로 계산한다.
 const MAX_ROWS = 200
@@ -33,6 +37,9 @@ export async function GET(request: Request) {
     const days = (PERIODS as readonly number[]).includes(daysParam) ? daysParam : DEFAULT_DAYS
     const ownerParam = url.searchParams.get('owner') || ''
     if (ownerParam && !UUID_RE.test(ownerParam)) return badRequest('담당자를 찾을 수 없어요.')
+    // 정렬은 서버에서 한다: 순위 200개만 내려주므로, 화면에서 정렬하면 "점수 낮은 순"이 전체의 꼴찌가 아니라 상위 200개의 꼴찌가 된다.
+    const sortParam = url.searchParams.get('sort') || 'score'
+    const sort: ScoreSort = (SCORE_SORTS as readonly string[]).includes(sortParam) ? (sortParam as ScoreSort) : 'score'
 
     // 오늘 포함 N일(한국 시간 0시 기준)
     const sinceYmd = addDaysToYmd(getKstYmd(), -(days - 1))
@@ -73,21 +80,28 @@ export async function GET(request: Request) {
       const from = new Date(Math.max(Math.min(...times) - EARLY_WINDOW_HOURS * HOUR_MS, sinceMs)).toISOString()
       const to = new Date(Math.max(...times) + EARLY_WINDOW_HOURS * HOUR_MS).toISOString()
       try {
-        const { data, error } = await supabaseAdmin
-          .from(V5_TABLES.videoSnapshots)
-          .select('video_id, snapshot_at, view_count')
-          .in('video_id', group.map((v) => v.id))
-          .gte('snapshot_at', from)
-          .lte('snapshot_at', to)
-          .order('snapshot_at', { ascending: true })
-          .range(0, SNAPSHOT_GROUP_ROWS - 1)
-        if (error) throw error
-        const rows = (data || []) as SnapshotRow[]
-        if (rows.length >= SNAPSHOT_GROUP_ROWS) snapshotsTruncated = true
-        for (const row of rows) {
-          const list = snapshotsByVideoId.get(row.video_id) || []
-          list.push(row)
-          snapshotsByVideoId.set(row.video_id, list)
+        const ids = group.map((v) => v.id)
+        for (let page = 0; page < SNAPSHOT_GROUP_PAGES; page += 1) {
+          const start = page * SNAPSHOT_GROUP_ROWS
+          const { data, error } = await supabaseAdmin
+            .from(V5_TABLES.videoSnapshots)
+            .select('video_id, snapshot_at, view_count')
+            .in('video_id', ids)
+            .gte('snapshot_at', from)
+            .lte('snapshot_at', to)
+            .order('snapshot_at', { ascending: true })
+            .order('video_id', { ascending: true })
+            .range(start, start + SNAPSHOT_GROUP_ROWS - 1)
+          if (error) throw error
+          const rows = (data || []) as SnapshotRow[]
+          for (const row of rows) {
+            const list = snapshotsByVideoId.get(row.video_id) || []
+            list.push(row)
+            snapshotsByVideoId.set(row.video_id, list)
+          }
+          if (rows.length < SNAPSHOT_GROUP_ROWS) break
+          // 마지막 페이지까지 꽉 찼다면 그 뒤에 더 있을 수 있다.
+          if (page === SNAPSHOT_GROUP_PAGES - 1) snapshotsTruncated = true
         }
       } catch (e) {
         // 스냅샷을 못 읽어도 조회 속도·참여율 점수는 계산할 수 있다(초기 성장은 중간값 처리).
@@ -135,6 +149,8 @@ export async function GET(request: Request) {
     const owners = Array.from(ownerCounts.values()).sort((a, b) => a.name.localeCompare(b.name, 'ko'))
 
     const visible = ownerParam ? scored.filter((r) => r.video.primary_owner_user_id === ownerParam) : scored
+    // 점수 순위(1등부터). 정렬을 바꿔도 이 순위는 그대로 따라간다.
+    const ranked = visible.map((row, i) => ({ ...row, rank: i + 1 }))
     const total = visible.length
     const scoreSum = visible.reduce((s, r) => s + r.totalScore, 0)
     const distribution = SCORE_TIERS.map((tier) => ({ tier, count: visible.filter((r) => r.tier === tier).length }))
@@ -152,13 +168,15 @@ export async function GET(request: Request) {
     for (const v of videoRows) if (v.last_synced_at && (!lastSyncedAt || v.last_synced_at > lastSyncedAt)) lastSyncedAt = v.last_synced_at
 
     return jsonCached({
-      items: visible.slice(0, MAX_ROWS),
+      items: sortScoreRows(ranked, sort).slice(0, MAX_ROWS),
+      sort,
+      // 점수가 가장 높은 3개(점수 순). "잘 나간 영상"과 1등 안내에 쓴다 — 정렬을 바꿔도 같은 값이다.
+      best: ranked.slice(0, 3),
       // 점수가 가장 낮은 "아쉬움" 구간 영상(낮은 순 최대 5개). 순위 목록이 200개에서 잘려도 "손봐야 할 영상"을 빠짐없이 짚기 위해 따로 내려준다.
-      bottom: visible
+      bottom: ranked
         .slice(-5)
         .filter((r) => r.tier === 'poor')
         .reverse(),
-      shown: Math.min(total, MAX_ROWS),
       days,
       since: sinceYmd,
       summary,
@@ -167,7 +185,6 @@ export async function GET(request: Request) {
       unsynced,
       lastSyncedAt,
       earlyKnown: visible.filter((r) => r.hasSnapshotData).length,
-      generatedAt: new Date().toISOString(),
       truncated: videosResult.truncated,
       snapshotsTruncated
     })

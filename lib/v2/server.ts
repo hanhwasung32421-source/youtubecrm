@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server'
 import { getBearerToken, getProfileByAccessToken } from '@/lib/auth/session'
 import { TABLES } from '@/lib/supabase/tables'
 import { V2_MISSING_TABLE_MESSAGE, V2_TABLES } from './tables'
-import { addDays, kstDayStart, kstHourOfIso, kstWeekdayOfIso, kstYmd, daysSince } from './dates'
+import { addDays, kstDayStart, kstYmd, daysSince } from './dates'
 import {
   checklistDoneCount,
   emptyChecklist,
@@ -15,7 +15,6 @@ import {
   type SeoChecklist,
   type StaffLite,
   type ThumbnailReview,
-  type TimingHint,
   type VideoLite
 } from './types'
 
@@ -24,7 +23,8 @@ export function isMissingTableError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false
   const e = error as { code?: string; message?: string }
   if (e.code === '42P01') return true
-  return /does not exist|Could not find the table|schema cache/i.test(String(e.message || ''))
+  // 'column x does not exist' 처럼 칸 이름 오류를 '테이블 없음'으로 오해하지 않도록 relation/table 만 본다.
+  return /relation .* does not exist|Could not find the table|table .* schema cache/i.test(String(e.message || ''))
 }
 
 export function missingTableResponse() {
@@ -46,6 +46,8 @@ export type AuthedContext = {
 
 export async function authedContext(request: Request): Promise<AuthedContext> {
   const { profile, supabaseAdmin } = await getProfileByAccessToken(getBearerToken(request))
+  // 퇴사 처리된 계정은 토큰이 남아 있어도 팀 데이터를 읽지 못하게 한다.
+  if (profile.role_type === 'retired') throw new Error('로그인이 필요합니다.')
   return { profile, supabaseAdmin, isAdmin: isAdminRole(profile.role_type) }
 }
 
@@ -55,7 +57,7 @@ export async function requireV2Admin(request: Request): Promise<AuthedContext> {
   return ctx
 }
 
-export function forbidden(message = '관리자 권한이 필요합니다.') {
+export function forbidden(message = '관리자만 사용할 수 있는 기능이에요.') {
   return NextResponse.json({ error: message }, { status: 403 })
 }
 
@@ -65,9 +67,9 @@ export function unauthorizedResponse(e: unknown) {
 }
 
 // ---- 응답 캐시 ----
-// 조회(GET) 분석 응답은 15초 동안 브라우저가 그대로 쓰고, 그 뒤 45초는 옛 값을 먼저 쓰며 뒤에서 새로 받는다.
+// 조회(GET) 분석 응답은 5초만 브라우저가 그대로 쓴다. (화면이 자체 메모리 캐시로 먼저 보여 주므로, 오래된 값이 새 값을 가리지 않도록 짧게 둔다.)
 // 로그인한 사람마다 내용이 다르므로 private + Vary: Authorization 으로 다른 사람의 응답이 섞이지 않게 한다.
-export const ANALYTICS_CACHE_CONTROL = 'private, max-age=15, stale-while-revalidate=45'
+const ANALYTICS_CACHE_CONTROL = 'private, max-age=5'
 
 export function cachedJson<T>(body: T, init?: ResponseInit) {
   const res = NextResponse.json(body, init)
@@ -103,6 +105,7 @@ function userFacingText(message: string | undefined, fallback: string) {
 
 // zod 검증 실패는 400, 권한 오류는 401/403, 나머지는 한글 안내 문장만 내려준다(원본 오류는 서버 로그에만).
 export function handleRouteError(e: unknown, fallback: string) {
+  if (!(e instanceof Error) && isMissingTableError(e)) return missingTableResponse()
   const issues = (e as { issues?: { message?: string }[] })?.issues
   if (issues?.length) {
     return NextResponse.json({ error: userFacingText(issues[0]?.message, '입력한 내용을 다시 확인해 주세요.') }, { status: 400 })
@@ -111,7 +114,7 @@ export function handleRouteError(e: unknown, fallback: string) {
     return NextResponse.json({ error: '입력한 내용을 다시 확인해 주세요.' }, { status: 400 })
   }
   if (e instanceof Error && /관리자 권한이 필요/.test(e.message)) {
-    return forbidden(e.message)
+    return forbidden()
   }
   if (e instanceof Error && /로그인이 필요|프로필을 찾을 수 없/.test(e.message)) {
     return unauthorizedResponse(e)
@@ -141,11 +144,12 @@ export async function selectAllPages<T>(
 ): Promise<T[]> {
   const rows: T[] = []
   for (let from = 0; from < max; from += pageSize) {
-    const { data, error } = await build(from, from + pageSize - 1)
+    const to = Math.min(from + pageSize, max) - 1
+    const { data, error } = await build(from, to)
     if (error) throw error
     const page = data || []
-    rows.push(...page)
-    if (page.length < pageSize) break
+    for (const row of page) rows.push(row)
+    if (page.length < to - from + 1) break
   }
   return rows
 }
@@ -155,12 +159,13 @@ const VIDEO_SELECT =
 
 // 활성 직원 목록(퇴사 제외). 담당자 선택/플래너 기준.
 export async function loadStaff(supabaseAdmin: SupabaseAdmin): Promise<StaffLite[]> {
-  const { data } = await supabaseAdmin
+  const { data, error } = await supabaseAdmin
     .from(TABLES.crmUsers)
     .select('id, name, role_type, employment_status')
     .neq('role_type', 'retired')
     .eq('employment_status', 'active')
     .order('name', { ascending: true })
+  if (error) throw error
 
   const rows = (data || []) as { id: string; name: string; role_type: string }[]
   // 직원(유튜버)을 앞에, 관리자를 뒤에
@@ -169,7 +174,8 @@ export async function loadStaff(supabaseAdmin: SupabaseAdmin): Promise<StaffLite
 }
 
 export async function loadStaffMap(supabaseAdmin: SupabaseAdmin): Promise<Map<string, string>> {
-  const { data } = await supabaseAdmin.from(TABLES.crmUsers).select('id, name')
+  const { data, error } = await supabaseAdmin.from(TABLES.crmUsers).select('id, name')
+  if (error) throw error
   const map = new Map<string, string>()
   for (const row of (data || []) as { id: string; name: string }[]) map.set(row.id, row.name)
   return map
@@ -210,11 +216,13 @@ export async function loadVideos(
   limit = 200,
   columns: string = VIDEO_SELECT
 ): Promise<VideoLite[]> {
-  let query = supabaseAdmin.from(TABLES.videos).select(columns).order('created_at', { ascending: false }).limit(limit)
-  if (!scope.isAdmin) query = query.eq('primary_owner_user_id', scope.userId)
-  const { data, error } = await query
-  if (error) throw error
-  return ((data || []) as any[]).map((row) => ({ ...row, content_type: row.content_type as ContentType }))
+  // 한 번에 1000행까지만 받을 수 있으므로 그보다 많이 필요하면 나눠서 받는다. (같은 시각 영상이 쪽 사이에서 빠지거나 겹치지 않게 id 로 한 번 더 정렬)
+  const rows = await selectAllPages<any>((from, to) => {
+    let query = supabaseAdmin.from(TABLES.videos).select(columns).order('created_at', { ascending: false }).order('id', { ascending: true }).range(from, to)
+    if (!scope.isAdmin) query = query.eq('primary_owner_user_id', scope.userId)
+    return query
+  }, limit)
+  return rows.map((row) => ({ ...row, content_type: row.content_type as ContentType }))
 }
 
 // 화면이 쓰지 않는 긴 글(설명 등)과 잘 안 쓰는 칸은 비워서 응답을 작게 만든다. (칸 이름은 그대로라 옛 화면도 그대로 동작)
@@ -240,23 +248,35 @@ export function slimVideo(v: Partial<VideoLite> & { id: string }, extra: Partial
 }
 
 // .in() 에 아이디가 수백 개 들어가면 URL이 너무 길어지므로 나눠서 조회한다.
-function chunkIds(ids: string[], size = 100): string[][] {
+export function chunkIds(ids: string[], size = 100): string[][] {
   const chunks: string[][] = []
   for (let i = 0; i < ids.length; i += size) chunks.push(ids.slice(i, i + size))
   return chunks
+}
+
+// 나눈 조회를 한꺼번에 수십 개 보내지 않도록 동시에 limit 개까지만 돌린다. 결과 순서는 입력 순서 그대로.
+export async function mapLimit<A, B>(items: readonly A[], limit: number, fn: (item: A) => Promise<B>): Promise<B[]> {
+  const out = new Array<B>(items.length)
+  let next = 0
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++
+      out[i] = await fn(items[i])
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  return out
 }
 
 const CHECKLIST_SELECT = 'video_id, title_has_stock, thumbnail_text_checked, description_timestamps, tags_5plus, updated_at'
 
 export async function loadChecklistMap(supabaseAdmin: SupabaseAdmin, videoIds: string[]): Promise<Map<string, SeoChecklist>> {
   const map = new Map<string, SeoChecklist>()
-  const results = await Promise.all(
-    chunkIds(videoIds).map(async (ids) => {
-      const { data, error } = await supabaseAdmin.from(V2_TABLES.seoChecklists).select(CHECKLIST_SELECT).in('video_id', ids)
-      if (error) throw error
-      return (data || []) as SeoChecklist[]
-    })
-  )
+  const results = await mapLimit(chunkIds(videoIds), 6, async (ids) => {
+    const { data, error } = await supabaseAdmin.from(V2_TABLES.seoChecklists).select(CHECKLIST_SELECT).in('video_id', ids)
+    if (error) throw error
+    return (data || []) as SeoChecklist[]
+  })
   for (const rows of results) for (const row of rows) map.set(row.video_id, row)
   return map
 }
@@ -264,18 +284,17 @@ export async function loadChecklistMap(supabaseAdmin: SupabaseAdmin, videoIds: s
 // 영상별 최신 썸네일 리뷰(자가평가) — created_at 내림차순 첫 건
 export async function loadLatestReviewMap(supabaseAdmin: SupabaseAdmin, videoIds: string[]): Promise<Map<string, ThumbnailReview>> {
   const map = new Map<string, ThumbnailReview>()
-  const results = await Promise.all(
-    chunkIds(videoIds).map((ids) =>
-      selectAllPages<ThumbnailReview>(
-        (from, to) =>
-          supabaseAdmin
-            .from(V2_TABLES.thumbnailReviews)
-            .select('id, video_id, rating, note, reviewed_by, created_at')
-            .in('video_id', ids)
-            .order('created_at', { ascending: false })
-            .range(from, to),
-        5000
-      )
+  const results = await mapLimit(chunkIds(videoIds), 6, (ids) =>
+    selectAllPages<ThumbnailReview>(
+      (from, to) =>
+        supabaseAdmin
+          .from(V2_TABLES.thumbnailReviews)
+          .select('id, video_id, rating, note, reviewed_by, created_at')
+          .in('video_id', ids)
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: true })
+          .range(from, to),
+      5000
     )
   )
   for (const rows of results) {
@@ -304,31 +323,6 @@ export function computeDiscoverability(video: VideoLite, checklist: SeoChecklist
   const checklistScore = Math.round((done / 4) * 100)
   const score = Math.round(0.4 * viewVelocityScore + 0.3 * likeRateScore + 0.3 * checklistScore)
   return { viewsPerDay, viewVelocityScore, likeRateScore, checklistScore, score, checklistDone: done }
-}
-
-// ---- 최적 발행 요일/시간 힌트 ----
-// 실 youtubeCRM_videos.published_at(KST) + view_count 를 요일×시간대로 묶어 평균 조회수가 가장 높은 조합을 찾는다.
-export function computeTimingHint(videos: { published_at: string | null; view_count: number | null }[]): TimingHint {
-  const buckets = new Map<string, { sum: number; count: number; weekday: number; hour: number }>()
-  for (const v of videos) {
-    if (!v.published_at) continue
-    const weekday = kstWeekdayOfIso(v.published_at)
-    const hour = kstHourOfIso(v.published_at)
-    if (weekday === null || hour === null) continue
-    const key = `${weekday}-${hour}`
-    const bucket = buckets.get(key) || { sum: 0, count: 0, weekday, hour }
-    bucket.sum += v.view_count || 0
-    bucket.count += 1
-    buckets.set(key, bucket)
-  }
-  let best: { weekday: number; hour: number; avg: number; count: number } | null = null
-  for (const b of buckets.values()) {
-    if (b.count < 2) continue // 표본 2건 미만은 신뢰하지 않는다
-    const avg = b.sum / b.count
-    if (!best || avg > best.avg) best = { weekday: b.weekday, hour: b.hour, avg, count: b.count }
-  }
-  if (!best) return { weekday: null, hour: null, avgViews: 0, sampleSize: 0 }
-  return { weekday: best.weekday, hour: best.hour, avgViews: Math.round(best.avg), sampleSize: best.count }
 }
 
 export function nowIso() {

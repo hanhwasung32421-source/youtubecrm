@@ -42,7 +42,3 @@ export function useStoredState<T extends string | number | boolean>(
 
   return [value, set, ready]
 }
-
-export function isPeriodValue(value: unknown): value is 7 | 30 | 90 {
-  return value === 7 || value === 30 || value === 90
-}

@@ -6,6 +6,7 @@ import { TABLES } from '@/lib/supabase/tables'
 
 // 내가 등록한 영상 한 건 고치기(PATCH) / 지우기(DELETE) / 메모 읽기(GET).
 // 본인이 등록한 영상이거나 관리자일 때만 허용한다.
+// DELETE 에 ?createdAfter=<시각> 이 붙어 있으면(등록 직후 "되돌리기"), 그 시각보다 먼저 만들어진 영상은 지우지 않는다.
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -41,7 +42,7 @@ async function loadOwned(request: Request, context: Params) {
   const { profile, supabaseAdmin } = await getProfileByAccessToken(getBearerToken(request))
   const { data: video, error } = await supabaseAdmin
     .from(TABLES.videos)
-    .select('id, stock_name, content_type, content_category, primary_owner_user_id')
+    .select('id, stock_name, content_type, content_category, primary_owner_user_id, created_at')
     .eq('id', id)
     .maybeSingle()
   if (error) return { error: errorResponse(error, '영상을 불러오지 못했어요.') } as const
@@ -95,6 +96,16 @@ export async function DELETE(request: Request, context: Params) {
   try {
     const ctx = await loadOwned(request, context)
     if ('error' in ctx) return ctx.error
+
+    const guard = new URL(request.url).searchParams.get('createdAfter')
+    if (guard !== null) {
+      const guardMs = Date.parse(guard)
+      const createdMs = Date.parse(String(ctx.video.created_at ?? ''))
+      // 서버 시계 차이를 감안해 5초의 여유를 둔다. 만든 시각을 알 수 없으면 안전하게 지우지 않는다.
+      if (Number.isNaN(guardMs) || Number.isNaN(createdMs) || createdMs < guardMs - 5000) {
+        return fail('이 영상은 이번에 새로 만든 것이 아니라서 지우지 않았어요. 필요하면 목록에서 「삭제」를 눌러 주세요.', 409)
+      }
+    }
 
     // 이 영상을 가리키던 다른 기록은 DB 설정(CASCADE / SET NULL)에 따라 함께 정리된다.
     const { error } = await ctx.supabaseAdmin.from(TABLES.videos).delete().eq('id', ctx.id)

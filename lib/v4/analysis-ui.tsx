@@ -163,7 +163,7 @@ export function SampleNote() {
     <div className="v4p-sample" role="status">
       <span className="v4p-sample-dot" />
       <span>
-        지금은 샘플 데이터예요. <code>{V4_SQL_FILE}</code> 를 실행하면 실제 기록으로 바뀝니다.
+        지금은 예시 화면이에요. 기록을 저장할 공간이 아직 없어서 샘플이 보여요. 개발 담당자가 <code>{V4_SQL_FILE}</code> 를 실행하면 실제 기록으로 바뀌어요.
       </span>
     </div>
   )
@@ -173,16 +173,6 @@ export function SampleNote() {
 
 export function Skel({ w = '100%', h = 14 }: { w?: number | string; h?: number }) {
   return <span className="v4p-skel" style={{ width: w, height: h }} />
-}
-
-export function SkelRows({ rows = 5 }: { rows?: number }) {
-  return (
-    <div className="v4p-skel-rows" aria-busy="true" aria-label="불러오는 중">
-      {Array.from({ length: rows }, (_, i) => (
-        <Skel key={i} h={38} />
-      ))}
-    </div>
-  )
 }
 
 // ---- 완성됐을 때와 같은 모양의 뼈대 (자리가 미리 잡혀 있어 데이터가 와도 화면이 밀리지 않는다)

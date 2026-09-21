@@ -9,7 +9,8 @@ import type { VideoLite } from '@/lib/v3/engagement'
 export type SupabaseAdmin = Awaited<ReturnType<typeof getProfileByAccessToken>>['supabaseAdmin']
 export type Profile = Awaited<ReturnType<typeof getProfileByAccessToken>>['profile']
 
-export const MISSING_TABLE_MESSAGE = `V3 테이블이 아직 생성되지 않았습니다. ${V3_SQL_FILE} 을 실행해 주세요.`
+// 사용자에게는 SQL 파일 이름 대신 "누구에게 무엇을 부탁하면 되는지"만 보여 준다. (파일 이름은 서버 로그에 남는다)
+export const MISSING_TABLE_MESSAGE = '이 기능의 준비가 아직 끝나지 않았어요. 관리자에게 알려 주세요.'
 
 // PostgREST가 돌려주는 "테이블 없음" 에러 판별
 export function isMissingTableError(error: unknown): boolean {
@@ -20,6 +21,7 @@ export function isMissingTableError(error: unknown): boolean {
 }
 
 export function missingTableResponse() {
+  console.error(`V3 테이블이 없어요. ${V3_SQL_FILE} 을 실행해야 해요.`)
   return NextResponse.json({ error: MISSING_TABLE_MESSAGE }, { status: 409 })
 }
 
@@ -164,22 +166,23 @@ export const VIDEO_FIELDS_RATES = `${VIDEO_FIELDS_LIST}, like_count, comment_cou
 const PAGE_SIZE = 1000
 
 // PostgREST는 한 번에 돌려주는 행 수에 상한(보통 1000)이 있어서, limit이 그보다 크면 조용히 잘린다.
-// 1000개씩 나눠서 limit까지 받는다. 쪽마다 범위가 정해져 있으므로 동시에 요청해 기다리는 시간을 줄인다.
+// 첫 쪽을 받아 보고 꽉 찼을 때만 나머지 쪽을 동시에 요청한다. (영상이 적을 때는 요청 1번으로 끝난다)
 async function fetchVideoPages(supabaseAdmin: SupabaseAdmin, apply: (query: any) => any, limit: number, fields: string): Promise<VideoLite[]> {
+  const fetchRange = async (from: number, to: number): Promise<VideoLite[]> => {
+    const base = apply(supabaseAdmin.from(SHARED_TABLES.videos).select(fields))
+    const { data, error } = await base
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .range(from, to)
+    if (error) throw error
+    return (data || []) as VideoLite[]
+  }
+  const first = await fetchRange(0, Math.min(PAGE_SIZE, limit) - 1)
+  if (first.length < PAGE_SIZE || limit <= PAGE_SIZE) return first
   const ranges: { from: number; to: number }[] = []
-  for (let from = 0; from < limit; from += PAGE_SIZE) ranges.push({ from, to: Math.min(from + PAGE_SIZE, limit) - 1 })
-  const pages = await Promise.all(
-    ranges.map(async ({ from, to }) => {
-      const base = apply(supabaseAdmin.from(SHARED_TABLES.videos).select(fields))
-      const { data, error } = await base
-        .order('created_at', { ascending: false })
-        .order('id', { ascending: false })
-        .range(from, to)
-      if (error) throw error
-      return (data || []) as VideoLite[]
-    })
-  )
-  return pages.flat()
+  for (let from = PAGE_SIZE; from < limit; from += PAGE_SIZE) ranges.push({ from, to: Math.min(from + PAGE_SIZE, limit) - 1 })
+  const rest = await Promise.all(ranges.map(({ from, to }) => fetchRange(from, to)))
+  return [...first, ...rest.flat()]
 }
 
 // 역할에 따라 범위를 좁힌 영상 목록. 관리자는 staffId로 특정 직원만 볼 수도 있다.
@@ -263,11 +266,12 @@ export async function loadVideoSnapshots(supabaseAdmin: SupabaseAdmin, videoId: 
 
 // ─────────────────────────────────────────────────────────────
 // 응답 캐시 헤더
-//   읽기 전용 분석 GET  : 브라우저가 15초는 그대로, 그 뒤 45초는 옛 값을 먼저 보여 주고 뒤에서 새로 받게 한다.
+//   읽기 전용 분석 GET  : 브라우저 저장본은 쓰지 않고 늘 서버에 확인한다. ("먼저 보여 주기"는 화면 안 메모리 저장소(use-v3-data)가
+//                         맡는다. 브라우저까지 옛 값을 들고 있으면 방금 등록한 영상이 한동안 안 보인다.)
 //                         (Vary: Authorization — 같은 브라우저에서 다른 사람이 로그인해도 남의 화면이 보이지 않게)
 //   저장/수정/삭제 응답 : 절대 캐시하지 않는다.
 // ─────────────────────────────────────────────────────────────
-export const ANALYTICS_CACHE_CONTROL = 'private, max-age=15, stale-while-revalidate=45'
+export const ANALYTICS_CACHE_CONTROL = 'private, max-age=0, must-revalidate'
 
 export function cachedJson(body: unknown, init: { status?: number } = {}) {
   const status = init.status ?? 200

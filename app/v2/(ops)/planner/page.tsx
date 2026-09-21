@@ -6,7 +6,7 @@ import { AdminOnly } from '@/components/v2/auth-guard'
 import { PageHeader } from '@/components/v2/app-shell'
 import { Toast, useToast } from '@/components/toast'
 import { NextSteps } from '@/lib/v2/actions-ui'
-import { Answer, EmptyGuide, FieldError, HowTo, InlineConfirm, Kpi, KpiRow, LoadError, RefreshNote, SampleNote, SkeletonPlanner, SkeletonSummary } from '@/lib/v2/analysis-ui'
+import { Answer, EmptyGuide, FieldError, HowTo, InlineConfirm, Kpi, KpiRow, LoadError, RefreshNote, SkeletonPlanner, SkeletonSummary } from '@/lib/v2/analysis-ui'
 import { v2Delete, v2Patch, v2Post } from '@/lib/v2/client'
 import type { CsvValue } from '@/lib/v2/csv'
 import { addDays, formatYmdLabel, isRealYmd, kstYmd, weekStartMonday, WEEKDAY_LABELS, weekdayOf } from '@/lib/v2/dates'
@@ -20,7 +20,6 @@ import { ShareBar } from '@/lib/v2/share-ui'
 import { useV2Query } from '@/lib/v2/swr'
 import { describeTiming, slotLabel } from '@/lib/v2/timing'
 import { useUrlFilters } from '@/lib/v2/use-url-filters'
-import { V2_MISSING_TABLE_MESSAGE } from '@/lib/v2/tables'
 import type { PlannedSlot, PlannerPayload } from '@/lib/v2/types'
 
 const EMPTY: PlannerPayload = {
@@ -91,14 +90,6 @@ function PlannerBody() {
     if (editor) hourRef.current?.focus()
   }, [editor?.staffId, editor?.day, editor?.slot?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const guardSample = () => {
-    if (payload.sample) {
-      setFormError(V2_MISSING_TABLE_MESSAGE)
-      return true
-    }
-    return false
-  }
-
   const hint = payload.timingHint
   const hasHint = hint.weekday !== null && hint.hour !== null
 
@@ -144,7 +135,6 @@ function PlannerBody() {
       setFormError(DUP_MESSAGE)
       return
     }
-    if (guardSample()) return
     savingRef.current = true
     setSaving(true)
     setFormError('')
@@ -193,7 +183,6 @@ function PlannerBody() {
   // 지우기: 칸에서 바로 사라지고, 실패하면 다시 나타난다.
   const removeSlot = async () => {
     if (!editor?.slot || deleting || deletingRef.current) return
-    if (guardSample()) return
     const { staffId, day, slot } = editor
     deletingRef.current = true
     setDeleting(true)
@@ -269,7 +258,6 @@ function PlannerBody() {
     <>
       <PageHeader title="업로드 계획" subtitle="담당자별로 어느 요일에 영상을 올릴지 계획하고, 실제로 올렸는지 확인하는 곳이에요." />
       <Toast toast={toast} />
-      <SampleNote show={payload.sample} />
       {(loaded && loadError) || query.expired ? <LoadError message={loadError} expired={query.expired} onRetry={query.reload} /> : null}
       <RefreshNote show={query.refreshing} />
 
@@ -325,7 +313,7 @@ function PlannerBody() {
             ) : (
               <>
                 <p className="v2a-best-evidence">
-                  아직 ‘몇 시에 올리면 좋은지’ 알려드리기 어려워요. 지난 {hint.windowDays ?? 30}일 동안 조회수를 확인한 영상이 {(hint.totalVideos ?? 0).toLocaleString('ko-KR')}개인데, 같은 요일·시간에 올린 영상이 더 쌓여야 비교할 수 있어요.
+                  아직 ‘몇 시에 올리면 좋은지’ 알려 드리기 어려워요. 지난 {hint.windowDays ?? 30}일 동안 조회수를 확인한 영상이 {(hint.totalVideos ?? 0).toLocaleString('ko-KR')}개인데, 같은 요일·시간에 올린 영상이 더 쌓여야 비교할 수 있어요.
                 </p>
                 <div>
                   <Link className="v2a-inline-link" href="/v2/register">
@@ -551,7 +539,7 @@ function PlannerBody() {
             <GlossaryDetails keys={['plan', 'best']} />
             <HowTo>
               <p>칸의 ‘계획’은 그 담당자·요일에 정해 둔 시간 수, ‘등록’은 그날 실제로 등록된 영상 수예요. 등록이 계획 이상이면 초록색(✓)이에요.</p>
-              <p>추천 시간은 지난 30일에 올린 영상을 요일·시간대별로 묶어, 올린 뒤 하루당 평균 조회수가 가장 높은 곳을 찾은 결과예요. 오래된 영상은 조회수가 더 쌓여 있으니 하루당으로 나눠 공평하게 견줘요. 영상이 너무 적은(2~3개 미만) 시간대는 우연일 수 있어 제외해요.</p>
+              <p>추천 시간은 지난 30일에 올린 영상을 요일·시간대별로 묶어, 올린 뒤 하루당 평균 조회수가 가장 높은 곳을 찾은 결과예요. 오래된 영상은 조회수가 더 쌓여 있으니 하루당으로 나눠 공평하게 견줘요. 같은 요일·시간에 올린 영상이 2개(영상이 150개 이상이면 3개) 미만인 시간대는 우연일 수 있어 제외해요.</p>
               <p>시간 칩 옆의 ‘•’ 표시는 메모가 있다는 뜻이에요. 담당자나 날짜를 바꾸고 싶으면 계획을 지우고 새로 추가해 주세요.</p>
             </HowTo>
           </div>

@@ -9,16 +9,12 @@ import './pages-r3.css'
 // 성장 관리 화면(성장 실험/영상 점수판/성공 공식/주간 회고)이 함께 쓰는 작은 조각들.
 // 스타일은 pages.css(.v5-theme 하위 v5p- 접두어)에만 있다.
 
-export const SAMPLE_SQL_FILE = 'supabase/sql/v5/100_v5_growth_lab.sql'
-
-// 샘플 데이터 안내: 한 줄, 차분하게.
+// 예시 데이터 안내: 한 줄, 차분하게. (저장 공간이 아직 없을 때만 나온다)
 export function SampleNote({ show }: { show: boolean }) {
   if (!show) return null
   return (
     <div className="v5p-sample" role="note">
-      <span>샘플 화면이에요. 실제 데이터로 바꾸려면</span>
-      <code>{SAMPLE_SQL_FILE}</code>
-      <span>을 실행하세요.</span>
+      <span>지금 보이는 것은 예시예요. 저장 공간이 아직 준비되지 않아서 저장은 되지 않아요. 관리자에게 알려 주세요.</span>
     </div>
   )
 }
@@ -54,10 +50,6 @@ export function EmptyBlock({ title, children, action }: { title: string; childre
       {action ? <div className="v5p-empty-action">{action}</div> : null}
     </div>
   )
-}
-
-export function LoadingLine({ text = '불러오는 중이에요…' }: { text?: string }) {
-  return <div className="v5p-loading">{text}</div>
 }
 
 // 로그인이 끝난 경우(401)에는 "다시 시도"가 소용없으니 로그인 화면으로 가는 링크를 준다.

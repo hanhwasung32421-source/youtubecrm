@@ -23,7 +23,7 @@ export const GLOSSARY: Record<GlossaryKey, GlossaryEntry> = {
   reactionScore: {
     term: '반응 점수',
     short: '팀 평균의 몇 배인지',
-    long: '그 종목 영상 1개당 평균 조회수 ÷ 팀 전체 영상 1개당 평균 조회수예요. 1.0배가 평균이고, 2.0배면 평균보다 2배 잘 나온다는 뜻이에요.'
+    long: '그 종목의 영상당 평균 조회수 ÷ 팀 전체의 영상당 평균 조회수예요. 1.0배가 평균이고, 2.0배면 평균보다 2배 잘 나온다는 뜻이에요.'
   },
   avgViews: {
     term: '영상당 평균 조회수',
@@ -41,7 +41,7 @@ export const GLOSSARY: Record<GlossaryKey, GlossaryEntry> = {
     long: '예를 들어 30일을 보고 있으면 그 앞 30일과 총 조회수를 비교해요. ±5% 이내는 “비슷해요”로 봐요.'
   },
   sample: {
-    term: '표본이 적어요',
+    term: '영상이 적어요',
     short: '영상이 너무 적어서 우연일 수 있다는 뜻',
     long: '영상이 1~2개뿐인 칸이나 종목은 한 영상이 우연히 잘 나온 것일 수 있어요. 3개 이상 쌓이면 그때부터 믿고 참고하세요.'
   },
@@ -63,6 +63,6 @@ export const GLOSSARY: Record<GlossaryKey, GlossaryEntry> = {
   heatmap: {
     term: '요일 × 시간대 표',
     short: '언제 올린 영상이 잘 나왔는지 색으로 보여주는 표',
-    long: '칸이 진할수록 값이 커요. 점선 칸은 영상이 3개 미만이라 표본이 적으니 참고만 하세요. 시각은 한국 시간이에요.'
+    long: '칸이 진할수록 값이 커요. 점선 칸은 영상이 3개 미만이라 참고만 하세요. 시각은 한국 시간이에요.'
   }
 }

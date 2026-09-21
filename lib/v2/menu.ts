@@ -13,11 +13,13 @@ export type MenuDefinition = {
 
 // 관리자는 요약부터, 직원은 매일 하는 영상 등록부터 보이도록 순서를 잡는다.
 export const MENU_DEFINITIONS: readonly MenuDefinition[] = [
-  { key: 'report', label: '성과 요약', href: '/v2/report', audience: 'admin', group: '한눈에 보기', description: '검색에서 어떤 영상·담당자가 잘 되고 있는지 순위로 봅니다.' },
-  { key: 'register', label: '영상 등록', href: '/v2/register', audience: 'all', group: '영상', description: '유튜브 주소와 종목만 넣으면 조회수·좋아요는 자동으로 가져옵니다.' },
-  { key: 'optimization', label: '영상 점검', href: '/v2/optimization', audience: 'all', group: '영상', description: '영상마다 제목·썸네일이 검색에 유리한지 점수로 확인합니다.' },
-  { key: 'keywords', label: '키워드 모음', href: '/v2/keywords', audience: 'all', group: '기획', description: '지금 다루면 좋은 검색어를 팀이 함께 모아 두는 곳입니다.' },
-  { key: 'planner', label: '업로드 계획', href: '/v2/planner', audience: 'admin', group: '기획', description: '요일별로 누가 어떤 영상을 올릴지 계획합니다.' }
+  { key: 'report', label: '성과 요약', href: '/v2/report', audience: 'admin', group: '한눈에 보기', description: '검색에서 어떤 영상·담당자가 잘 되고 있는지 순위로 봐요.' },
+  { key: 'register', label: '영상 등록', href: '/v2/register', audience: 'all', group: '영상', description: '유튜브 주소와 종목만 넣으면 조회수·좋아요는 자동으로 가져와요.' },
+  { key: 'optimization', label: '영상 점검', href: '/v2/optimization', audience: 'all', group: '영상', description: '영상마다 제목·썸네일이 검색에 유리한지 점수로 확인해요.' },
+  { key: 'keywords', label: '키워드 모음', href: '/v2/keywords', audience: 'all', group: '기획', description: '지금 다루면 좋은 검색어를 팀이 함께 모아 두는 곳이에요.' },
+  { key: 'planner', label: '업로드 계획', href: '/v2/planner', audience: 'admin', group: '기획', description: '요일별로 누가 어떤 영상을 올릴지 계획해요.' },
+  // 가장 덜 눈에 띄게 맨 뒤에 둔다(관리자·직원 모두)
+  { key: 'help', label: '사용 방법', href: '/v2/help', audience: 'all', group: '도움말', description: '처음 쓰는 분을 위한 사용 방법과 자주 묻는 질문이에요.' }
 ] as const
 
 // 직원(=매일 영상을 등록하는 사람)의 시작 화면. AuthGuard가 권한 없는 접근을 돌려보낼 때도 쓴다.

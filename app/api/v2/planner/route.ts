@@ -2,9 +2,8 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { TABLES } from '@/lib/supabase/tables'
 import { V2_TABLES } from '@/lib/v2/tables'
-import { addDays, kstDayStart, kstDayEnd, kstYmd, weekStartMonday } from '@/lib/v2/dates'
-import { cachedJson, handleDbError, handleRouteError, isMissingTableError, isUuid, loadStaff, noStoreJson, requireV2Admin, selectAllPages } from '@/lib/v2/server'
-import { samplePlannerPayload } from '@/lib/v2/sample-data'
+import { addDays, isRealYmd, kstDayStart, kstDayEnd, kstYmd, weekStartMonday } from '@/lib/v2/dates'
+import { cachedJson, handleDbError, handleRouteError, isUuid, loadStaff, noStoreJson, requireV2Admin, selectAllPages } from '@/lib/v2/server'
 import { TIMING_WINDOW_DAYS, computeTimingEvidence } from '@/lib/v2/timing'
 import type { PlannedSlot, PlannerPayload, TimingHint } from '@/lib/v2/types'
 
@@ -86,10 +85,7 @@ export async function GET(request: Request) {
     ])
 
     const { data: slotRows, error: slotError } = slotRes
-    if (slotError) {
-      if (isMissingTableError(slotError)) return NextResponse.json(samplePlannerPayload(weekStart))
-      return handleDbError(slotError, READ_ERROR)
-    }
+    if (slotError) return handleDbError(slotError, READ_ERROR)
 
     const planned: PlannerPayload['planned'] = {}
     const actual: PlannerPayload['actual'] = {}
@@ -130,14 +126,6 @@ export async function GET(request: Request) {
   }
 }
 
-
-// '2026-02-30' 같은 존재하지 않는 날짜를 걸러낸다.
-function isRealYmd(value: string) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
-  const d = new Date(`${value}T00:00:00Z`)
-  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value
-}
-
 const createSchema = z.object({
   staffUserId: z.string().uuid('담당자를 골라 주세요.'),
   plannedDate: z.string().refine(isRealYmd, '날짜가 올바르지 않아요.'),
@@ -153,8 +141,8 @@ const patchSchema = z.object({
 
 export async function POST(request: Request) {
   try {
-    const body = createSchema.parse(await request.json())
     const { supabaseAdmin } = await requireV2Admin(request)
+    const body = createSchema.parse(await request.json())
 
     const { data, error } = await supabaseAdmin
       .from(V2_TABLES.plannedSlots)
@@ -171,8 +159,8 @@ export async function POST(request: Request) {
 // 시간·메모 수정 (담당자와 날짜를 바꾸려면 지우고 새로 추가한다)
 export async function PATCH(request: Request) {
   try {
-    const body = patchSchema.parse(await request.json())
     const { supabaseAdmin } = await requireV2Admin(request)
+    const body = patchSchema.parse(await request.json())
 
     const patch: Record<string, unknown> = {}
     if (body.plannedHour !== undefined) patch.planned_hour = body.plannedHour
@@ -181,7 +169,7 @@ export async function PATCH(request: Request) {
 
     const { data, error } = await supabaseAdmin.from(V2_TABLES.plannedSlots).update(patch).eq('id', body.id).select(SLOT_SELECT).maybeSingle()
     if (error) return handleDbError(error, SAVE_ERROR, DUP_ERROR)
-    if (!data) return NextResponse.json({ error: '이미 지워진 계획이에요. 목록을 새로고침합니다.' }, { status: 404 })
+    if (!data) return NextResponse.json({ error: '이미 지워진 계획이에요. 목록을 새로 불러올게요.' }, { status: 404 })
     return noStoreJson({ ok: true, item: data })
   } catch (e) {
     return handleRouteError(e, SAVE_ERROR)

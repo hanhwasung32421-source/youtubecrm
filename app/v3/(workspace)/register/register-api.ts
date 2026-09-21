@@ -10,17 +10,6 @@ export type ContentType = 'longform' | 'shortform'
 export const NETWORK_MESSAGE = '인터넷 연결을 확인해 주세요.'
 export const RETRY_MESSAGE = '잠시 후 다시 시도해 주세요.'
 
-// 등록(POST /api/videos/create) 오류 → 한 줄 안내
-export function friendlyRegisterError(status: number, raw?: string): string {
-  const msg = raw || ''
-  if (status === 401) return '로그인이 만료됐어요. 다시 로그인해 주세요.'
-  if (/already|duplicate|unique|23505|이미 등록/i.test(msg)) return '이미 등록된 영상이에요.'
-  if (/유효한 유튜브|유효하지|invalid.*(url|string)|올바른 주소/i.test(msg)) return '유효하지 않은 주소예요.'
-  if (/찾을 수 없|not found|메타데이터/i.test(msg)) return '유튜브에서 영상을 찾지 못했어요. 주소를 확인해 주세요.'
-  // API 키 문제, 하루 한도 초과, 서버 오류 등 사용자가 고칠 수 없는 경우
-  return RETRY_MESSAGE
-}
-
 // message = 화면 한가운데 안내(무슨 일 + 할 일), short = 여러 개 등록 표의 좁은 칸용 한 줄
 export type RegisterResult = { ok: true; id: string | null } | { ok: false; message: string; short: string; failure: Failure }
 
@@ -82,14 +71,21 @@ export async function lookupVideo(videoId: string): Promise<VideoLookup | null> 
   }
 }
 
-// 수정·삭제 API(/api/v3/my-videos/[id])는 이미 한국어 안내를 돌려주므로 그대로 보여 주고,
+// 수정·삭제 요청(/api/v3/my-videos/[id])은 이미 한국어 안내를 돌려주므로 그대로 보여 주고,
 // 서버 내부 오류만 일반 문구로 바꾼다.
 // status: 401 = 로그인 만료, 0 = 인터넷 연결 문제
 export type CallResult<T> = { ok: true; data: T } | { ok: false; message: string; status: number }
 
-export async function callMyVideo<T = any>(id: string, method: 'GET' | 'PATCH' | 'DELETE', body?: unknown): Promise<CallResult<T>> {
+// undo = 방금 등록을 되돌리는 삭제. 서버가 "방금 새로 만든 영상"인지 한 번 더 확인해서, 전에 있던 영상은 지우지 않는다.
+export async function callMyVideo<T = any>(
+  id: string,
+  method: 'GET' | 'PATCH' | 'DELETE',
+  body?: unknown,
+  opts: { undo?: boolean } = {}
+): Promise<CallResult<T>> {
   try {
-    const { ok, status, data } = await authedFetchJson<T & { error?: string }>(`/api/v3/my-videos/${encodeURIComponent(id)}`, {
+    const query = opts.undo ? '?undo=1' : ''
+    const { ok, status, data } = await authedFetchJson<T & { error?: string }>(`/api/v3/my-videos/${encodeURIComponent(id)}${query}`, {
       method,
       headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body)

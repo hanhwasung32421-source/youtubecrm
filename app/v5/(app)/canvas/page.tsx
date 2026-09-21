@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { PageHeader, useV5Me } from '@/components/v5/app-shell'
 import { Badge, Segment, StatusTabs, tabPanelProps } from '@/components/v5/widget'
@@ -14,7 +14,7 @@ import { AnswerBanner, EmptyBlock, ErrorText, FormField, LoadError, RelTime, Sam
 import { BoardSkeleton } from '@/lib/v5/skeleton'
 import { experimentPrefill, playbookLink } from '@/lib/v5/suggest'
 import { useV5Query } from '@/lib/v5/swr'
-import { ConfirmDelete, FormDrawer, useEscape, usePref, useSingleFlight } from '@/lib/v5/ui'
+import { ConfirmDelete, FormDrawer, useEscape, useKstToday, usePref, useSingleFlight } from '@/lib/v5/ui'
 import { useUrlFilters } from '@/lib/v5/use-filters'
 import { VideoPicker, type PickedVideo } from '@/lib/v5/video-picker'
 import {
@@ -51,6 +51,8 @@ const COLUMN_EMPTY: Record<ExperimentStatus, string> = {
 const FILTER_KEY = 'v5.canvas.filters.v1'
 const DIMENSION_HINT = '여러 개 골라도 돼요. 예: 썸네일 + 제목'
 const MAX_TARGETS = 30
+// 한 칸에 처음 그리는 카드 수(그 이상은 "더 보기"). 성공·실패 카드가 몇 달 쌓여도 화면이 느려지지 않게 한다.
+const COLUMN_PAGE = 20
 // 주소로 들어오는 "새 실험 만들기" 미리 채우기 값(한 번 쓰고 주소에서 지운다)
 const ONE_SHOT_PARAMS = ['new', 'video', 'focus']
 
@@ -102,7 +104,8 @@ const effectLabel = (n: number | null) => (n === null ? '' : formatSignedPercent
 
 type CardMode = 'view' | 'edit' | 'record'
 
-function ExperimentCard({
+// memo: 카드가 수십 개여도 "바뀐 카드만" 다시 그린다(핸들러는 부모에서 고정된 함수를 넘긴다).
+const ExperimentCard = memo(function ExperimentCard({
   exp,
   today,
   canEdit,
@@ -115,8 +118,8 @@ function ExperimentCard({
   canEdit: boolean
   busy: boolean
   // 실패하면 사람이 읽을 오류 문장, 성공하면 null
-  onPatch: (body: Record<string, unknown>) => Promise<string | null>
-  onDelete: () => Promise<string | null>
+  onPatch: (exp: GrowthExperiment, body: Record<string, unknown>) => Promise<string | null>
+  onDelete: (id: string) => Promise<string | null>
 }) {
   const [open, setOpen] = useState(false)
   const [mode, setMode] = useState<CardMode>('view')
@@ -180,7 +183,7 @@ function ExperimentCard({
       setMode('view')
       return
     }
-    const message = await onPatch(body)
+    const message = await onPatch(exp, body)
     if (message) setError(message)
     else {
       setError('')
@@ -198,18 +201,18 @@ function ExperimentCard({
     const body: Record<string, unknown> = { status: recordStatus }
     if (parsed !== null || exp.effect_size !== null) body.effectSize = parsed
     if (nextDraft.trim() !== (exp.next_action || '')) body.nextAction = nextDraft.trim()
-    const message = await onPatch(body)
+    const message = await onPatch(exp, body)
     if (message) setError(message)
     // 성공하면 카드가 다른 칸으로 옮겨가므로 여기서 할 일이 없다.
   }
 
   const changeStatus = async (status: ExperimentStatus) => {
-    const message = await onPatch({ status })
+    const message = await onPatch(exp, { status })
     setError(message || '')
   }
 
   const remove = async () => {
-    const message = await onDelete()
+    const message = await onDelete(exp.id)
     if (message) setError(message)
   }
 
@@ -456,7 +459,7 @@ function ExperimentCard({
       ) : null}
     </div>
   )
-}
+})
 
 function CanvasView() {
   const me = useV5Me()
@@ -480,8 +483,12 @@ function CanvasView() {
   const [saving, setSaving] = useState(false)
   const [busyId, setBusyId] = useState<string | null>(null)
   const once = useSingleFlight()
-  const undo = useUndoSlot()
+  const { slot: undoSlot, show: showUndo, dismiss: dismissUndo } = useUndoSlot()
   const handledNewRef = useRef(false)
+  // 칸마다 지금까지 펼친 카드 수, 보류(보관) 칸을 펼쳤는지
+  const [columnLimit, setColumnLimit] = useState<Partial<Record<ExperimentStatus, number>>>({})
+  const [pausedOpen, setPausedOpen] = useState(false)
+  const [listLimit, setListLimit] = useState(50)
 
   // 저장 결과를 화면과 캐시에 함께 반영한다(다른 화면을 다녀와도 옛 값으로 돌아가지 않게).
   const setItems = useCallback((fn: (prev: GrowthExperiment[]) => GrowthExperiment[]) => updateData((d) => ({ ...d, items: fn(d.items || []) })), [updateData])
@@ -495,7 +502,8 @@ function CanvasView() {
   const activeAuthor = authors.some((a) => a.id === filters.author) ? filters.author : ''
   const authorFiltered = useMemo(() => (activeAuthor ? items.filter((it) => it.created_by === activeAuthor) : items), [items, activeAuthor])
 
-  const today = todayYmd()
+  // 자정(한국 시간)이 지나면 D+N 이 새 날짜로 바뀐다.
+  const today = useKstToday()
 
   const grouped = useMemo(() => {
     const map = new Map<ExperimentStatus, GrowthExperiment[]>()
@@ -505,6 +513,12 @@ function CanvasView() {
     map.get('running')?.sort((a, b) => compareRunning(a, b, today))
     return map
   }, [authorFiltered, today])
+
+  // 걸러 보는 조건이 바뀌면 목록은 처음(50개)부터 다시 보여 준다.
+  useEffect(() => {
+    setListLimit(50)
+    setColumnLimit({})
+  }, [statusFilter, activeAuthor])
 
   const shownStatuses = statusFilter === 'all' ? EXPERIMENT_STATUS_ORDER : [statusFilter]
   const listItems = useMemo(() => (statusFilter === 'all' ? authorFiltered : authorFiltered.filter((it) => it.status === statusFilter)), [authorFiltered, statusFilter])
@@ -598,61 +612,71 @@ function CanvasView() {
       }
     }, 'create')
 
-  // 상태를 옮긴 뒤 5초 동안 되돌릴 수 있게 한다. 되돌리기는 옮기기 전 값(상태·종료일·결과·다음 할 일)을 그대로 다시 저장한다.
-  const undoMove = async (prev: GrowthExperiment) => {
-    const res = await authedPatchJson<{ item: GrowthExperiment }>(`/api/v5/growth-experiments/${prev.id}`, {
-      status: prev.status,
-      endedOn: prev.ended_on,
-      effectSize: prev.effect_size,
-      nextAction: prev.next_action || ''
-    })
-    if (!res.ok) {
-      showErrorRef.current(errorText(res, '되돌리지 못했어요. 카드에서 직접 옮겨 주세요.'))
-      return
-    }
-    const restored = res.data.item
-    setItems((list) => list.map((it) => (it.id === prev.id ? restored : it)))
-  }
+  // 상태를 옮긴 뒤 5초 동안 되돌릴 수 있게 한다. 되돌리기는 "이번 이동이 바꾼 값"만 옮기기 전 값으로 되돌린다
+  // (그 사이에 고친 다른 내용은 건드리지 않는다). 상태와 종료일은 항상 함께 되돌린다.
+  const undoMove = useCallback(
+    async (prev: GrowthExperiment, changed: { effectSize: boolean; nextAction: boolean }) => {
+      const body: Record<string, unknown> = { status: prev.status, endedOn: prev.ended_on }
+      if (changed.effectSize) body.effectSize = prev.effect_size
+      if (changed.nextAction) body.nextAction = prev.next_action || ''
+      const res = await authedPatchJson<{ item: GrowthExperiment }>(`/api/v5/growth-experiments/${prev.id}`, body)
+      if (!res.ok) {
+        if (res.status === 404) setItems((list) => list.filter((it) => it.id !== prev.id)) // 그 사이 지워진 카드
+        showErrorRef.current(errorText(res, '되돌리지 못했어요. 카드에서 직접 옮겨 주세요.'))
+        return
+      }
+      const restored = res.data.item
+      setItems((list) => list.map((it) => (it.id === prev.id ? restored : it)))
+    },
+    [setItems]
+  )
 
   // 카드 하나당 한 번에 하나만(더블클릭/연타로 같은 저장이 두 번 나가지 않게). 이미 처리 중이면 조용히 무시한다.
-  const onPatch = async (exp: GrowthExperiment, body: Record<string, unknown>): Promise<string | null> => {
-    const id = exp.id
-    const result = await once(async () => {
-      setBusyId(id)
-      try {
-        const res = await authedPatchJson<{ item: GrowthExperiment }>(`/api/v5/growth-experiments/${id}`, body)
-        if (!res.ok) {
-          if (res.status === 404) setItems((prev) => prev.filter((it) => it.id !== id)) // 이미 지워진 카드
-          return errorText(res, '저장하지 못했어요. 잠시 뒤 다시 해 주세요.')
+  const onPatch = useCallback(
+    async (exp: GrowthExperiment, body: Record<string, unknown>): Promise<string | null> => {
+      const id = exp.id
+      const result = await once(async () => {
+        setBusyId(id)
+        try {
+          const res = await authedPatchJson<{ item: GrowthExperiment }>(`/api/v5/growth-experiments/${id}`, body)
+          if (!res.ok) {
+            if (res.status === 404) setItems((prev) => prev.filter((it) => it.id !== id)) // 이미 지워진 카드
+            return errorText(res, '저장하지 못했어요. 잠시 뒤 다시 해 주세요.')
+          }
+          const updated = res.data.item
+          setItems((prev) => prev.map((it) => (it.id === id ? updated : it)))
+          if (typeof body.status === 'string' && body.status !== exp.status) {
+            const label = EXPERIMENT_STATUS_LABEL[body.status as ExperimentStatus]
+            const changed = { effectSize: 'effectSize' in body, nextAction: 'nextAction' in body }
+            showUndo(`실험을 “${label}” 칸으로 옮겼어요.`, () => undoMove(exp, changed))
+          }
+          return null
+        } finally {
+          setBusyId(null)
         }
-        const updated = res.data.item
-        setItems((prev) => prev.map((it) => (it.id === id ? updated : it)))
-        if (typeof body.status === 'string' && body.status !== exp.status) {
-          const label = EXPERIMENT_STATUS_LABEL[body.status as ExperimentStatus]
-          undo.show(`실험을 “${label}” 칸으로 옮겼어요.`, () => undoMove(exp))
-        }
-        return null
-      } finally {
-        setBusyId(null)
-      }
-    }, id)
-    return result ?? null
-  }
+      }, id)
+      return result ?? null
+    },
+    [once, setItems, showUndo, undoMove]
+  )
 
-  const onDelete = async (id: string): Promise<string | null> => {
-    const result = await once(async () => {
-      setBusyId(id)
-      try {
-        const res = await authedDeleteJson(`/api/v5/growth-experiments/${id}`)
-        if (!res.ok) return errorText(res, '지우지 못했어요. 잠시 뒤 다시 해 주세요.')
-        setItems((prev) => prev.filter((it) => it.id !== id))
-        return null
-      } finally {
-        setBusyId(null)
-      }
-    }, id)
-    return result ?? null
-  }
+  const onDelete = useCallback(
+    async (id: string): Promise<string | null> => {
+      const result = await once(async () => {
+        setBusyId(id)
+        try {
+          const res = await authedDeleteJson(`/api/v5/growth-experiments/${id}`)
+          if (!res.ok) return errorText(res, '지우지 못했어요. 잠시 뒤 다시 해 주세요.')
+          setItems((prev) => prev.filter((it) => it.id !== id))
+          return null
+        } finally {
+          setBusyId(null)
+        }
+      }, id)
+      return result ?? null
+    },
+    [once, setItems]
+  )
 
   const ready = Boolean(q.data) && viewReady && filtersReady
   const showSkeleton = !ready && !q.error
@@ -781,29 +805,40 @@ function CanvasView() {
                   <div className={`v5p-board ${shownStatuses.length === 1 ? 'single' : ''}`}>
                     {shownStatuses.map((status) => {
                       const list = grouped.get(status) || []
+                      // 보류(보관) 칸은 "전체"로 볼 때 접어 두고 개수만 보여 준다(오래 쌓여도 화면이 길어지지 않게).
+                      const collapsed = status === 'paused' && statusFilter === 'all' && !pausedOpen && list.length > 0
+                      const limit = columnLimit[status] ?? COLUMN_PAGE
+                      const shown = collapsed ? [] : list.slice(0, limit)
                       return (
-                        <div className="v5p-col" key={status}>
+                        <div className={`v5p-col ${collapsed ? 'collapsed' : ''}`} key={status}>
                           <div className="v5p-col-head">
                             <div className="v5p-col-title">
                               {EXPERIMENT_STATUS_LABEL[status]}
-                              <span>{fmtNum(list.length)}</span>
+                              <span>{fmtNum(list.length)}개</span>
                             </div>
                             <div className="v5p-col-hint">{COLUMN_HINT[status]}</div>
                           </div>
                           {list.length === 0 ? <div className="v5p-col-empty">{COLUMN_EMPTY[status]}</div> : null}
+                          {collapsed ? (
+                            <button type="button" className="button xs secondary v5p-col-more" onClick={() => setPausedOpen(true)}>
+                              보류한 실험 {fmtNum(list.length)}개 펼치기
+                            </button>
+                          ) : null}
                           <div className="v5p-col-cards">
-                            {list.map((exp) => (
-                              <ExperimentCard
-                                key={exp.id}
-                                exp={exp}
-                                today={today}
-                                canEdit={canEditItem(exp)}
-                                busy={busyId === exp.id}
-                                onPatch={(body) => onPatch(exp, body)}
-                                onDelete={() => onDelete(exp.id)}
-                              />
+                            {shown.map((exp) => (
+                              <ExperimentCard key={exp.id} exp={exp} today={today} canEdit={canEditItem(exp)} busy={busyId === exp.id} onPatch={onPatch} onDelete={onDelete} />
                             ))}
                           </div>
+                          {!collapsed && list.length > limit ? (
+                            <button type="button" className="button xs secondary v5p-col-more" onClick={() => setColumnLimit((m) => ({ ...m, [status]: limit + COLUMN_PAGE }))}>
+                              더 보기 ({fmtNum(list.length - limit)}개 남음)
+                            </button>
+                          ) : null}
+                          {status === 'paused' && statusFilter === 'all' && pausedOpen && list.length > 0 ? (
+                            <button type="button" className="button xs ghost v5p-col-more" onClick={() => setPausedOpen(false)}>
+                              접기
+                            </button>
+                          ) : null}
                         </div>
                       )
                     })}
@@ -823,7 +858,7 @@ function CanvasView() {
                         </tr>
                       </thead>
                       <tbody>
-                        {listItems.map((exp) => {
+                        {listItems.slice(0, listLimit).map((exp) => {
                           const t = experimentTiming(exp, today)
                           return (
                             <tr key={exp.id}>
@@ -855,6 +890,13 @@ function CanvasView() {
                         })}
                       </tbody>
                     </table>
+                    {listItems.length > listLimit ? (
+                      <div className="v5p-list-note">
+                        <button type="button" className="button xs secondary" onClick={() => setListLimit((n) => n + 50)}>
+                          더 보기 ({fmtNum(listItems.length - listLimit)}개 남음)
+                        </button>
+                      </div>
+                    ) : null}
                     <div className="v5p-list-note small muted">고치거나 옮기려면 “보드”에서 카드를 눌러 주세요.</div>
                   </div>
                 )}
@@ -948,7 +990,7 @@ function CanvasView() {
         </FormDrawer>
       ) : null}
 
-      <UndoBar slot={undo.slot} onDismiss={undo.dismiss} />
+      <UndoBar slot={undoSlot} onDismiss={dismissUndo} />
       <Toast toast={toast} />
     </>
   )

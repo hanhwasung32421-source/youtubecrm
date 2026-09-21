@@ -7,10 +7,6 @@ export function isFormat(value: unknown): value is FormatValue {
   return value === 'longform' || value === 'shortform'
 }
 
-export function formatLabel(value: string | null | undefined): string {
-  return value === 'shortform' ? '숏폼' : value === 'longform' ? '롱폼' : ''
-}
-
 // 영상 등록 화면: 종목과 형식을 미리 채워서 연다.
 export function registerHref(opts: { stock?: string | null; format?: string | null } = {}): string {
   const q = new URLSearchParams()

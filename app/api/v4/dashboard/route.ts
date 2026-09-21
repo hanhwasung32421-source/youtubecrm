@@ -4,9 +4,8 @@ import { cachedJson } from '@/lib/v4/http'
 import { loadPeriodRows, loadUsersShared } from '@/lib/v4/period-rows'
 import { getSampleGoal } from '@/lib/v4/sample-data'
 import { dbError, loadVideos, requireV4User, splitByIso, v4ErrorResponse } from '@/lib/v4/server'
+import { DAILY_TARGET } from '@/lib/v4/staff-today'
 import { V4_TABLES, isMissingTableError } from '@/lib/v4/tables'
-
-const TARGET_PER_STAFF_PER_DAY = 12
 
 export async function GET(request: Request) {
   try {
@@ -21,7 +20,7 @@ export async function GET(request: Request) {
     // 90일 화면이면 약 12,000행이므로, 기본 1000행 제한에 걸려 합계가 줄어드는 일이 없어야 한다.
     const windowStartIso = new Date(range.prevStartIso) < new Date(monthStartIso) ? range.prevStartIso : monthStartIso
     const [windowRows, feedVideos, { map: userMap, staff }, syncRow, goalResult] = await Promise.all([
-      // 랭킹·종목 등 다른 분석 화면과 같은 기간 읽기를 15초 동안 함께 쓴다.
+      // 랭킹·종목 등 다른 분석 화면과 같은 기간 읽기를 잠깐(5초) 함께 쓴다.
       loadPeriodRows(supabaseAdmin, { startIso: windowStartIso, endIso: range.endIso, ownerId }),
       loadVideos(supabaseAdmin, { ownerId, limit: 20 }),
       loadUsersShared(supabaseAdmin),
@@ -101,14 +100,14 @@ export async function GET(request: Request) {
     const actualVideos = monthVideos.length
     const actualViews = monthVideos.reduce((sum, v) => sum + num(v.view_count), 0)
 
-    // 통계 새로고침(sync-stats) 직후 화면을 다시 불러오면 새 숫자가 바로 보여야 해서, 브라우저 저장은 5초만 한다.
+    // 통계 새로고침·목표 저장 직후 화면을 다시 불러오면 새 숫자가 바로 보여야 해서, 브라우저에는 저장하지 않는다.
     return cachedJson({
       scope: isAdmin ? 'admin' : 'staff',
       period: range.days,
       range: { start: range.startYmd, end: range.endYmd },
       previousRange: { start: range.prevStartYmd, end: range.prevEndYmd },
       staffCount,
-      targetPerDay: (isAdmin ? Math.max(staffCount, 1) : 1) * TARGET_PER_STAFF_PER_DAY,
+      targetPerDay: (isAdmin ? Math.max(staffCount, 1) : 1) * DAILY_TARGET,
       kpis,
       previousKpis,
       daily,
@@ -124,8 +123,8 @@ export async function GET(request: Request) {
         teamGoal: teamGoal ? { targetVideos: num(teamGoal.target_videos), targetViews: num(teamGoal.target_views) } : null,
         sample
       }
-    }, 'private, max-age=5')
+    })
   } catch (e) {
-    return v4ErrorResponse(e, '성장 대시보드 조회 실패')
+    return v4ErrorResponse(e, '성장 현황을 불러오지 못했어요')
   }
 }

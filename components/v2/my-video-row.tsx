@@ -76,11 +76,15 @@ export function MyVideoRow({ video, checklist, isNew, mode, onMode, checklistOpe
     stockRef.current?.select()
     let cancelled = false
     void (async () => {
-      const { ok, data } = await authedFetchJson<{ item?: { content_category: string | null } }>(`/api/v2/my-videos/${video.id}`)
-      if (cancelled || !ok || !data.item) return
-      const current = data.item.content_category || ''
-      setMemoOriginal(current)
-      setMemo((prev) => (prev === '' ? current : prev))
+      try {
+        const { ok, data } = await authedFetchJson<{ item?: { content_category: string | null } }>(`/api/v2/my-videos/${video.id}`)
+        if (cancelled || !ok || !data.item) return
+        const current = data.item.content_category || ''
+        setMemoOriginal(current)
+        setMemo((prev) => (prev === '' ? current : prev))
+      } catch {
+        // 메모를 못 읽어도 종목·형식 수정은 그대로 할 수 있다
+      }
     })()
     return () => {
       cancelled = true
@@ -191,7 +195,7 @@ export function MyVideoRow({ video, checklist, isNew, mode, onMode, checklistOpe
             aria-expanded={checklistOpen}
             onClick={onToggleChecklist}
           >
-            SEO 점검 {done}/4 {checklistOpen ? '▴' : '▾'}
+            검색 점검 {done}/4 {checklistOpen ? '▴' : '▾'}
           </button>
           <button ref={editBtnRef} type="button" className="v2-text-btn" aria-expanded={mode === 'edit'} disabled={busy} onClick={() => onMode(mode === 'edit' ? null : 'edit')}>
             수정

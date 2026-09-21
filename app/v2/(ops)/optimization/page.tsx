@@ -6,7 +6,7 @@ import { ContentTypeTag } from '@/components/v2/tags'
 import { Toast, useToast } from '@/components/toast'
 import { useV2Me } from '@/components/v2/session-context'
 import { ProgressBar, StudioLink } from '@/lib/v2/actions-ui'
-import { Answer, EmptyGuide, FieldError, HowTo, InlineConfirm, Kpi, KpiRow, LoadError, MoreButton, RefreshNote, SampleNote, SkeletonList, SkeletonSummary, Stamp } from '@/lib/v2/analysis-ui'
+import { Answer, EmptyGuide, FieldError, HowTo, InlineConfirm, Kpi, KpiRow, LoadError, MoreButton, RefreshNote, SkeletonList, SkeletonSummary, Stamp } from '@/lib/v2/analysis-ui'
 import { v2Delete, v2Patch, v2Post } from '@/lib/v2/client'
 import type { CsvValue } from '@/lib/v2/csv'
 import { formatKstDate } from '@/lib/v2/dates'
@@ -18,7 +18,6 @@ import { fixesOf, nextActionOf, progressOf, remainingFixes, sortRows, studioEdit
 import { ShareBar } from '@/lib/v2/share-ui'
 import { useV2Query } from '@/lib/v2/swr'
 import { useUrlFilters } from '@/lib/v2/use-url-filters'
-import { V2_MISSING_TABLE_MESSAGE } from '@/lib/v2/tables'
 import {
   CONTENT_TYPE_LABELS,
   SEO_CHECKLIST_FIELDS,
@@ -130,9 +129,19 @@ function OptimizationBody() {
   const todo = useMemo(() => scoped.filter((row) => workStateOf(row) === 'todo'), [scoped])
   const finished = useMemo(() => scoped.filter((row) => workStateOf(row) === 'done'), [scoped])
   const progress = useMemo(() => progressOf(scoped), [scoped])
-  const urgent = todo.filter((row) => remainingFixes(row).length >= 3).length
-  const noStock = scoped.filter((row) => remainingFixes(row).some((f) => f.key === 'no-stock')).length
-  const noReview = scoped.filter((row) => remainingFixes(row).some((f) => f.key === 'thumb-missing')).length
+  // 카드 위 숫자 세 개. 메모를 한 글자 칠 때마다 다시 세지 않도록 묶어서 기억해 둔다.
+  const { urgent, noStock, noReview } = useMemo(() => {
+    let urgentCount = 0
+    let noStockCount = 0
+    let noReviewCount = 0
+    for (const row of scoped) {
+      const left = remainingFixes(row)
+      if (workStateOf(row) === 'todo' && left.length >= 3) urgentCount += 1
+      if (left.some((f) => f.key === 'no-stock')) noStockCount += 1
+      if (left.some((f) => f.key === 'thumb-missing')) noReviewCount += 1
+    }
+    return { urgent: urgentCount, noStock: noStockCount, noReview: noReviewCount }
+  }, [scoped])
   const list = useMemo(() => sortRows(view === 'todo' ? todo : view === 'done' ? finished : scoped, sort), [view, todo, finished, scoped, sort])
   const shown = list.slice(0, visible)
   const top = useMemo(() => sortRows(todo, 'impact')[0], [todo])
@@ -173,10 +182,6 @@ function OptimizationBody() {
 
   const submitReview = async (row: OptimizationRow) => {
     if (saving || savingRef.current) return
-    if (payload.sample) {
-      setFormError(V2_MISSING_TABLE_MESSAGE)
-      return
-    }
     savingRef.current = true
     setSaving(true)
     setFormError('')
@@ -218,10 +223,6 @@ function OptimizationBody() {
   const toggleCheck = async (row: OptimizationRow, field: SeoChecklistField) => {
     const key = `${row.video.id}:${field}`
     if (pendingChecks.has(key) || pendingRef.current.has(key)) return
-    if (payload.sample) {
-      showError(V2_MISSING_TABLE_MESSAGE)
-      return
-    }
     pendingRef.current.add(key)
     const next = !row.checklist[field]
     const before = workStateOf(row)
@@ -286,7 +287,6 @@ function OptimizationBody() {
     <>
       <PageHeader title="영상 점검" subtitle="제목·설명·썸네일이 검색에 잘 걸리는지 확인하고, 영상마다 지금 가장 먼저 할 일을 알려 드려요." />
       <Toast toast={toast} />
-      <SampleNote show={payload.sample} />
       {(loaded && loadError) || query.expired ? <LoadError message={loadError} expired={query.expired} onRetry={query.reload} /> : null}
       <RefreshNote show={query.refreshing} />
 
@@ -382,7 +382,7 @@ function OptimizationBody() {
             <ActiveFilters chips={chips} onReset={resetAll} />
             <ShareBar getCsv={csvTable} csvDisabledReason={list.length === 0 ? '저장할 영상이 없어요' : undefined} getLink={shareHref} />
 
-            {payload.capped ? <p className="v2a-note">가장 최근에 등록한 영상 위주로 보여드려요. 더 오래된 영상은 이 목록에 나오지 않을 수 있어요.</p> : null}
+            {payload.capped ? <p className="v2a-note">가장 최근에 등록한 영상 위주로 보여 드려요. 더 오래된 영상은 이 목록에 나오지 않을 수 있어요.</p> : null}
 
             <div ref={listRef} tabIndex={-1} id="opt-list" style={{ outline: 'none' }} aria-label={`${VIEW_LABELS[view]} ${list.length}개`}>
               {list.length === 0 ? (

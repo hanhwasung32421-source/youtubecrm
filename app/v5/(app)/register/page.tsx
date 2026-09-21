@@ -1,13 +1,14 @@
 'use client'
 
+import dynamic from 'next/dynamic'
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { PageHeader, useV5Me } from '@/components/v5/app-shell'
-import { BulkRegister } from '@/components/v5/bulk-register'
 import { MyVideosSkeleton, MyVideosTable, type MineVideo } from '@/components/v5/my-videos-table'
 import { toBulkText } from '@/components/v5/paste-detect'
 import { FeedbackSlot, KeyboardHint, TodayGoal, TodayStocks, type Feedback } from '@/components/v5/register-parts'
 import {
   DRAFT_MAX_AGE_MS,
+  UNDO_DELETE_MAX_AGE_SEC,
   UNDO_IDLE,
   UNDO_WINDOW_MS,
   decideDuplicate,
@@ -24,12 +25,15 @@ import {
   type ClipboardOutcome,
   type DupState,
   type StockCount,
-  type UndoEntry
+  type UndoEntry,
+  type UndoState
 } from '@/components/v5/register-logic'
 import { SegmentedChoice } from '@/components/v5/segmented'
 import {
   CONTENT_TYPE_LABEL,
   DAILY_GOAL,
+  TIMEOUT_MS,
+  authedFetchJsonTimeout,
   classifyError,
   describeUrlProblem,
   extractVideoId,
@@ -39,8 +43,19 @@ import {
   type ContentType,
   type RegisterErrorInfo
 } from '@/components/v5/register-utils'
-import { Badge, EmptyState } from '@/components/v5/widget'
+import { Badge, EmptyState, Skeleton, SkeletonRegion } from '@/components/v5/widget'
 import { authedFetchJson, authedPostJson } from '@/lib/session/authed-fetch'
+
+// 여러 개 붙여넣기 화면은 쓰는 사람만 내려받는다(한 개씩 등록이 기본이라 대부분은 필요 없다).
+const BulkRegister = dynamic(() => import('@/components/v5/bulk-register').then((m) => m.BulkRegister), {
+  ssr: false,
+  loading: () => (
+    <SkeletonRegion label="여러 개 붙여넣기 화면을 불러오는 중" className="v5-bulk-skel">
+      <Skeleton height={44} radius={10} />
+      <Skeleton height={120} radius={10} />
+    </SkeletonRegion>
+  )
+})
 
 type PlaybookOption = { id: string; title: string; usage_count: number }
 
@@ -129,9 +144,16 @@ export default function RegisterPage() {
   const savingRef = useRef(false) // 화면이 다시 그려지기 전에 Enter 를 두 번 눌러도 한 번만 보낸다.
   const pageRef = useRef(1)
   const refreshTimer = useRef<number | null>(null)
+  const highlightTimers = useRef(new Set<number>())
   const manualTypeRef = useRef<ContentType>('longform') // 사용자가 직접 고른 형식(주소가 숏폼이면 잠깐 바뀌었다가 돌아온다)
   const dupCache = useRef(new Map<string, { state: DupState; at: number }>())
   const feedbackSeq = useRef(0)
+  const undoRef = useRef<UndoState>(UNDO_IDLE) // 콜백 안에서 "지금" 되돌리기 상태를 읽기 위한 사본
+  const undoBusyRef = useRef(false) // 되돌리기 요청을 두 번 보내지 않는다
+  const urlValueRef = useRef('') // 주소칸의 지금 내용(요청을 기다리는 사이 바뀔 수 있다)
+  const recentRef = useRef<string[]>([])
+  const loadSeq = useRef(0) // 목록 요청이 뒤섞여 돌아와도 가장 최근 것만 화면에 반영한다
+  const todaySeq = useRef(0)
 
   const isAdmin = Boolean(me?.isAdmin)
 
@@ -150,7 +172,11 @@ export default function RegisterPage() {
     }
     try {
       const parsed = JSON.parse(readStorage(LS_STOCKS) || '[]')
-      if (Array.isArray(parsed)) setRecentStocks(parsed.filter((s) => typeof s === 'string').slice(0, MAX_RECENT_STOCKS))
+      if (Array.isArray(parsed)) {
+        const saved = Array.from(new Set(parsed.filter((s): s is string => typeof s === 'string' && s.trim() !== ''))).slice(0, MAX_RECENT_STOCKS)
+        recentRef.current = saved
+        setRecentStocks(saved)
+      }
     } catch {}
     setAutoSubmit(readStorage(LS_AUTO) === '1')
     setCanReadClipboard(typeof navigator !== 'undefined' && typeof navigator.clipboard?.readText === 'function')
@@ -172,12 +198,22 @@ export default function RegisterPage() {
     pageRef.current = page
   }, [page])
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    undoRef.current = undo
+  }, [undo])
+
+  useEffect(() => {
+    urlValueRef.current = youtubeUrl
+  }, [youtubeUrl])
+
+  useEffect(() => {
+    const timers = highlightTimers.current
+    return () => {
       if (refreshTimer.current) window.clearTimeout(refreshTimer.current)
-    },
-    []
-  )
+      timers.forEach((t) => window.clearTimeout(t))
+      timers.clear()
+    }
+  }, [])
 
   // "/" 키: 다른 칸에 글을 쓰고 있지 않을 때 어디서든 주소칸으로 돌아온다.
   useEffect(() => {
@@ -197,8 +233,11 @@ export default function RegisterPage() {
 
   const loadMine = useCallback(async (targetPage: number) => {
     type Res = { items: MineVideo[]; pagination: { page: number; pageSize: number; totalCount: number } }
+    loadSeq.current += 1
+    const seq = loadSeq.current
     try {
-      const res = await authedFetchJson<Res>(`/api/v5/my-videos?page=${targetPage}`)
+      const res = await authedFetchJsonTimeout<Res>(`/api/v5/my-videos?page=${targetPage}`, {}, TIMEOUT_MS.list)
+      if (seq !== loadSeq.current) return null // 더 최근 요청이 있으면 이 답은 버린다
       if (!res.ok) {
         setListError(res.status === 401 ? 'auth' : 'other')
         setLoadedOnce(true)
@@ -211,6 +250,7 @@ export default function RegisterPage() {
       setLoadedOnce(true)
       return rows
     } catch {
+      if (seq !== loadSeq.current) return null
       setListError('other')
       setLoadedOnce(true)
       return null
@@ -219,9 +259,12 @@ export default function RegisterPage() {
 
   // "오늘 N번째"와 진행 막대의 기준 숫자: 서버가 한국 시간 기준으로 센 값.
   const refreshToday = useCallback(async (): Promise<number | null> => {
+    todaySeq.current += 1
+    const seq = todaySeq.current
     try {
-      const res = await authedFetchJson<{ count: number; teamCount?: number; stocks?: unknown }>('/api/v5/my-today')
+      const res = await authedFetchJsonTimeout<{ count: number; teamCount?: number; stocks?: unknown }>('/api/v5/my-today', {}, TIMEOUT_MS.list)
       if (!res.ok) return null
+      if (seq !== todaySeq.current) return res.data.count || 0 // 더 최근에 읽은 값이 있으면 화면은 그대로 둔다
       setTodayCount(res.data.count || 0)
       setTeamToday(typeof res.data.teamCount === 'number' ? res.data.teamCount : null)
       setTodayStocks(parseStockCounts(res.data.stocks))
@@ -240,22 +283,32 @@ export default function RegisterPage() {
   }, [refreshToday])
 
   useEffect(() => {
+    let cancelled = false
     const run = async () => {
-      const res = await authedFetchJson<{ items: PlaybookOption[] }>('/api/v5/playbook')
-      if (res.ok) setPlaybookOptions((res.data.items || []).slice(0, 20))
+      try {
+        const res = await authedFetchJson<{ items: PlaybookOption[] }>('/api/v5/playbook')
+        if (!cancelled && res.ok) setPlaybookOptions((res.data.items || []).slice(0, 20))
+      } catch {
+        // 성공 공식 목록은 없어도 등록에는 지장이 없다.
+      }
     }
     void run()
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   const highlight = useCallback((id: string) => {
     setHighlightIds((prev) => new Set(prev).add(id))
-    window.setTimeout(() => {
+    const timer = window.setTimeout(() => {
+      highlightTimers.current.delete(timer)
       setHighlightIds((prev) => {
         const next = new Set(prev)
         next.delete(id)
         return next
       })
     }, 3000)
+    highlightTimers.current.add(timer)
   }, [])
 
   // 목록 맨 위(1쪽)와 오늘 숫자를 새로 읽는다. 여러 개 등록 중에는 몰아서 한 번만.
@@ -293,11 +346,14 @@ export default function RegisterPage() {
   const stockProblem = touched && !stockName.trim() ? '종목명을 적어 주세요.' : ''
 
   // ---- 이미 등록한 영상인지 미리 확인 ----
-  const lookupDup = useCallback(async (id: string): Promise<DupState> => {
+  // fresh=true: 저장해 둔 답을 쓰지 않고 지금 서버에 다시 묻는다. "새 영상"이라고 믿고 등록·되돌리기를 하기 직전에는
+  // 반드시 이렇게 한다(그 사이 다른 팀원이 올렸거나 여러 개 붙여넣기로 올렸을 수 있다).
+  const lookupDup = useCallback(async (id: string, fresh = false): Promise<DupState> => {
     const cached = dupCache.current.get(id)
-    if (cached && Date.now() - cached.at < DUP_CACHE_MS) return cached.state
+    if (!fresh && cached && Date.now() - cached.at < DUP_CACHE_MS) return cached.state
+    if (fresh) dupCache.current.delete(id)
     try {
-      const res = await authedFetchJson<unknown>(`/api/v5/my-videos?videoId=${encodeURIComponent(id)}`)
+      const res = await authedFetchJsonTimeout<unknown>(`/api/v5/my-videos?videoId=${encodeURIComponent(id)}`, {}, TIMEOUT_MS.lookup)
       if (!res.ok) return { status: 'unknown', videoId: id }
       const parsed = parseDupResponse(res.data)
       if (!parsed.ok) return { status: 'unknown', videoId: id }
@@ -345,7 +401,8 @@ export default function RegisterPage() {
   const rememberStocks = (stocks: string[]) => {
     const fresh = Array.from(new Set(stocks.map((s) => s.trim()).filter(Boolean))).reverse()
     if (fresh.length === 0) return
-    const next = [...fresh, ...recentStocks.filter((s) => !fresh.includes(s))].slice(0, MAX_RECENT_STOCKS)
+    const next = [...fresh, ...recentRef.current.filter((s) => !fresh.includes(s))].slice(0, MAX_RECENT_STOCKS)
+    recentRef.current = next
     setRecentStocks(next)
     writeStorage(LS_STOCKS, JSON.stringify(next))
   }
@@ -368,6 +425,7 @@ export default function RegisterPage() {
     setBulkSeed({ key: Date.now(), text: converted.text, dropped: converted.droppedLines })
     setPasteNote(null)
     setYoutubeUrl('')
+    dispatchUndo({ type: 'dismiss' })
     setMode('bulk')
   }
 
@@ -437,7 +495,7 @@ export default function RegisterPage() {
     savingRef.current = true
     setSaving(true)
     try {
-      const known = await lookupDup(id)
+      const known = await lookupDup(id, true)
       setDup(known)
 
       if (opts.auto && known.status !== 'none') {
@@ -460,11 +518,18 @@ export default function RegisterPage() {
       }
 
       if (action === 'update-stock' && found) {
-        const res = await authedFetchJson<{ ok?: boolean; error?: string }>(`/api/v5/my-videos/${found.id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ stock_name: stock })
-        })
+        type PatchRes = { ok?: boolean; error?: string }
+        let res: Awaited<ReturnType<typeof authedFetchJson<PatchRes>>>
+        try {
+          res = await authedFetchJsonTimeout<PatchRes>(
+            `/api/v5/my-videos/${found.id}`,
+            { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stock_name: stock }) },
+            TIMEOUT_MS.save
+          )
+        } catch (e) {
+          failWith(classifyError(e), url, stock, type)
+          return
+        }
         if (!res.ok) {
           failWith(classifyError(res.data?.error || '', res.status), url, stock, type)
           return
@@ -488,7 +553,7 @@ export default function RegisterPage() {
           id: found.id,
           stock,
           headline: `✓ 종목을 ‘${stock}’로 바꿨어요 (이전: ${found.stock})`,
-          detail: '영상 정보는 그대로 두고 종목만 고쳤습니다.'
+          detail: '영상 정보는 그대로 두고 종목만 고쳤어요.'
         })
         resetForNext()
         afterChange(id, found.id)
@@ -536,26 +601,38 @@ export default function RegisterPage() {
 
   // ---- 되돌리기 ----
   const runUndo = async () => {
-    if (undo.phase !== 'offer' && undo.phase !== 'failed') return
-    const entry = undo.entry
+    if (undoBusyRef.current) return // 빠르게 두 번 눌러도 한 번만 보낸다
+    const current = undoRef.current
+    if (current.phase !== 'offer' && current.phase !== 'failed') return
+    const entry = current.entry
     if (Date.now() >= entry.expiresAt) {
       dispatchUndo({ type: 'tick', now: Date.now() })
       return
     }
+    undoBusyRef.current = true
     dispatchUndo({ type: 'begin', now: Date.now() })
     try {
       const res =
         entry.kind === 'delete'
-          ? await authedFetchJson<{ ok?: boolean; error?: string }>(`/api/v5/my-videos/${entry.id}`, { method: 'DELETE' })
-          : await authedFetchJson<{ ok?: boolean; error?: string }>(`/api/v5/my-videos/${entry.id}`, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                stock_name: entry.prev?.stock ?? entry.stock,
-                content_type: entry.prev?.type ?? entry.type,
-                content_category: entry.prev?.category ?? null
-              })
-            })
+          ? // 방금 새로 만든 영상만 지운다: 서버가 "만든 지 UNDO_DELETE_MAX_AGE_SEC 초 안"인지 한 번 더 확인한다.
+            await authedFetchJsonTimeout<{ ok?: boolean; error?: string }>(
+              `/api/v5/my-videos/${entry.id}?createdWithinSec=${UNDO_DELETE_MAX_AGE_SEC}`,
+              { method: 'DELETE' },
+              TIMEOUT_MS.undo
+            )
+          : await authedFetchJsonTimeout<{ ok?: boolean; error?: string }>(
+              `/api/v5/my-videos/${entry.id}`,
+              {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  stock_name: entry.prev?.stock ?? entry.stock,
+                  content_type: entry.prev?.type ?? entry.type,
+                  content_category: entry.prev?.category ?? null
+                })
+              },
+              TIMEOUT_MS.undo
+            )
       if (!res.ok && !(entry.kind === 'delete' && res.status === 404)) {
         const info = classifyError(res.data?.error || '', res.status)
         dispatchUndo({ type: 'fail', message: `되돌리지 못했어요. ${info.message}` })
@@ -564,6 +641,8 @@ export default function RegisterPage() {
     } catch (e) {
       dispatchUndo({ type: 'fail', message: `되돌리지 못했어요. ${classifyError(e).message}` })
       return
+    } finally {
+      undoBusyRef.current = false
     }
     dispatchUndo({ type: 'done' })
 
@@ -572,7 +651,8 @@ export default function RegisterPage() {
       setItems((prev) => prev.filter((v) => v.id !== entry.id))
       setTotalCount((n) => Math.max(n - 1, 0))
       setTodayCount((n) => Math.max(n - 1, 0))
-      if (!youtubeUrl.trim()) {
+      // 기다리는 사이 다음 영상 주소를 이미 붙여 넣었다면 그 내용은 건드리지 않는다.
+      if (!urlValueRef.current.trim()) {
         setYoutubeUrl(entry.url)
         setStockName(entry.stock)
         setFeedback({ kind: 'info', key: nextKey(), message: `되돌렸어요. ‘${entry.stock}’ 영상을 목록에서 뺐고, 주소와 종목은 입력칸에 다시 채워 뒀어요.` })
@@ -590,11 +670,11 @@ export default function RegisterPage() {
   // ---- 방금 등록한 영상의 종목 고치기(결과 자리에서) ----
   const quickFixStock = async (id: string, next: string): Promise<string | null> => {
     try {
-      const res = await authedFetchJson<{ ok?: boolean; error?: string }>(`/api/v5/my-videos/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stock_name: next })
-      })
+      const res = await authedFetchJsonTimeout<{ ok?: boolean; error?: string }>(
+        `/api/v5/my-videos/${id}`,
+        { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stock_name: next }) },
+        TIMEOUT_MS.save
+      )
       if (!res.ok) return classifyError(res.data?.error || '', res.status).message
     } catch (e) {
       return classifyError(e).message
@@ -675,13 +755,49 @@ export default function RegisterPage() {
     }
   }
 
+  // 표는 memo 로 감싸 두었으므로(글자를 칠 때마다 20줄을 다시 그리지 않게) 넘기는 함수는 항상 같은 것이어야 한다.
+  const onRowUpdated = useCallback(
+    (id: string, patch: Partial<MineVideo>) => {
+      setItems((prev) => prev.map((v) => (v.id === id ? { ...v, ...patch } : v)))
+      highlight(id)
+      void refreshToday()
+    },
+    [highlight, refreshToday]
+  )
+
+  const onRowDeleted = useCallback(
+    (id: string) => {
+      setItems((prev) => prev.filter((v) => v.id !== id))
+      setTotalCount((n) => Math.max(n - 1, 0))
+      const u = undoRef.current
+      if (u.phase !== 'idle' && u.entry.id === id) dispatchUndo({ type: 'dismiss' })
+      void (async () => {
+        const rows = await loadMine(pageRef.current)
+        if (rows && rows.length === 0 && pageRef.current > 1) setPage(pageRef.current - 1)
+        void refreshToday()
+      })()
+    },
+    [loadMine, refreshToday]
+  )
+
+  // 여러 개 등록으로 이미 올라간 영상이 "방금 등록 되돌리기" 대상이었다면 그 제안은 접는다(같은 영상을 다시 올린 경우 지우지 않게).
+  const onBulkRegistered = useCallback(
+    (id: string) => {
+      const u = undoRef.current
+      if (u.phase !== 'idle' && u.entry.id === id) dispatchUndo({ type: 'dismiss' })
+      highlight(id)
+      scheduleRefresh()
+    },
+    [highlight, scheduleRefresh]
+  )
+
   const totalPages = Math.max(Math.ceil(totalCount / 20), 1)
 
   return (
     <>
       <PageHeader
         title="영상 등록"
-        subtitle="유튜브 주소를 붙여 넣고 종목을 적은 뒤 Enter. 제목·조회수·좋아요·댓글은 자동으로 가져옵니다."
+        subtitle="유튜브 주소를 붙여 넣고 종목을 적은 뒤 Enter. 제목·조회수·좋아요·댓글은 자동으로 가져와요."
         actions={
           isAdmin ? (
             <Badge tone="indigo">
@@ -703,6 +819,7 @@ export default function RegisterPage() {
             <button type="button" className={mode === 'bulk' ? 'active' : ''} aria-pressed={mode === 'bulk'} disabled={bulkBusy || saving}
               onClick={() => {
                 setBulkSeed(null)
+                dispatchUndo({ type: 'dismiss' }) // 여러 개 등록으로 넘어가면 "방금 등록 되돌리기"는 접는다
                 setMode('bulk')
               }}
             >
@@ -715,7 +832,7 @@ export default function RegisterPage() {
           <>
             {bulkSeed && bulkSeed.dropped > 0 ? (
               <div className="v5-hint" role="status">
-                주소가 없는 {bulkSeed.dropped}줄(제목 등)은 뺐습니다. 제목은 등록할 때 자동으로 가져옵니다.
+                주소가 없는 {bulkSeed.dropped}줄(제목 등)은 뺐어요. 제목은 등록할 때 자동으로 가져와요.
               </div>
             ) : null}
           <BulkRegister
@@ -725,10 +842,7 @@ export default function RegisterPage() {
             registeredIds={registeredIds}
             onBusyChange={setBulkBusy}
             onStocksUsed={rememberStocks}
-            onRegistered={(id) => {
-              highlight(id)
-              scheduleRefresh()
-            }}
+            onRegistered={onBulkRegistered}
           />
           </>
         ) : (
@@ -776,7 +890,7 @@ export default function RegisterPage() {
                     if (youtubeUrl && youtubeUrl !== cleanUrl) setYoutubeUrl(cleanUrl)
                   }}
                   onKeyDown={(e) => {
-                    if (e.key === 'Escape' && (youtubeUrl || pasteNote || clipHint)) {
+                    if (e.key === 'Escape' && !e.nativeEvent.isComposing && (youtubeUrl || pasteNote || clipHint)) {
                       // Esc: 잘못 붙인 주소를 한 번에 비운다.
                       e.preventDefault()
                       setYoutubeUrl('')
@@ -817,7 +931,7 @@ export default function RegisterPage() {
                     ) : null}
                   </>
                 ) : autoTypeNote ? (
-                  '숏폼 주소라서 형식을 숏폼으로 맞췄습니다.'
+                  '숏폼 주소라서 형식을 숏폼으로 맞췄어요.'
                 ) : (
                   ''
                 )}
@@ -837,10 +951,10 @@ export default function RegisterPage() {
                   <div className="v5-paste-note">
                     <span className="v5-paste-note-text">
                       {pasteNote.kind === 'multi'
-                        ? `영상 ${pasteNote.count}개를 한꺼번에 붙여 넣으셨네요. 여러 개 붙여넣기로 바꾸면 한 번에 등록할 수 있습니다.`
+                        ? `영상 ${pasteNote.count}개를 한꺼번에 붙여 넣으셨네요. 여러 개 붙여넣기로 바꾸면 한 번에 등록할 수 있어요.`
                         : pasteNote.multiLine
-                          ? '주소 말고 다른 줄도 함께 붙어 있어서 주소만 넣었습니다. 제목은 자동으로 가져옵니다.'
-                          : '주소 옆에 다른 글자가 붙어 있어서 주소만 넣었습니다.'}
+                          ? '주소 말고 다른 줄도 함께 붙어 있어서 주소만 넣었어요. 제목은 자동으로 가져와요.'
+                          : '주소 옆에 다른 글자가 붙어 있어서 주소만 넣었어요.'}
                     </span>
                     <span className="v5-paste-note-actions">
                       {pasteNote.kind === 'extra' && pasteNote.leftover && !stockName.trim() ? (
@@ -1047,7 +1161,7 @@ export default function RegisterPage() {
           </EmptyState>
         ) : items.length === 0 ? (
           <EmptyState
-            title="아직 등록한 영상이 없습니다"
+            title="아직 등록한 영상이 없어요"
             action={
               <button
                 className="button sm"
@@ -1061,30 +1175,17 @@ export default function RegisterPage() {
               </button>
             }
           >
-            위 칸에 유튜브 주소를 붙여 넣고 종목을 적은 뒤 Enter를 누르세요.
+            위 칸에 유튜브 주소를 붙여 넣고 종목을 적은 뒤 Enter를 눌러요.
             <br />
-            등록한 영상은 여기에 쌓이고, 조회수 같은 숫자는 자동으로 채워집니다.
+            등록한 영상은 여기에 쌓이고, 조회수 같은 숫자는 자동으로 채워져요.
           </EmptyState>
         ) : (
           <MyVideosTable
             items={items}
             isAdmin={isAdmin}
             highlightIds={highlightIds}
-            onUpdated={(id, patch) => {
-              setItems((prev) => prev.map((v) => (v.id === id ? { ...v, ...patch } : v)))
-              highlight(id)
-              void refreshToday()
-            }}
-            onDeleted={(id) => {
-              setItems((prev) => prev.filter((v) => v.id !== id))
-              setTotalCount((n) => Math.max(n - 1, 0))
-              if (undo.phase !== 'idle' && undo.entry.id === id) dispatchUndo({ type: 'dismiss' })
-              void (async () => {
-                const rows = await loadMine(pageRef.current)
-                if (rows && rows.length === 0 && pageRef.current > 1) setPage(pageRef.current - 1)
-                void refreshToday()
-              })()
-            }}
+            onUpdated={onRowUpdated}
+            onDeleted={onRowDeleted}
           />
         )}
       </div>

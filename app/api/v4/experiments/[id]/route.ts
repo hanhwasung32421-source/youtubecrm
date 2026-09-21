@@ -83,7 +83,7 @@ export async function PATCH(request: Request, { params }: Params) {
     const [item] = await mapExperiments(ctx, [data as ExperimentRow])
     return noStoreJson({ item })
   } catch (e) {
-    return v4ErrorResponse(e, '실험 수정 실패')
+    return v4ErrorResponse(e, '실험을 수정하지 못했어요')
   }
 }
 
@@ -104,6 +104,6 @@ export async function DELETE(request: Request, { params }: Params) {
     if (error) throw dbError(error)
     return noStoreJson({ ok: true })
   } catch (e) {
-    return v4ErrorResponse(e, '실험 삭제 실패')
+    return v4ErrorResponse(e, '실험을 삭제하지 못했어요')
   }
 }

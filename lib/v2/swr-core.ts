@@ -44,14 +44,6 @@ export function invalidate(match?: string) {
   for (const key of [...cache.keys()]) if (!match || key.includes(match)) cache.delete(key)
 }
 
-export function cacheSize() {
-  return cache.size
-}
-
-export function inflightCount() {
-  return inflight.size
-}
-
 // 같은 키를 이미 받는 중이면 그 요청에 합류한다. 모든 구독자가 떠나면 요청을 취소한다.
 export function subscribe(key: string, bypass: boolean, runner: Runner): { promise: Promise<Outcome>; cancel: () => void } {
   let shared = inflight.get(key)

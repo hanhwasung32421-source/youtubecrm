@@ -2,6 +2,7 @@
 
 import '../analysis.css'
 import Link from 'next/link'
+import dynamic from 'next/dynamic'
 import { Suspense, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { PageHeader } from '@/components/v3/app-shell'
 import { Toast, useToast } from '@/components/toast'
@@ -14,15 +15,14 @@ import { useDebouncedField, useUrlFilters } from '@/lib/v3/use-filters'
 import { SERIES_FILTERS, chipLabel, defaultFilters, optionsFor } from '@/lib/v3/filters'
 import { formatCompactNumber, formatNumber, formatPct } from '@/lib/v3/format'
 import { pctChange } from '@/lib/v3/engagement'
-import { SAMPLE_STOCK_NAMES } from '@/lib/v3/sample-data'
 import { lifecycleHref, viralHref } from '@/lib/v3/links'
 import { matchesQuery, sortSeriesRows } from '@/lib/v3/sorting'
-import { applyOrder, decodeOrder, findAddable, findDuplicateName, membersMatching, moveItem, orderKey, withMember, withRenamed, withoutMember, withoutSeries, restoreSeries } from '@/lib/v3/series-logic'
-import { seriesCsv } from '@/lib/v3/table-rows'
+import { findAddable, findDuplicateName, membersMatching, moveItem, pickWinner, restoreSeries, withMember, withRenamed, withReordered, withoutMember, withoutSeries } from '@/lib/v3/series-logic'
 import {
   AnswerCard,
   AnswerSkeleton,
   CardsSkeleton,
+  ChartSkeleton,
   EmptyBlock,
   ErrorBlock,
   HowTo,
@@ -37,7 +37,10 @@ import {
   type Tone
 } from '../analysis-parts'
 import { FilterBar, GlossaryHelp, ShareTools, Term, type FilterField } from '../analysis-tools'
-import { CompareTable, type CompareRowData } from '../analysis-charts'
+import type { CompareRowData } from '../analysis-charts'
+
+// 비교 표는 데이터가 오는 동안 따로 내려받는다(처음 화면을 가볍게).
+const CompareTable = dynamic(() => import('../analysis-charts').then((m) => m.CompareTable), { ssr: false, loading: () => <ChartSkeleton height={190} /> })
 
 type FormatStat = { label: string; contentType: string; count: number; avgEngagementPct: number; avgVelocity: number; totalViews: number }
 
@@ -79,20 +82,21 @@ function summarizeFormats(lf: FormatStat, sf: FormatStat): { tone: Tone; headlin
       detail: `지금은 ${have.label} 영상 ${formatNumber(have.count)}개만 있어요. ${missing}도 몇 개 등록하면 어느 쪽이 반응이 좋은지 알려드려요.`
     }
   }
-  const engDiff = pctChange(Math.max(lf.avgEngagementPct, sf.avgEngagementPct), Math.min(lf.avgEngagementPct, sf.avgEngagementPct))
-  const velDiff = pctChange(Math.max(lf.avgVelocity, sf.avgVelocity), Math.min(lf.avgVelocity, sf.avgVelocity))
-  const engWin = sf.avgEngagementPct > lf.avgEngagementPct ? sf : lf
-  const velWin = sf.avgVelocity > lf.avgVelocity ? sf : lf
-  const small = (engDiff ?? 0) < 5 && (velDiff ?? 0) < 5
+  // 5% 넘게 차이 나는 쪽만 '더 좋다'고 말한다. (차이가 작으면 비슷하다고 알려 준다)
+  const eng = pickWinner(lf.avgEngagementPct, sf.avgEngagementPct)
+  const vel = pickWinner(lf.avgVelocity, sf.avgVelocity)
+  const name = (side: 'longform' | 'shortform' | null) => (side === 'longform' ? lf.label : sf.label)
   const fewNote = lf.count < 5 || sf.count < 5 ? `영상 수가 적어서(롱폼 ${lf.count}개, 숏폼 ${sf.count}개) 참고용으로만 봐 주세요.` : undefined
 
-  if (small) return { tone: 'neutral', headline: '롱폼과 숏폼의 차이가 크지 않아요. 지금은 어느 쪽이 더 좋다고 말하기 어려워요.', detail: fewNote }
-  if (engWin === velWin) {
-    return { tone: 'good', headline: `${engWin.label}이 반응(참여율)도, 조회수가 늘어나는 속도도 더 좋아요.`, detail: fewNote }
+  if (!eng && !vel) return { tone: 'neutral', headline: '롱폼과 숏폼의 차이가 크지 않아요. 지금은 어느 쪽이 더 좋다고 말하기 어려워요.', detail: fewNote }
+  if (eng && vel && eng === vel) {
+    return { tone: 'good', headline: `${name(eng)}이 반응(참여율)도, 조회수가 늘어나는 속도도 더 좋아요.`, detail: fewNote }
   }
+  if (eng && !vel) return { tone: 'neutral', headline: `시청자 반응(참여율)은 ${name(eng)}이 더 좋고, 조회수가 늘어나는 속도는 비슷해요.`, detail: fewNote }
+  if (vel && !eng) return { tone: 'neutral', headline: `조회수가 늘어나는 속도는 ${name(vel)}이 더 좋고, 시청자 반응(참여율)은 비슷해요.`, detail: fewNote }
   return {
     tone: 'neutral',
-    headline: `시청자 반응(참여율)은 ${engWin.label}이, 조회수가 늘어나는 속도는 ${velWin.label}이 더 좋아요.`,
+    headline: `시청자 반응(참여율)은 ${name(eng)}이, 조회수가 늘어나는 속도는 ${name(vel)}이 더 좋아요.`,
     detail: fewNote
   }
 }
@@ -108,24 +112,7 @@ function seriesVerdict(s: SeriesRow, engChange: number | null, velChange: number
   return { tone: 'gray', label: '결과가 엇갈려요' }
 }
 
-const HEADER_PROPS = { icon: '🧩', title: '롱폼·숏폼·시리즈 비교', subtitle: '어떤 형식과 시리즈가 반응을 더 잘 얻는지 비교합니다.' }
-
-// 회차 순서는 DB 에 자리가 없어서 이 브라우저에만 기억한다.
-function readOrder(seriesId: string): string[] | null {
-  try {
-    return decodeOrder(window.localStorage.getItem(orderKey(seriesId)))
-  } catch {
-    return null
-  }
-}
-
-function writeOrder(seriesId: string, ids: string[]) {
-  try {
-    window.localStorage.setItem(orderKey(seriesId), JSON.stringify(ids))
-  } catch {
-    // 저장소를 못 쓰면 이번 화면에서만 바뀐다.
-  }
-}
+const HEADER_PROPS = { icon: '🧩', title: '롱폼·숏폼·시리즈 비교', subtitle: '어떤 형식과 시리즈가 반응을 더 잘 얻는지 비교해요.' }
 
 // useSearchParams 는 Suspense 안에서만 쓸 수 있다(Next 16).
 export default function SeriesPage() {
@@ -187,9 +174,11 @@ function SeriesView() {
   const [busyKey, setBusyKey] = useState<string | null>(null)
   const [cardErrors, setCardErrors] = useState<Record<string, string>>({})
   const [openMembers, setOpenMembers] = useState<Record<string, boolean>>({})
-  // 회차 순서(이 브라우저에만 저장). 캐시에서 읽고, 바꾸면 화면을 다시 그리도록 tick 을 올린다.
-  const orderCache = useRef(new Map<string, string[] | null>())
-  const [, setOrderTick] = useState(0)
+  // 회차 순서 저장: 시리즈마다 '원하는 순서'와 '서버에 저장돼 있는 마지막 순서'를 들고 있다.
+  // ↑↓ 를 빠르게 여러 번 눌러도 저장 요청은 시리즈마다 한 번에 하나씩만 나가고, 그사이 눌린 것은 마지막 순서 하나로 합쳐진다.
+  const desiredOrder = useRef(new Map<string, string[]>())
+  const savedOrder = useRef(new Map<string, string[]>())
+  const savingOrder = useRef(new Set<string>())
   const [orderNote, setOrderNote] = useState('')
 
   const setCardError = (id: string, message: string | null) =>
@@ -238,7 +227,7 @@ function SeriesView() {
     if (stock) items = [...items].sort((a, b) => Number(b.stockName === stock) - Number(a.stockName === stock))
     return items
   }, [data, videoQuery, stockName])
-  const pickMore = useShowMore(pickable, 8, 10)
+  const pickMore = useShowMore(pickable, 20, 50)
 
   // 시리즈 목록: 검색 → 정렬
   const visibleSeries = useMemo(() => {
@@ -246,6 +235,12 @@ function SeriesView() {
     return sortSeriesRows(list, filters.sort)
   }, [data, filters.q, filters.sort])
   const seriesMore = useShowMore(visibleSeries, 5, 10)
+
+  // 종목 입력칸의 추천: 지금 있는 시리즈·영상에서 쓰인 종목 이름
+  const stockSuggestions = useMemo(() => {
+    const names = [...(data?.series || []).map((s) => s.stockName), ...(data?.eligibleVideos || []).map((v) => v.stockName)]
+    return Array.from(new Set(names.filter((n): n is string => !!n))).slice(0, 40)
+  }, [data])
 
   const staffOptions = data?.staffOptions || []
   const fields: FilterField[] = [
@@ -267,7 +262,7 @@ function SeriesView() {
     <FilterBar fields={fields} filters={filters} defaults={defaultFilters(SERIES_FILTERS)} chips={chips} onChange={(key, value) => f.set({ [key]: value })} onReset={resetAll}>
       <ShareTools
         getLink={() => f.shareUrl()}
-        csv={{ baseName: '시리즈 비교', rowCount: visibleSeries.length, build: () => seriesCsv(visibleSeries) }}
+        csv={{ baseName: '시리즈 비교', rowCount: visibleSeries.length, build: async () => (await import('@/lib/v3/table-rows')).seriesCsv(visibleSeries) }}
         notify={{ success: showSuccess, error: showError }}
       />
     </FilterBar>
@@ -470,21 +465,48 @@ function SeriesView() {
     void refresh()
   }
 
-  const orderedMembers = (s: SeriesRow) => {
-    if (!orderCache.current.has(s.id)) orderCache.current.set(s.id, readOrder(s.id))
-    return applyOrder(s.members, orderCache.current.get(s.id))
+  // 순서 저장: 시리즈마다 한 번에 하나씩 보낸다. 보내는 동안 더 눌린 순서는 마지막 것 하나로 이어서 보낸다.
+  // 실패하면 서버에 저장돼 있던 마지막 순서로 되돌리고, 최신 값을 다시 받는다.
+  const saveOrder = async (seriesId: string) => {
+    if (savingOrder.current.has(seriesId)) return
+    savingOrder.current.add(seriesId)
+    try {
+      for (;;) {
+        const want = desiredOrder.current.get(seriesId)
+        if (!want) break
+        desiredOrder.current.delete(seriesId)
+        const out = await v3Request(`/api/v3/series/${seriesId}/members`, { method: 'PUT', body: { videoIds: want } }, '순서를 저장하지 못했어요.')
+        if (!out.ok) {
+          const back = savedOrder.current.get(seriesId)
+          desiredOrder.current.delete(seriesId)
+          savedOrder.current.delete(seriesId)
+          if (back) mutate((prev) => ({ ...prev, series: withReordered(prev.series, seriesId, back) }))
+          setCardError(seriesId, out.error)
+          showError(`순서를 저장하지 못했어요. 원래 순서로 되돌렸어요. ${out.error || ''}`.trim())
+          void refresh()
+          return
+        }
+        savedOrder.current.set(seriesId, want)
+      }
+      savedOrder.current.delete(seriesId)
+      // 다른 조건(직원·기간)으로 저장해 둔 화면에는 옛 순서가 남아 있으므로 비운다.
+      invalidateV3('/api/v3/format-series')
+    } finally {
+      savingOrder.current.delete(seriesId)
+    }
   }
 
   const moveMember = (s: SeriesRow, memberId: string, dir: -1 | 1) => {
-    const list = orderedMembers(s)
-    const ids = list.map((m) => m.id)
+    const ids = s.members.map((m) => m.id)
     const next = moveItem(ids, memberId, dir)
     if (next === ids) return
-    orderCache.current.set(s.id, next)
-    writeOrder(s.id, next)
-    setOrderTick((n) => n + 1)
-    const title = list.find((m) => m.id === memberId)?.title || '영상'
+    if (!savedOrder.current.has(s.id)) savedOrder.current.set(s.id, ids)
+    desiredOrder.current.set(s.id, next)
+    setCardError(s.id, null)
+    mutate((prev) => ({ ...prev, series: withReordered(prev.series, s.id, next) }))
+    const title = s.members.find((m) => m.id === memberId)?.title || '영상'
     setOrderNote(`“${title}”을(를) ${next.indexOf(memberId) + 1}번째로 옮겼어요.`)
+    void saveOrder(s.id)
   }
 
   const { longform: lf, shortform: sf } = data.formatStats
@@ -574,7 +596,7 @@ function SeriesView() {
             description="같은 주제로 이어지는 영상 묶음이에요. 같은 종목의 시리즈 밖 영상과 비교해서, 묶어 만든 효과가 있는지 알려드려요."
             actions={
               <>
-                {data.sample ? <span className="small muted">SQL 실행 후 만들 수 있어요</span> : null}
+                {data.sample ? <span className="small muted">예시 화면이라 지금은 만들 수 없어요</span> : null}
                 <button
                   type="button"
                   className={showForm ? 'button secondary' : 'button'}
@@ -634,7 +656,7 @@ function SeriesView() {
                     />
                     <p className="v3a-field-help">넣으면 같은 종목의 다른 영상과 비교해요. 비워도 돼요.</p>
                     <datalist id="v3-series-stock-suggestions">
-                      {SAMPLE_STOCK_NAMES.map((s) => (
+                      {stockSuggestions.map((s) => (
                         <option key={s} value={s} />
                       ))}
                     </datalist>
@@ -734,7 +756,7 @@ function SeriesView() {
                   const canAdd = !data.sample && s.canEdit
                   const cardBusy = !!busyKey && busyKey.includes(s.id)
                   const isRenaming = renamingId === s.id
-                  const members = orderedMembers(s)
+                  const members = s.members
                   return (
                     <div className="v3a-card" key={s.id}>
                       <div className="v3a-card-head">
@@ -793,7 +815,7 @@ function SeriesView() {
                           </button>
                           {openMembers[s.id] ? (
                             <>
-                              {s.canEdit && !data.sample && members.length > 1 ? <p className="v3a-order-hint">↑ ↓ 버튼으로 회차 순서를 바꿀 수 있어요. 순서는 이 컴퓨터(브라우저)에만 기억되고, 다른 사람에게는 올린 날짜 순으로 보여요.</p> : null}
+                              {s.canEdit && !data.sample && members.length > 1 ? <p className="v3a-order-hint">↑ ↓ 버튼으로 회차 순서를 바꿀 수 있어요. 바꾼 순서는 저장돼서 모두에게 같은 순서로 보여요.</p> : null}
                               <ul className="v3i-members">
                                 {members.map((m, index) => (
                                   <li key={m.id} className="v3i-member">
@@ -807,16 +829,16 @@ function SeriesView() {
                                     </span>
                                     <span className="v3a-member-actions">
                                       <Link className="v3i-linkbtn" href={lifecycleHref(m.id)}>
-                                        성장 곡선
+                                        조회수 성장 곡선
                                       </Link>
                                       {s.canEdit && !data.sample ? (
                                         <>
                                           {members.length > 1 ? (
                                             <>
-                                              <button type="button" className="v3a-move" disabled={index === 0} aria-label={`${m.title} 위로 옮기기`} onClick={() => moveMember(s, m.id, -1)}>
+                                              <button type="button" className="v3a-move" disabled={index === 0 || !!busyKey} aria-label={`${m.title} 위로 옮기기`} onClick={() => moveMember(s, m.id, -1)}>
                                                 <span aria-hidden>↑</span>
                                               </button>
-                                              <button type="button" className="v3a-move" disabled={index === members.length - 1} aria-label={`${m.title} 아래로 옮기기`} onClick={() => moveMember(s, m.id, 1)}>
+                                              <button type="button" className="v3a-move" disabled={index === members.length - 1 || !!busyKey} aria-label={`${m.title} 아래로 옮기기`} onClick={() => moveMember(s, m.id, 1)}>
                                                 <span aria-hidden>↓</span>
                                               </button>
                                             </>

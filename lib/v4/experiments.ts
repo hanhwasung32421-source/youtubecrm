@@ -38,8 +38,6 @@ export const experimentCreateSchema = experimentInputSchema.extend({
   metric: z.string().trim().max(500, '비교 기준은 500자 이하로 적어 주세요.').nullable().optional()
 })
 
-export type ExperimentInput = z.infer<typeof experimentInputSchema>
-
 export const EXPERIMENT_SELECT =
   'id, video_id, hypothesis, variant_a, variant_b, metric, started_on, ended_on, winner, learning, created_by, created_at, updated_at'
 

@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { PasswordField } from '@/components/v2/password-field'
 import { safeNextPath } from '@/components/v2/register-flow'
+import { koreanOr } from '@/components/v2/register-utils'
 import { setCachedV2Me } from '@/components/v2/session-context'
 import { createSupabaseBrowserClient } from '@/lib/supabase/browser-client'
 import { clearMeCache, fetchMe } from '@/lib/session/me-client'
@@ -111,7 +112,7 @@ export default function LoginPage() {
         })
         const data = await res.json().catch(() => ({}))
         if (!res.ok) {
-          fail(data?.error || '아이디를 찾을 수 없어요. 다시 확인해 주세요.', 'id')
+          fail(koreanOr(data?.error, '아이디를 찾을 수 없어요. 다시 확인해 주세요.'), 'id')
           return
         }
         loginEmail = data.email
@@ -124,7 +125,10 @@ export default function LoginPage() {
       })
 
       if (error || !data.session?.access_token) {
-        fail('아이디 또는 비밀번호가 맞지 않아요. 다시 확인해 주세요.', 'pw')
+        // 인터넷이 끊겼거나 서버가 아픈 것을 "비밀번호가 틀렸다"고 알려 주면 헷갈린다.
+        const serverSide = Boolean(error) && (error?.name === 'AuthRetryableFetchError' || (typeof error?.status === 'number' && error.status >= 500))
+        if (serverSide) fail('로그인 서버에 연결하지 못했어요. 인터넷 연결을 확인하고 다시 시도해 주세요.', null)
+        else fail('아이디 또는 비밀번호가 맞지 않아요. 다시 확인해 주세요.', 'pw')
         return
       }
 
@@ -135,14 +139,14 @@ export default function LoginPage() {
       void fetch('/api/auth/log-login', {
         method: 'POST',
         headers: { Authorization: `Bearer ${data.session.access_token}` }
-      })
+      }).catch(() => undefined)
 
       // 관리자는 성과 요약, 직원은 영상 등록 화면에서 시작한다.
       const me = await fetchMe(data.session.access_token)
       navigating = true
-      router.push(readNextPath() ?? getHomeHref(isAdminRoleType(me.roleType)))
+      router.replace(readNextPath() ?? getHomeHref(isAdminRoleType(me.roleType)))
     } catch (err: unknown) {
-      fail(err instanceof Error && err.message ? err.message : '로그인 중 오류가 발생했어요. 잠시 후 다시 시도해 주세요.', null)
+      fail(err instanceof TypeError ? '인터넷 연결을 확인하고 다시 시도해 주세요.' : koreanOr(err instanceof Error ? err.message : '', '로그인 중 문제가 생겼어요. 잠시 뒤에 다시 시도해 주세요.'), null)
     } finally {
       // 화면이 넘어가는 중에는 버튼을 계속 잠가 두어 두 번 누르는 일을 막는다.
       if (!navigating) {

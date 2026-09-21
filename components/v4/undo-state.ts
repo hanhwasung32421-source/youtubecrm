@@ -8,6 +8,7 @@
 //
 // - "방금 등록한 영상" 정보(recent)는 되돌리기 시간이 지나도 남는다 (종목 바로 고치기는 계속 쓸 수 있다).
 // - 등록을 또 하면 새 영상으로 바뀐다. 이전 영상에 대한 늦은 응답(succeeded/failed)은 무시한다.
+// - "지우기"가 진짜 새 영상만 지우는지는 서버가 다시 확인한다 (app/api/v4/my-videos/[id] 의 ?onlyNew=1).
 
 export const UNDO_WINDOW_MS = 10_000
 
@@ -38,6 +39,7 @@ export type UndoAction =
   | { type: 'succeeded'; id: string }
   | { type: 'failed'; id: string; message: string; now: number }
   | { type: 'edited'; id: string; stock: string }
+  | { type: 'ordinal'; id: string; ordinal: number } // 서버가 센 "오늘 N번째"로 바로잡는다
   | { type: 'dismiss' }
 
 export function undoReducer(state: UndoState, action: UndoAction): UndoState {
@@ -63,6 +65,9 @@ export function undoReducer(state: UndoState, action: UndoAction): UndoState {
     case 'edited':
       if (state.phase === 'idle' || state.recent.id !== action.id) return state
       return { ...state, recent: { ...state.recent, stock: action.stock } }
+    case 'ordinal':
+      if (state.phase === 'idle' || state.recent.id !== action.id || state.recent.mode !== 'delete') return state
+      return { ...state, recent: { ...state.recent, ordinal: action.ordinal } }
     case 'dismiss':
       return UNDO_IDLE
     default:
@@ -76,17 +81,7 @@ export function secondsLeft(state: UndoState, now: number): number {
   return Math.max(0, Math.ceil((state.expiresAt - now) / 1000))
 }
 
-// ---------------------------------------------------------------- 지워도 안전한지
-
-// 방금 "새로 등록"한 영상만 지운다. 공유 등록 API 는 이미 있던 영상도 같은 주소면 덮어쓰기(upsert) 하므로,
-// 예전에 등록해 둔 영상(등록한 지 오래됨) 또는 목록에서 못 찾은 영상은 되돌리기로 지우지 않는다.
-export const FRESH_WINDOW_MS = 10 * 60 * 1000
-
-export type DeleteSafety = { safe: true } | { safe: false; reason: 'not-found' | 'old' }
-
-export function deleteSafety(item: { created_at: string | null } | null | undefined, now: number): DeleteSafety {
-  if (!item) return { safe: false, reason: 'not-found' }
-  const t = item.created_at ? new Date(item.created_at).getTime() : NaN
-  if (Number.isNaN(t)) return { safe: false, reason: 'old' }
-  return now - t > FRESH_WINDOW_MS ? { safe: false, reason: 'old' } : { safe: true }
+// 되돌리기 버튼이 지금 눌러도 되는 상태인가 (화면의 카운트다운보다 실제 시각이 우선이다).
+export function canUndoNow(state: UndoState, now: number): boolean {
+  return state.phase === 'open' && Boolean(state.recent.id) && now < state.expiresAt
 }

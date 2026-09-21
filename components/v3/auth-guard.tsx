@@ -44,10 +44,13 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let cancelled = false
     // 로그인 화면으로 보낼 때 지금 보던 화면을 ?next= 로 남겨서, 로그인하면 그 화면으로 돌아오게 한다.
-    const goLogin = () => router.replace(loginHref(window.location.pathname + window.location.search))
+    const goLogin = () => {
+      if (!cancelled) router.replace(loginHref(window.location.pathname + window.location.search))
+    }
     const run = async () => {
       try {
         const accessToken = await getAccessToken()
+        if (cancelled) return
         if (!accessToken) {
           goLogin()
           return
@@ -56,8 +59,13 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
         let profile: Awaited<ReturnType<typeof fetchMe>>
         try {
           profile = await fetchMe(accessToken)
-        } catch {
-          goLogin()
+        } catch (e) {
+          // 인터넷이 끊긴 것(요청 자체가 실패)은 로그인 문제가 아니므로 로그인 화면으로 보내지 않고 다시 불러오기를 안내한다.
+          if (e instanceof TypeError) {
+            if (!cancelled) setError('인터넷 연결이 끊긴 것 같아요. 연결을 확인하고 다시 불러와 주세요.')
+          } else {
+            goLogin()
+          }
           return
         }
         if (cancelled) return
@@ -70,7 +78,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
           isAdmin: isAdminRole(profile.roleType)
         })
       } catch (e: any) {
-        if (!cancelled) setError(e?.message || '인증 확인 중 오류가 발생했습니다.')
+        if (!cancelled) setError(/[가-힣]/.test(e?.message || '') ? e.message : '로그인 상태를 확인하지 못했어요. 다시 불러와 주세요.')
       }
     }
 

@@ -4,59 +4,10 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { fmtCompact, fmtNumber, shortYmd } from '@/lib/v4/format'
 import type { DailyPoint } from '@/lib/v4/analytics'
 
+// 일별 그래프 전용. 큰 그림이라 대시보드가 늦게(화면에 가까워질 때) 내려받는다. 진행 링·비중 막대는 mini-charts.tsx.
 const INDIGO = '#4f46e5'
 const EMERALD = '#10b981'
 const AMBER = '#f59e0b'
-const ROSE = '#f43f5e'
-const SLATE = '#94a3b8'
-
-// ------------------------------------------------------------------ 진행 링
-
-export function ProgressRing({
-  value,
-  label,
-  sublabel,
-  size = 132,
-  stroke = 12,
-  color = INDIGO
-}: {
-  value: number // 0~1 (초과 시 100%로 표시)
-  label: string
-  sublabel?: string
-  size?: number
-  stroke?: number
-  color?: string
-}) {
-  const ratio = Number.isFinite(value) ? Math.max(0, Math.min(value, 1)) : 0
-  const radius = (size - stroke) / 2
-  const circumference = 2 * Math.PI * radius
-  const dash = circumference * ratio
-  const percent = Number.isFinite(value) ? Math.round(value * 100) : 0
-  return (
-    <div className="v4-ring">
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label={`${label} ${percent}%`}>
-        <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="#e2e8f0" strokeWidth={stroke} />
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          fill="none"
-          stroke={color}
-          strokeWidth={stroke}
-          strokeLinecap="round"
-          strokeDasharray={`${dash} ${circumference - dash}`}
-          transform={`rotate(-90 ${size / 2} ${size / 2})`}
-          style={{ transition: 'stroke-dasharray 0.6s ease' }}
-        />
-        <text x="50%" y="50%" textAnchor="middle" dominantBaseline="central" className="v4-ring-value">
-          {percent}%
-        </text>
-      </svg>
-      <div className="v4-ring-label">{label}</div>
-      {sublabel ? <div className="v4-ring-sub">{sublabel}</div> : null}
-    </div>
-  )
-}
 
 // ------------------------------------------------------------------ 일별 타임라인 (업로드 막대 + 조회수 영역 + 목표선)
 
@@ -109,7 +60,7 @@ export function TimelineChart({ points, target }: { points: DailyPoint[]; target
   if (n === 0) {
     return (
       <div className="v4-chart-wrap" ref={ref}>
-        <div className="empty-state">표시할 기간 데이터가 없습니다.</div>
+        <div className="empty-state">보여 줄 기간 데이터가 없어요.</div>
       </div>
     )
   }
@@ -183,135 +134,3 @@ export function TimelineChart({ points, target }: { points: DailyPoint[]; target
     </div>
   )
 }
-
-// ------------------------------------------------------------------ 스파크라인
-
-export function Sparkline({ values, color = INDIGO, width = 120, height = 32 }: { values: number[]; color?: string; width?: number; height?: number }) {
-  if (values.length === 0) return <svg width={width} height={height} />
-  const max = Math.max(...values, 1)
-  const step = values.length > 1 ? width / (values.length - 1) : width
-  const pts = values.map((v, i) => `${(i * step).toFixed(1)},${(height - 3 - (v / max) * (height - 6)).toFixed(1)}`)
-  return (
-    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} className="v4-spark" role="img" aria-label="최근 7일 추이">
-      <polyline points={pts.join(' ')} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
-      {values.map((v, i) => (
-        <circle key={i} cx={i * step} cy={height - 3 - (v / max) * (height - 6)} r={2} fill={color}>
-          <title>{fmtNumber(v)}</title>
-        </circle>
-      ))}
-    </svg>
-  )
-}
-
-// ------------------------------------------------------------------ 가로 막대 비교
-
-export function HBarList({
-  items,
-  color = INDIGO,
-  format = fmtNumber
-}: {
-  items: Array<{ label: string; value: number; hint?: string }>
-  color?: string
-  format?: (v: number) => string
-}) {
-  const max = Math.max(...items.map((i) => i.value), 0)
-  if (items.length === 0) return <div className="empty-state">표시할 데이터가 없습니다.</div>
-  return (
-    <div className="v4-hbars">
-      {items.map((item) => {
-        const w = max > 0 ? Math.max((item.value / max) * 100, 2) : 0
-        return (
-          <div className="v4-hbar" key={item.label}>
-            <div className="v4-hbar-label" title={item.label}>
-              {item.label}
-            </div>
-            <div className="v4-hbar-track">
-              <div className="v4-hbar-fill" style={{ width: `${w}%`, background: color }} />
-            </div>
-            <div className="v4-hbar-value">
-              {format(item.value)}
-              {item.hint ? <span className="muted small"> {item.hint}</span> : null}
-            </div>
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-// ------------------------------------------------------------------ 요일 × 시간 히트맵
-
-export function Heatmap({
-  cells,
-  max,
-  valueOf,
-  color = 'indigo',
-  weekdayLabels,
-  format = fmtNumber,
-  highlight
-}: {
-  cells: Array<{ weekday: number; hour: number; count: number; avgViews: number }>
-  max: number
-  valueOf: (cell: { count: number; avgViews: number }) => number
-  color?: 'indigo' | 'emerald'
-  weekdayLabels: readonly string[]
-  format?: (v: number) => string
-  highlight?: Set<string>
-}) {
-  const rgb = color === 'emerald' ? '16, 185, 129' : '79, 70, 229'
-  return (
-    <div className="v4-heatmap-wrap">
-      <div className="v4-heatmap">
-        <div className="v4-heatmap-corner" />
-        {Array.from({ length: 24 }, (_, hour) => (
-          <div className="v4-heatmap-hour" key={hour}>
-            {hour % 3 === 0 ? `${hour}시` : ''}
-          </div>
-        ))}
-        {Array.from({ length: 7 }, (_, weekday) => (
-          <div className="v4-heatmap-row" key={weekday}>
-            <div className="v4-heatmap-day">{weekdayLabels[weekday]}</div>
-            {Array.from({ length: 24 }, (_, hour) => {
-              const cell = cells[weekday * 24 + hour]
-              const value = cell ? valueOf(cell) : 0
-              const alpha = max > 0 && value > 0 ? 0.12 + (value / max) * 0.78 : 0
-              const key = `${weekday}-${hour}`
-              return (
-                <div
-                  key={key}
-                  className={`v4-heatmap-cell ${highlight?.has(key) ? 'highlight' : ''}`}
-                  style={{ background: alpha > 0 ? `rgba(${rgb}, ${alpha.toFixed(2)})` : undefined }}
-                  title={`${weekdayLabels[weekday]}요일 ${hour}시 · 업로드 ${fmtNumber(cell?.count || 0)}개 · 평균 조회수 ${fmtNumber(cell?.avgViews || 0)}`}
-                >
-                  {value > 0 ? <span>{format(value)}</span> : null}
-                </div>
-              )
-            })}
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-// ------------------------------------------------------------------ 비중 바 (롱폼 vs 숏폼)
-
-export function ShareBar({ a, b, labelA = '롱폼', labelB = '숏폼' }: { a: number; b: number; labelA?: string; labelB?: string }) {
-  const total = a + b
-  const pa = total > 0 ? (a / total) * 100 : 0
-  const pb = total > 0 ? (b / total) * 100 : 0
-  return (
-    <div className="v4-share">
-      <div className="v4-share-track">
-        <div className="v4-share-a" style={{ width: `${pa}%` }} />
-        <div className="v4-share-b" style={{ width: `${pb}%` }} />
-      </div>
-      <div className="row-between small">
-        <span><i className="v4-dot" style={{ background: INDIGO }} /> {labelA} {fmtNumber(a)} ({Math.round(pa)}%)</span>
-        <span><i className="v4-dot" style={{ background: ROSE }} /> {labelB} {fmtNumber(b)} ({Math.round(pb)}%)</span>
-      </div>
-    </div>
-  )
-}
-
-export const CHART_COLORS = { INDIGO, EMERALD, AMBER, ROSE, SLATE }

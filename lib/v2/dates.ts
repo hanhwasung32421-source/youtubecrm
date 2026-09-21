@@ -5,8 +5,6 @@ const KST_OFFSET_MS = 9 * 60 * 60 * 1000
 const DAY_MS = 24 * 60 * 60 * 1000
 
 export const WEEKDAY_LABELS = ['일', '월', '화', '수', '목', '금', '토'] as const
-// 월요일 시작 주간 그리드용 순서
-export const WEEKDAY_LABELS_MON_FIRST = ['월', '화', '수', '목', '금', '토', '일'] as const
 
 export function kstYmd(date: Date = new Date()): string {
   return new Date(date.getTime() + KST_OFFSET_MS).toISOString().slice(0, 10)
@@ -34,20 +32,18 @@ export function weekStartMonday(ymd: string): string {
   return addDays(ymd, -diff)
 }
 
+// 'HH:mm' (KST). Intl 의 hour12:false 는 자정을 "24:05"로 내는 브라우저가 있어 오프셋 계산으로 직접 만든다.
 export function formatKstTime(iso: string | null | undefined): string {
-  if (!iso) return ''
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return ''
-  return d.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Seoul' })
+  const p = kstParts(iso)
+  if (!p) return ''
+  return `${String(p.hh).padStart(2, '0')}:${String(p.mm).padStart(2, '0')}`
 }
 
 // 'MM/DD HH:mm' (KST)
 export function formatKstDateTime(iso: string | null | undefined): string {
-  if (!iso) return '-'
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return '-'
-  const ymd = kstYmd(d)
-  return `${ymd.slice(5, 7)}/${ymd.slice(8, 10)} ${formatKstTime(iso)}`
+  const p = kstParts(iso)
+  if (!p) return '-'
+  return `${String(p.m).padStart(2, '0')}/${String(p.d).padStart(2, '0')} ${formatKstTime(iso)}`
 }
 
 export function formatKstDate(iso: string | null | undefined): string {
@@ -89,13 +85,13 @@ export function kstIsoAt(ymd: string, hour: number, minute = 0): string {
   return new Date(`${ymd}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00+09:00`).toISOString()
 }
 
-// 발행 이후 경과 일수(최소 1일 — 0으로 나누는 것을 방지)
+// 발행 이후 경과 일수(최소 1일). 방금 올린 영상이 "하루 조회"를 수십 배로 부풀리지 않게, 1일 미만은 1일로 센다.
 export function daysSince(iso: string | null | undefined, now = Date.now()): number {
   if (!iso) return 1
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return 1
   const diff = (now - d.getTime()) / DAY_MS
-  return Math.max(diff, 1 / 24)
+  return Number.isFinite(diff) ? Math.max(diff, 1) : 1
 }
 
 // '2026-02-30' 같은 존재하지 않는 날짜를 걸러낸다. (형식은 정확히 YYYY-MM-DD)
@@ -121,13 +117,6 @@ export function formatKstStamp(iso: string | null | undefined): string {
   const p = kstParts(iso)
   if (!p) return '-'
   return `${p.m}/${p.d} (${WEEKDAY_LABELS[p.weekday]}) ${String(p.hh).padStart(2, '0')}:${String(p.mm).padStart(2, '0')}`
-}
-
-// '9/21 (월)' (KST 날짜만)
-export function formatKstMonthDay(iso: string | null | undefined): string {
-  const p = kstParts(iso)
-  if (!p) return '-'
-  return `${p.m}/${p.d} (${WEEKDAY_LABELS[p.weekday]})`
 }
 
 // '방금 전' / '5분 전' / '3시간 전' / '3일 전' / '2개월 전'. 값이 없거나 잘못되면 '-'.

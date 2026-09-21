@@ -56,6 +56,6 @@ export async function GET(request: Request) {
       }
     })
   } catch (e) {
-    return errorResponse(e, '등록 여부를 확인하지 못했습니다.')
+    return errorResponse(e, '등록 여부를 확인하지 못했어요.')
   }
 }

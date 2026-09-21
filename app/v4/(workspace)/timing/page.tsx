@@ -10,8 +10,6 @@ import { useUrlFilters } from '@/lib/v4/use-url-filters'
 import { useV4Query } from '@/lib/v4/use-v4-query'
 import type { HeatCell, PeriodDays } from '@/lib/v4/analytics'
 import { TIMING_SPEC, rankingHref, type TimingFilters } from '@/lib/v4/page-filters'
-import { buildCsv, csvFilename } from '@/lib/v4/csv'
-import { downloadCsvFile } from '@/lib/v4/download'
 import { TIMING_RELIABLE_MIN, buildTimingAdvice, fmtMultiple, isThinCell } from '@/lib/v4/insights'
 import { CopyLinkButton, CsvButton, GlossaryHint, GlossaryList, SyncStatsButton } from '@/lib/v4/page-tools'
 import { BarRow, Card, EmptyPanel, ErrorPanel, Formula, Hero, Kpi, KpiRow, Seg, SkelBars, SkelHeat } from '@/lib/v4/analysis-ui'
@@ -69,7 +67,7 @@ function TimingScreen() {
 
   // 모드 전환(평균 ↔ 영상 수)은 이미 받은 값으로 화면에서만 바꾼다.
   const advice = useMemo(() => (data ? buildTimingAdvice(data.cells) : null), [data])
-  // 추천 한 곳 말고도 믿을 만한(영상 3개 이상) 다른 후보를 최대 2곳 알려준다 (추천이 표본 적음이면 생략)
+  // 추천 한 곳 말고도 믿을 만한(영상 3개 이상) 다른 후보를 최대 2곳 알려준다 (추천이 영상 적음이면 생략)
   const others = useMemo(() => {
     if (!data || !advice || advice.lowSample) return []
     return data.cells
@@ -99,21 +97,22 @@ function TimingScreen() {
   const hrefFor = (weekday: number, hour: number) => rankingHref({ period, dow: weekday, hour })
   const onSyncMessage = (message: string, tone: 'success' | 'error') => (tone === 'success' ? showSuccess(message) : showError(message))
 
-  const exportCsv = () => {
+  const exportCsv = async () => {
     if (!data) return
     const filled = data.cells.filter((c) => c.count > 0)
     if (filled.length === 0) return
-    const headers = ['요일', '시각(한국 시간)', '올린 영상 수', '조회수 합계', '평균 조회수', '표본']
-    const rows = filled.map((c) => [`${WEEKDAY_LABELS[c.weekday]}요일`, fmtHourRangeKo(c.hour), c.count, c.totalViews, c.avgViews, isThinCell(c.count) ? '표본이 적어요' : ''])
+    const [{ buildCsv, csvFilename }, { downloadCsvFile }] = await Promise.all([import('@/lib/v4/csv'), import('@/lib/v4/download')])
+    const headers = ['요일', '시각(한국 시간)', '올린 영상 수', '조회수 합계', '평균 조회수', '참고']
+    const rows = filled.map((c) => [`${WEEKDAY_LABELS[c.weekday]}요일`, fmtHourRangeKo(c.hour), c.count, c.totalViews, c.avgViews, isThinCell(c.count) ? '영상이 적어 참고만' : ''])
     downloadCsvFile(csvFilename(`업로드시간대_최근${period}일`), buildCsv(headers, rows))
-    showSuccess(`시간대 ${fmtNumber(filled.length)}곳의 값을 CSV로 저장했어요.`)
+    showSuccess(`시간대 ${fmtNumber(filled.length)}곳의 값을 엑셀 파일로 저장했어요.`)
   }
 
   return (
     <>
       <PageHeader
         title="업로드 타이밍 분석"
-        subtitle="언제 올린 영상이 조회수가 잘 나오는지 보고, 올릴 시간을 정합니다."
+        subtitle="언제 올린 영상이 조회수가 잘 나오는지 보고, 올릴 시간을 정할 수 있어요."
         actions={
           <>
             <CopyLinkButton getUrl={shareUrl} onResult={(ok) => (ok ? showSuccess('이 화면 링크를 복사했어요. 받은 사람도 같은 조건으로 볼 수 있어요.') : showError('링크를 복사하지 못했어요. 주소창의 주소를 직접 복사해 주세요.'))} />
@@ -225,10 +224,10 @@ function TimingScreen() {
 
             <Card
               title="요일 × 시간대 한눈에 보기"
-              sub={`진하게 칠해진 칸일수록 값이 커요. 점선 칸은 영상이 ${TIMING_RELIABLE_MIN}개 미만이라 표본이 적어요. 칸을 누르면 그 시간대에 올린 영상을 볼 수 있어요.`}
+              sub={`진하게 칠해진 칸일수록 값이 커요. 점선 칸은 영상이 ${TIMING_RELIABLE_MIN}개 미만이라 참고만 하세요. 칸을 누르면 그 시간대에 올린 영상을 볼 수 있어요.`}
               actions={
                 <>
-                  <CsvButton onExport={exportCsv} disabled={!data || data.sampleCount === 0} />
+                  <CsvButton onExport={() => void exportCsv()} disabled={!data || data.sampleCount === 0} />
                   <Seg
                     label="보기 방식"
                     value={mode}
@@ -264,7 +263,7 @@ function TimingScreen() {
                         max={maxWeekdayAvg}
                         valueText={d.count > 0 ? `${fmtShortOr(d.avg)}회` : '-'}
                         exact={d.count > 0 ? `평균 ${fmtNumberOr(d.avg)}회 · 영상 ${fmtNumberOr(d.count)}개` : '올린 영상 없음'}
-                        sub={`영상 ${fmtNumberOr(d.count)}개${isThinCell(d.count) ? ' · 표본이 적어요' : ''}`}
+                        sub={`영상 ${fmtNumberOr(d.count)}개${isThinCell(d.count) ? ' · 영상이 적어요' : ''}`}
                         leader={bestDay?.weekday === d.weekday}
                       />
                     </div>
@@ -274,7 +273,7 @@ function TimingScreen() {
               <Formula summary="이 기준은 어떻게 정했나요?">
                 <p>평균 조회수 = 그 칸(또는 요일)에 올린 영상들의 조회수 합계 ÷ 영상 수.</p>
                 <p>
-                  추천 시간대 = 영상이 {TIMING_RELIABLE_MIN}개 이상 있는 칸 중 평균 조회수가 가장 높은 한 곳이에요{advice && advice.multiple !== null && advice.multiple >= 1.05 ? ` (지금 추천은 전체 평균의 ${fmtMultiple(advice.multiple)}배)` : ''}. 그런 칸이 없으면 2개 → 1개짜리 칸으로 물러서되 “표본이 적어요”라고 알려 드려요. 영상이 적으면 한 영상이 우연히 잘 나온 것일 수 있기 때문이에요.
+                  추천 시간대 = 영상이 {TIMING_RELIABLE_MIN}개 이상 있는 칸 중 평균 조회수가 가장 높은 한 곳이에요{advice && advice.multiple !== null && advice.multiple >= 1.05 ? ` (지금 추천은 전체 평균의 ${fmtMultiple(advice.multiple)}배)` : ''}. 그런 칸이 없으면 2개 → 1개짜리 칸으로 물러서되 “영상이 적어요”라고 알려 드려요. 영상이 적으면 한 영상이 우연히 잘 나온 것일 수 있기 때문이에요.
                 </p>
                 <p>시각은 한국 시간 기준이며, 유튜브 게시 시각(없으면 CRM 등록 시각)으로 계산해요.</p>
               </Formula>

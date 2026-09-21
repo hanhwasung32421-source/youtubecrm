@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { PageHeader } from '@/components/v5/app-shell'
 import { Badge } from '@/components/v5/widget'
@@ -24,6 +24,8 @@ type FormErrors = Partial<Record<'title' | 'whenToUse', string>>
 const FILTER_KEY = 'v5.playbook.filters.v1'
 const ONE_SHOT_PARAMS = ['new', 'video', 'note']
 const TAG_PREVIEW = 12
+// 한 번에 그리는 카드 수(그 이상은 "더 보기")
+const CARD_PAGE = 30
 const SORT_LABEL: Record<PlaybookSort, string> = { usage: '자주 쓴 순', recent: '최근 순' }
 
 function validate(form: FormState): FormErrors {
@@ -41,7 +43,8 @@ const parseTags = (text: string) =>
 
 const hasTag = (entry: PlaybookEntry, tag: string) => entry.tags.some((t) => t.toLowerCase() === tag.toLowerCase())
 
-function FormulaCard({
+// memo: 카드가 많아도 "바뀐 카드만" 다시 그린다(핸들러는 부모에서 고정된 함수를 넘긴다).
+const FormulaCard = memo(function FormulaCard({
   entry,
   rank,
   busy,
@@ -63,10 +66,10 @@ function FormulaCard({
   canUse: boolean
   canEdit: boolean
   activeTags: string[]
-  onUse: () => void
+  onUse: (entry: PlaybookEntry) => void
   onTag: (tag: string) => void
-  onEdit: () => void
-  onDelete: () => Promise<void>
+  onEdit: (entry: PlaybookEntry) => void
+  onDelete: (id: string) => Promise<void>
 }) {
   return (
     <article className="v5p-pb-card">
@@ -119,22 +122,22 @@ function FormulaCard({
           <span> · <RelTime value={entry.created_at} /></span>
         </span>
         {canUse ? (
-          <button className="button xs secondary" type="button" disabled={busy} onClick={onUse} title="이 공식으로 영상을 만들었다면 눌러서 기록해요. 잘못 눌렀다면 5초 안에 되돌릴 수 있어요.">
+          <button className="button xs secondary" type="button" disabled={busy} onClick={() => onUse(entry)} title="이 공식으로 영상을 만들었다면 눌러서 기록해요. 잘못 눌렀다면 5초 안에 되돌릴 수 있어요.">
             {busy ? '기록 중…' : recorded ? '기록했어요 ✓' : '써봤어요 +1'}
           </button>
         ) : null}
       </div>
       {canEdit ? (
         <div className="v5p-pb-manage">
-          <button type="button" className="button xs secondary" disabled={busy} onClick={onEdit}>
+          <button type="button" className="button xs secondary" disabled={busy} onClick={() => onEdit(entry)}>
             고치기
           </button>
-          <ConfirmDelete busy={busy} onConfirm={onDelete} />
+          <ConfirmDelete busy={busy} onConfirm={() => onDelete(entry.id)} />
         </div>
       ) : null}
     </article>
   )
-}
+})
 
 function PlaybookView() {
   const { toast, showSuccess, showError } = useToast()
@@ -146,7 +149,7 @@ function PlaybookView() {
   const items = useMemo(() => q.data?.items || [], [q.data])
   const sample = Boolean(q.data?.sample)
   const once = useSingleFlight()
-  const undo = useUndoSlot()
+  const { slot: undoSlot, show: showUndo, dismiss: dismissUndo } = useUndoSlot()
   // 저장 결과를 화면과 캐시에 함께 반영한다.
   const setItems = useCallback((fn: (prev: PlaybookEntry[]) => PlaybookEntry[]) => updateData((d) => ({ ...d, items: fn(d.items || []) })), [updateData])
 
@@ -155,6 +158,7 @@ function PlaybookView() {
   // 입력칸은 바로바로 보이고, 필터(주소)에는 잠깐 멈췄을 때 반영한다.
   const [draft, setDraft] = useState('')
   const [showAllTags, setShowAllTags] = useState(false)
+  const [cardLimit, setCardLimit] = useState(CARD_PAGE)
 
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -179,14 +183,21 @@ function PlaybookView() {
   }, [])
 
   // 필터 값(주소·되돌리기·초기화)이 바뀌면 입력칸도 맞춘다. 입력을 멈추면 필터에 반영한다.
+  // (입력 중인 글자의 끝 공백까지 지워 버리지 않게, 이미 같은 검색어면 그대로 둔다)
   useEffect(() => {
-    setDraft(query)
+    setDraft((d) => (d.trim() === query ? d : query))
   }, [query])
   useEffect(() => {
     if (draft.trim() === query) return
     const t = window.setTimeout(() => setFilters({ q: draft.trim() }), 300)
     return () => window.clearTimeout(t)
   }, [draft, query, setFilters])
+
+  // 걸러 보는 조건이 바뀌면 처음(30개)부터 다시 보여 준다.
+  const tagKey = tagFilter.join(',')
+  useEffect(() => {
+    setCardLimit(CARD_PAGE)
+  }, [query, tagKey, sort])
 
   // 사용 횟수가 있는 공식 중 상위 3개.
   const top = useMemo(() => items.filter((e) => e.usage_count > 0).sort((a, b) => b.usage_count - a.usage_count).slice(0, 3), [items])
@@ -221,10 +232,13 @@ function PlaybookView() {
   // 태그를 새로 적을 때 참고할 수 있게 자주 쓰인 태그를 보여 준다.
   const popularTags = useMemo(() => tagCounts.slice(0, 8).map((t) => t.label), [tagCounts])
 
-  const toggleTag = (tag: string) => {
-    const on = tagFilter.some((t) => t.toLowerCase() === tag.toLowerCase())
-    setFilters({ tags: on ? tagFilter.filter((t) => t.toLowerCase() !== tag.toLowerCase()) : [...tagFilter, tag] })
-  }
+  const toggleTag = useCallback(
+    (tag: string) => {
+      const on = tagFilter.some((t) => t.toLowerCase() === tag.toLowerCase())
+      setFilters({ tags: on ? tagFilter.filter((t) => t.toLowerCase() !== tag.toLowerCase()) : [...tagFilter, tag] })
+    },
+    [tagFilter, setFilters]
+  )
 
   const errors = useMemo(() => validate(form), [form])
   const showErr = (key: keyof FormErrors) => (submitted ? errors[key] : undefined)
@@ -241,7 +255,7 @@ function PlaybookView() {
     setDrawerOpen(true)
   }
 
-  const openEdit = (entry: PlaybookEntry) => {
+  const openEdit = useCallback((entry: PlaybookEntry) => {
     const next: FormState = {
       title: entry.title,
       whenToUse: entry.when_to_use,
@@ -256,7 +270,7 @@ function PlaybookView() {
     setFormError('')
     setMoreOpen(Boolean(next.effectNote || next.tags))
     setDrawerOpen(true)
-  }
+  }, [])
 
   // 점수판 등에서 "성공 공식으로 저장"으로 들어온 경우: /v5/playbook?new=1&video=ID&note=…
   useEffect(() => {
@@ -326,56 +340,70 @@ function PlaybookView() {
       }
     }, 'submit')
 
+  // 방금 누른 "써봤어요" 취소: 화면에서 먼저 1 줄이고, 서버에서도 1 줄인다(0 아래로는 내려가지 않는다). 실패하면 다시 늘린다.
+  const undoUse = useCallback(
+    async (id: string) => {
+      setItems((prev) => prev.map((e) => (e.id === id ? { ...e, usage_count: Math.max(e.usage_count - 1, 0) } : e)))
+      setFlashId((cur) => (cur === id ? null : cur))
+      const res = await authedDeleteJson<{ item: PlaybookEntry }>(`/api/v5/playbook/${id}/use`)
+      if (res.ok) {
+        const saved = res.data.item
+        setItems((prev) => prev.map((e) => (e.id === id ? saved : e)))
+      } else if (res.status === 404) {
+        // 그 사이 지워진 공식
+        setItems((prev) => prev.filter((e) => e.id !== id))
+        showErrorRef.current(errorText(res, '되돌리지 못했어요.'))
+      } else {
+        setItems((prev) => prev.map((e) => (e.id === id ? { ...e, usage_count: e.usage_count + 1 } : e)))
+        showErrorRef.current(errorText(res, '되돌리지 못했어요. 횟수는 그대로예요.'))
+      }
+    },
+    [setItems]
+  )
+
   // "써봤어요": 눌렀다는 게 바로 보이도록 먼저 올리고(낙관적), 서버가 알려 주는 실제 값으로 맞춘다. 실패하면 되돌린다.
   // 성공하면 5초 동안 "되돌리기"를 보여 준다(잘못 눌렀을 때).
-  const onUse = async (entry: PlaybookEntry) => {
-    const id = entry.id
-    // ref 로 막으므로 같은 순간의 두 번째 클릭도 무시된다(state 는 다음 그림에서야 바뀐다).
-    if (usingRef.current) return
-    usingRef.current = true
-    setBusyId(id)
-    setCardError(null)
-    setItems((prev) => prev.map((e) => (e.id === id ? { ...e, usage_count: e.usage_count + 1 } : e)))
-    const res = await v5Post<{ item: PlaybookEntry }>(`/api/v5/playbook/${id}/use`, {})
-    if (res.ok) {
-      const saved = res.data.item
-      setItems((prev) => prev.map((e) => (e.id === id ? saved : e)))
-      setFlashId(id)
-      if (flashTimer.current) window.clearTimeout(flashTimer.current)
-      flashTimer.current = window.setTimeout(() => setFlashId(null), 1800)
-      undo.show(`“${entry.title}” 써봤어요를 기록했어요.`, () => undoUse(id))
-    } else {
-      setItems((prev) => prev.map((e) => (e.id === id ? { ...e, usage_count: Math.max(e.usage_count - 1, 0) } : e)))
-      setCardError({ id, text: errorText(res, '기록하지 못했어요. 잠시 뒤 다시 눌러 주세요.') })
-    }
-    setBusyId(null)
-    usingRef.current = false
-  }
-
-  // 방금 누른 "써봤어요" 취소: 화면에서 먼저 1 줄이고, 서버에서도 1 줄인다. 실패하면 다시 늘린다.
-  const undoUse = async (id: string) => {
-    setItems((prev) => prev.map((e) => (e.id === id ? { ...e, usage_count: Math.max(e.usage_count - 1, 0) } : e)))
-    setFlashId((cur) => (cur === id ? null : cur))
-    const res = await authedDeleteJson<{ item: PlaybookEntry }>(`/api/v5/playbook/${id}/use`)
-    if (res.ok) {
-      const saved = res.data.item
-      setItems((prev) => prev.map((e) => (e.id === id ? saved : e)))
-    } else {
-      setItems((prev) => prev.map((e) => (e.id === id ? { ...e, usage_count: e.usage_count + 1 } : e)))
-      showErrorRef.current(errorText(res, '되돌리지 못했어요. 횟수는 그대로예요.'))
-    }
-  }
-
-  const onDelete = async (id: string) => {
-    await once(async () => {
+  const onUse = useCallback(
+    async (entry: PlaybookEntry) => {
+      const id = entry.id
+      // ref 로 막으므로 같은 순간의 두 번째 클릭도 무시된다(state 는 다음 그림에서야 바뀐다).
+      if (usingRef.current) return
+      usingRef.current = true
       setBusyId(id)
       setCardError(null)
-      const res = await authedDeleteJson(`/api/v5/playbook/${id}`)
-      if (res.ok) setItems((prev) => prev.filter((e) => e.id !== id))
-      else setCardError({ id, text: errorText(res, '지우지 못했어요. 잠시 뒤 다시 해 주세요.') })
+      setItems((prev) => prev.map((e) => (e.id === id ? { ...e, usage_count: e.usage_count + 1 } : e)))
+      const res = await v5Post<{ item: PlaybookEntry }>(`/api/v5/playbook/${id}/use`, {})
+      if (res.ok) {
+        const saved = res.data.item
+        setItems((prev) => prev.map((e) => (e.id === id ? saved : e)))
+        setFlashId(id)
+        if (flashTimer.current) window.clearTimeout(flashTimer.current)
+        flashTimer.current = window.setTimeout(() => setFlashId(null), 1800)
+        showUndo(`“${entry.title}” 써봤어요를 기록했어요.`, () => undoUse(id))
+      } else {
+        setItems((prev) => prev.map((e) => (e.id === id ? { ...e, usage_count: Math.max(e.usage_count - 1, 0) } : e)))
+        if (res.status === 404) setItems((prev) => prev.filter((e) => e.id !== id))
+        setCardError({ id, text: errorText(res, '기록하지 못했어요. 잠시 뒤 다시 눌러 주세요.') })
+      }
       setBusyId(null)
-    }, `del-${id}`)
-  }
+      usingRef.current = false
+    },
+    [setItems, showUndo, undoUse]
+  )
+
+  const onDelete = useCallback(
+    async (id: string) => {
+      await once(async () => {
+        setBusyId(id)
+        setCardError(null)
+        const res = await authedDeleteJson(`/api/v5/playbook/${id}`)
+        if (res.ok) setItems((prev) => prev.filter((e) => e.id !== id))
+        else setCardError({ id, text: errorText(res, '지우지 못했어요. 잠시 뒤 다시 해 주세요.') })
+        setBusyId(null)
+      }, `del-${id}`)
+    },
+    [once, setItems]
+  )
 
   const renderCard = (entry: PlaybookEntry, rank?: number) => (
     <FormulaCard
@@ -388,10 +416,10 @@ function PlaybookView() {
       canUse={!sample}
       canEdit={!sample && Boolean(entry.can_edit)}
       activeTags={tagFilter}
-      onUse={() => void onUse(entry)}
+      onUse={onUse}
       onTag={toggleTag}
-      onEdit={() => openEdit(entry)}
-      onDelete={() => onDelete(entry.id)}
+      onEdit={openEdit}
+      onDelete={onDelete}
     />
   )
 
@@ -451,7 +479,7 @@ function PlaybookView() {
             </EmptyBlock>
           ) : (
             <>
-              <AnswerBanner label="가장 자주 쓰인 성공 공식 Top 3">
+              <AnswerBanner label="가장 자주 쓴 성공 공식 (상위 3개)">
                 {top.length > 0 ? (
                   <>
                     1등은 <strong>{top[0].title}</strong> · {fmtNum(top[0].usage_count)}번 써봤어요
@@ -529,7 +557,14 @@ function PlaybookView() {
                   )}
                 </div>
               ) : (
-                <div className="v5p-pb-grid">{others.map((entry) => renderCard(entry))}</div>
+                <>
+                  <div className="v5p-pb-grid">{others.slice(0, cardLimit).map((entry) => renderCard(entry))}</div>
+                  {others.length > cardLimit ? (
+                    <button type="button" className="button secondary sm" style={{ marginTop: 12 }} onClick={() => setCardLimit((n) => n + CARD_PAGE)}>
+                      더 보기 ({fmtNum(others.length - cardLimit)}개 남음)
+                    </button>
+                  ) : null}
+                </>
               )}
             </>
           )}
@@ -584,7 +619,7 @@ function PlaybookView() {
         </FormDrawer>
       ) : null}
 
-      <UndoBar slot={undo.slot} onDismiss={undo.dismiss} />
+      <UndoBar slot={undoSlot} onDismiss={dismissUndo} />
       <Toast toast={toast} />
     </>
   )

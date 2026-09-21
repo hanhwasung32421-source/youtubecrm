@@ -3,7 +3,7 @@
 //   - 시리즈에 넣을 수 있는 영상: 직원은 내가 등록한 영상만, 관리자는 모든 영상
 //   - 영상 1개는 최대 1개 시리즈에만 속한다(DB unique). 다른 시리즈에서 옮기는 것은 "내가 고칠 수 있는 시리즈"에서만 허용한다.
 
-import { ApiFail, type Profile, type SupabaseAdmin } from '@/lib/v3/server'
+import { ApiFail, chunk, type Profile, type SupabaseAdmin } from '@/lib/v3/server'
 import { V3_TABLES } from '@/lib/v3/tables'
 import type { VideoLite } from '@/lib/v3/engagement'
 
@@ -48,9 +48,15 @@ export type MembershipInfo = { video_id: string; series_id: string; seriesName: 
 // 주어진 영상들이 이미 속해 있는 시리즈 정보
 export async function loadMemberships(supabaseAdmin: SupabaseAdmin, videoIds: string[]): Promise<MembershipInfo[]> {
   if (videoIds.length === 0) return []
-  const { data, error } = await supabaseAdmin.from(V3_TABLES.videoSeriesMembers).select('video_id, series_id').in('video_id', videoIds)
-  if (error) throw error
-  const rows = (data || []) as { video_id: string; series_id: string }[]
+  // id 목록이 길면 요청 주소가 너무 길어지므로 80개씩 나눠서 묻는다.
+  const parts = await Promise.all(
+    chunk(Array.from(new Set(videoIds)), 80).map(async (part) => {
+      const { data, error } = await supabaseAdmin.from(V3_TABLES.videoSeriesMembers).select('video_id, series_id').in('video_id', part)
+      if (error) throw error
+      return (data || []) as { video_id: string; series_id: string }[]
+    })
+  )
+  const rows = parts.flat()
   if (rows.length === 0) return []
   const { data: seriesData, error: seriesError } = await supabaseAdmin
     .from(V3_TABLES.videoSeries)

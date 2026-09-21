@@ -66,7 +66,7 @@ export function PasswordField({
         </button>
       </div>
       <p id={capsId} className="v5-auth-help v5-caps-hint" aria-live="polite">
-        {caps ? 'Caps Lock이 켜져 있습니다. 대문자로 입력될 수 있어요.' : ''}
+        {caps ? 'Caps Lock이 켜져 있어요. 대문자로 입력될 수 있어요.' : ''}
       </p>
     </>
   )

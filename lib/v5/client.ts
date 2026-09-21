@@ -48,21 +48,9 @@ export function authedPatchJson<T = any>(path: string, body: unknown): Promise<A
   )
 }
 
-export function authedPutJson<T = any>(path: string, body: unknown): Promise<AuthedJsonResult<T>> {
-  return mutating(() =>
-    authedFetchJson<T>(path, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    })
-  )
-}
-
 export function authedDeleteJson<T = any>(path: string): Promise<AuthedJsonResult<T>> {
   return mutating(() => authedFetchJson<T>(path, { method: 'DELETE' }))
 }
-
-export type ApiError = { error?: string }
 
 const HANGUL = /[가-힣]/
 // 개발 모드에서 서버가 붙이는 "(원문 오류)" 꼬리표. 영문뿐인 괄호만 떼어낸다.

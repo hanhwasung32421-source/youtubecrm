@@ -15,5 +15,4 @@ export const V5_TABLES = {
   youtubeAccounts: `${PREFIX}youtube_accounts`
 } as const
 
-export const V5_SQL_FILE = 'supabase/sql/v5/100_v5_growth_lab.sql'
 export const V5_MISSING_TABLE_MESSAGE = '성장 관리 저장소가 아직 준비되지 않았어요. 관리자에게 알려 주세요.'

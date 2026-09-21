@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { clampGoal, progressSummary, type StockCount } from './register-flow'
+import { isImeKey } from './register-utils'
 
 const MAX_CHIPS = 10
 
@@ -12,10 +13,12 @@ type Props = {
   // 관리자는 팀 전체 영상이 함께 보이므로 개인 목표 막대 대신 개수만 보여 준다
   teamView: boolean
   loaded: boolean
+  // 불러온 영상이 전부 오늘 것이라 실제로는 더 많을 수 있을 때("100+"처럼 보여 준다)
+  capped?: boolean
 }
 
 // "오늘 7 / 12" 진행 막대 + 차분한 한 줄 문구. 목표 숫자는 눌러서 바꿀 수 있다(이 기기에 저장).
-export function TodayProgress({ count, goal, onGoalChange, teamView, loaded }: Props) {
+export function TodayProgress({ count, goal, onGoalChange, teamView, loaded, capped = false }: Props) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(String(goal))
   const inputRef = useRef<HTMLInputElement | null>(null)
@@ -38,7 +41,7 @@ export function TodayProgress({ count, goal, onGoalChange, teamView, loaded }: P
       <div className="v2-progress" role="group" aria-label="오늘 등록 현황">
         <div className="v2-progress-head">
           <span className="v2-progress-count">
-            오늘 팀 전체 <b>{loaded ? count : '–'}</b>개 등록
+            오늘 팀 전체 <b>{loaded ? count : '–'}</b>{loaded && capped ? '+' : ''}개 등록
           </span>
           <span className="v2-progress-msg">담당자별 순위는 「성과 요약」에서 볼 수 있어요.</span>
         </div>
@@ -48,9 +51,12 @@ export function TodayProgress({ count, goal, onGoalChange, teamView, loaded }: P
 
   const p = progressSummary(count, goal)
 
+  // 칸을 비워 두고 나가면 원래 목표를 그대로 둔다(빈칸을 기본값 12로 바꿔 버리지 않는다)
+  const draftGoal = () => (draft.trim() === '' ? clampGoal(goal) : clampGoal(draft))
+
   const commit = () => {
     settled.current = true
-    onGoalChange(clampGoal(draft))
+    onGoalChange(draftGoal())
     restoreFocus.current = true
     setEditing(false)
   }
@@ -76,7 +82,7 @@ export function TodayProgress({ count, goal, onGoalChange, teamView, loaded }: P
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.nativeEvent.isComposing) return
+                  if (isImeKey(e)) return
                   if (e.key === 'Enter') {
                     e.preventDefault()
                     e.stopPropagation()
@@ -91,7 +97,7 @@ export function TodayProgress({ count, goal, onGoalChange, teamView, loaded }: P
                 }}
                 onBlur={() => {
                   if (!settled.current) {
-                    onGoalChange(clampGoal(draft))
+                    onGoalChange(draftGoal())
                     setEditing(false)
                   }
                 }}

@@ -99,9 +99,3 @@ export function V5SessionProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<V5Session>(() => ({ ...state, retry: () => void load() }) as V5Session, [state, load])
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>
 }
-
-// 예전 이름 호환: 접근 권한이 확인된 경우에만 안쪽 화면을 그린다.
-export function AuthGuard({ children }: { children: React.ReactNode }) {
-  const allowed = useV5CanAccess()
-  return allowed ? <>{children}</> : null
-}

@@ -13,8 +13,6 @@ import { useSearchField } from '@/lib/v4/use-search-field'
 import { DEFAULT_METRIC } from '@/lib/v4/experiment-consts'
 import { applyResultPatch, deleteConsequence, nextStep } from '@/lib/v4/experiment-view'
 import { EXPERIMENTS_SPEC, rankingHref, type ExperimentsFilters } from '@/lib/v4/page-filters'
-import { buildCsv, csvFilename } from '@/lib/v4/csv'
-import { downloadCsvFile } from '@/lib/v4/download'
 import type { ExperimentItem } from '@/lib/v4/sample-data'
 import type { VideoOption } from '@/lib/v4/experiments'
 import { ActiveFilters, CopyLinkButton, CsvButton, GlossaryList, type FilterChip } from '@/lib/v4/page-tools'
@@ -43,6 +41,8 @@ const WINNER_BADGE: Record<'a' | 'b' | 'tie', { label: string; tone: 'good' | 'i
 }
 
 const RESET_KEYS: Array<keyof ExperimentsFilters> = ['status', 'q']
+// 실험이 수백 개가 돼도 화면이 무거워지지 않게 처음엔 이만큼만 그리고, 나머지는 "더 보기"로 펼친다.
+const PAGE_SIZE = 30
 const LOAD_FALLBACK = '실험 목록을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.'
 
 function StatusBadge({ winner }: { winner: ExperimentItem['winner'] }) {
@@ -137,6 +137,20 @@ function ExperimentsScreen() {
   const latestLearning = useMemo(() => all.find((i) => i.learning && i.learning.trim()) ?? null, [all])
   const byStatus = filter === 'running' ? running : filter === 'done' ? done : all
   const items = useMemo(() => byStatus.filter((i) => matches(i, queryValue)), [byStatus, queryValue])
+  const [visible, setVisible] = useState(PAGE_SIZE)
+  useEffect(() => {
+    setVisible(PAGE_SIZE)
+  }, [filter, queryValue])
+  // 방금 결과를 기록하려는 카드는 뒤쪽에 있어도 보이게 한다.
+  const shownItems = useMemo(() => {
+    const head = items.slice(0, visible)
+    const focusId = record?.id
+    if (focusId && !head.some((i) => i.id === focusId)) {
+      const target = items.find((i) => i.id === focusId)
+      if (target) head.push(target)
+    }
+    return head
+  }, [items, visible, record?.id])
 
   const sample = Boolean(data?.sample)
   const canEdit = (item: ExperimentItem) => !sample && (isAdmin || Boolean(me?.crmUserId && item.createdBy === me.crmUserId))
@@ -254,9 +268,10 @@ function ExperimentsScreen() {
     showError(result.message)
   }
 
-  // ---- 표를 CSV 로 저장 (지금 상태 필터·검색에 맞는 실험 전부)
-  const exportCsv = () => {
+  // ---- 표를 엑셀 파일(CSV)로 저장 (지금 상태 필터·검색에 맞는 실험 전부)
+  const exportCsv = async () => {
     if (items.length === 0) return
+    const [{ buildCsv, csvFilename }, { downloadCsvFile }] = await Promise.all([import('@/lib/v4/csv'), import('@/lib/v4/download')])
     const headers = ['시작일', '끝난 날', '상태', '무엇을 확인하나', 'A (지금 방식)', 'B (새 방식)', '비교 기준', '배운 점', '대상 영상', '종목', '만든 사람']
     const rows = items.map((i) => [
       i.startedOn,
@@ -272,7 +287,7 @@ function ExperimentsScreen() {
       i.createdByName
     ])
     downloadCsvFile(csvFilename('실험기록'), buildCsv(headers, rows))
-    showSuccess(`실험 ${fmtNumber(items.length)}개를 CSV로 저장했어요.`)
+    showSuccess(`실험 ${fmtNumber(items.length)}개를 엑셀 파일로 저장했어요.`)
   }
 
   const chips: FilterChip[] = []
@@ -286,7 +301,7 @@ function ExperimentsScreen() {
     <>
       <PageHeader
         title="실험 관리 (A/B 로그)"
-        subtitle="썸네일·제목을 두 가지로 만들어 비교해 보고, 결과와 배운 점을 남깁니다."
+        subtitle="썸네일·제목을 두 가지로 만들어 비교해 보고, 결과와 배운 점을 남길 수 있어요."
         actions={
           <>
             <CopyLinkButton getUrl={shareUrl} onResult={(ok) => (ok ? showSuccess('이 화면 링크를 복사했어요. 받은 사람도 같은 조건으로 볼 수 있어요.') : showError('링크를 복사하지 못했어요. 주소창의 주소를 직접 복사해 주세요.'))} />
@@ -411,7 +426,7 @@ function ExperimentsScreen() {
                 sub="최근에 시작한 실험이 위에 있어요. 카드 위쪽 단계 표시로 어디까지 왔는지 볼 수 있어요."
                 actions={
                   <>
-                    <CsvButton onExport={exportCsv} disabled={!data || items.length === 0} />
+                    <CsvButton onExport={() => void exportCsv()} disabled={!data || items.length === 0} />
                     <Seg
                       label="상태 필터"
                       value={filter}
@@ -462,7 +477,7 @@ function ExperimentsScreen() {
                   </EmptyPanel>
                 ) : (
                   <div className="v4p-exp-list">
-                    {items.map((item) => {
+                    {shownItems.map((item) => {
                       const editable = canEdit(item)
                       const confirming = confirmId === item.id
                       const busyKind = pending[item.id]
@@ -591,7 +606,26 @@ function ExperimentsScreen() {
                     })}
                   </div>
                 )}
-                {data?.truncated ? <p className="small muted" style={{ marginTop: 10 }}>실험이 매우 많아서 가장 최근 1,000개만 보여줘요.</p> : null}
+                {data && items.length > PAGE_SIZE ? (
+                  <div className="v4p-pager">
+                    <span className="small muted" aria-live="polite">
+                      실험 {fmtNumberOr(items.length)}개 중 {fmtNumberOr(shownItems.length)}개 표시
+                    </span>
+                    <div className="row" style={{ gap: 8 }}>
+                      {visible > PAGE_SIZE ? (
+                        <button type="button" className="button secondary" onClick={() => setVisible(PAGE_SIZE)}>
+                          접기
+                        </button>
+                      ) : null}
+                      {items.length > visible ? (
+                        <button type="button" className="button secondary" onClick={() => setVisible((v) => v + PAGE_SIZE)}>
+                          더 보기 ({fmtNumberOr(Math.min(PAGE_SIZE, items.length - visible))}개 더)
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
+                {data?.truncated ?<p className="small muted" style={{ marginTop: 10 }}>실험이 매우 많아서 가장 최근 1,000개만 보여줘요.</p> : null}
                 <GlossaryList terms={['abTest']} />
               </Card>
             ) : null}

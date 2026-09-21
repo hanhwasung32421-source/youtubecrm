@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { FormatPill, FormatToggle } from '@/components/v4/ui'
 import { deleteMyVideo, loadMyVideoMemo, patchMyVideo, type ContentType, type VideoPatch } from '@/components/v4/register-api'
 import { normalizeStockName } from '@/components/v4/register-utils'
@@ -30,11 +30,18 @@ type ListProps = {
   onDeleted: (id: string) => void
 }
 
-export function MyVideoList({ items, newIds, stockChoices, onUpdated, onDeleted }: ListProps) {
+// 글자를 칠 때마다 다시 그려지지 않게 memo. 부모는 늘 같은 함수(onUpdated/onDeleted)를 넘긴다.
+export const MyVideoList = memo(function MyVideoList({ items, newIds, stockChoices, onUpdated, onDeleted }: ListProps) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [confirmId, setConfirmId] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [message, setMessage] = useState<{ id: string; tone: 'ok' | 'error'; text: string } | null>(null)
+  const listRef = useRef<HTMLUListElement>(null)
+
+  // 수정 창이나 삭제 확인이 닫히면 그 줄의 버튼으로 커서를 돌려 준다.
+  const focusRowButton = (kind: 'edit' | 'del', id: string) => {
+    window.setTimeout(() => listRef.current?.querySelector<HTMLElement>(`[data-${kind}-for="${id}"]`)?.focus(), 0)
+  }
 
   // "고쳤어요" 안내는 잠깐 보여 주고 사라진다.
   useEffect(() => {
@@ -54,11 +61,11 @@ export function MyVideoList({ items, newIds, stockChoices, onUpdated, onDeleted 
       return
     }
     setConfirmId(null)
-    onDeleted(item.id)
+    onDeleted(item.id) // 지워진 줄에는 돌아갈 버튼이 없다
   }
 
   return (
-    <ul className="v4-reg-items">
+    <ul className="v4-reg-items" ref={listRef}>
       {items.map((item) => {
         const isNew = newIds.has(item.id)
         const label = item.title || (item.youtube_url ? '제목 불러오는 중 (주소 열기)' : '제목 없음')
@@ -81,9 +88,13 @@ export function MyVideoList({ items, newIds, stockChoices, onUpdated, onDeleted 
                 <EditForm
                   item={item}
                   stockChoices={stockChoices}
-                  onCancel={() => setEditingId(null)}
+                  onCancel={() => {
+                    setEditingId(null)
+                    focusRowButton('edit', item.id)
+                  }}
                   onSaved={(patch) => {
                     setEditingId(null)
+                    focusRowButton('edit', item.id)
                     setMessage({ id: item.id, tone: 'ok', text: '고쳤어요.' })
                     onUpdated(item.id, patch)
                   }}
@@ -97,6 +108,7 @@ export function MyVideoList({ items, newIds, stockChoices, onUpdated, onDeleted 
                     if (e.key === 'Escape') {
                       e.stopPropagation()
                       setConfirmId(null)
+                      focusRowButton('del', item.id)
                     }
                   }}
                 >
@@ -104,8 +116,16 @@ export function MyVideoList({ items, newIds, stockChoices, onUpdated, onDeleted 
                   <button type="button" className="button v4-mini v4-danger" disabled={busy} onClick={() => void remove(item)} autoFocus>
                     {busy ? '지우는 중…' : '지우기'}
                   </button>
-                  <button type="button" className="button secondary v4-mini" disabled={busy} onClick={() => setConfirmId(null)}>
-                    아니요
+                  <button
+                    type="button"
+                    className="button secondary v4-mini"
+                    disabled={busy}
+                    onClick={() => {
+                      setConfirmId(null)
+                      focusRowButton('del', item.id)
+                    }}
+                  >
+                    아니요, 그대로 둘게요
                   </button>
                 </div>
               ) : (
@@ -119,6 +139,7 @@ export function MyVideoList({ items, newIds, stockChoices, onUpdated, onDeleted 
                       type="button"
                       className="v4-text-btn v4-touch"
                       aria-label={`${item.stock_name} 영상 수정`}
+                      data-edit-for={item.id}
                       disabled={Boolean(busyId)}
                       onClick={() => {
                         setMessage(null)
@@ -132,6 +153,7 @@ export function MyVideoList({ items, newIds, stockChoices, onUpdated, onDeleted 
                       type="button"
                       className="v4-text-btn danger v4-touch"
                       aria-label={`${item.stock_name} 영상 삭제`}
+                      data-del-for={item.id}
                       disabled={Boolean(busyId)}
                       onClick={() => {
                         setMessage(null)
@@ -168,7 +190,7 @@ export function MyVideoList({ items, newIds, stockChoices, onUpdated, onDeleted 
       })}
     </ul>
   )
-}
+})
 
 function EditForm({
   item,

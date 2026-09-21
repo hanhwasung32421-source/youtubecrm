@@ -17,6 +17,7 @@ export default function V3EntryPage() {
     const run = async () => {
       try {
         const token = await getAccessToken()
+        if (cancelled) return
         if (!token) {
           router.replace('/v3/login')
           return

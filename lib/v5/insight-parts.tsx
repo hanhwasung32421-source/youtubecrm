@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
-import { GLOSSARY, type GlossaryKey } from '@/lib/v5/glossary'
+import { GLOSSARY_TERM, type GlossaryKey } from '@/lib/v5/glossary'
 import { copyText } from '@/lib/v5/share'
 import './pages.css'
 import './pages-r3.css'
@@ -103,18 +103,37 @@ export function ActiveFilters({ chips, onReset }: { chips: FilterChip[]; onReset
 // ---------------------------------------------------------------------------
 export function GlossaryTip({ term, label = '이게 뭐예요?' }: { term: GlossaryKey; label?: string }) {
   const [open, setOpen] = useState(false)
+  // 설명 글은 처음 눌렀을 때 불러온다(대부분의 사람은 누르지 않으므로 화면을 열 때 받지 않는다).
+  const [text, setText] = useState<{ short: string; detail: string } | 'fail' | null>(null)
   const id = useId()
-  const g = GLOSSARY[term]
+  const name = GLOSSARY_TERM[term]
+  const onClick = () => {
+    setOpen((o) => !o)
+    if (text === null || text === 'fail') {
+      import('@/lib/v5/glossary-text')
+        .then((m) => setText(m.GLOSSARY_TEXT[term]))
+        .catch(() => setText('fail'))
+    }
+  }
   return (
     <span className="v5p-gloss">
-      <button type="button" className="v5p-gloss-btn" aria-expanded={open} aria-controls={id} onClick={() => setOpen((o) => !o)}>
-        <span className="v5p-sr-only">{g.term} </span>
+      <button type="button" className="v5p-gloss-btn" aria-expanded={open} aria-controls={id} onClick={onClick}>
+        <span className="v5p-sr-only">{name} </span>
         {label}
       </button>
       {open ? (
         <span id={id} className="v5p-gloss-pop" role="note">
-          <strong>{g.term}</strong> {g.short}
-          <span className="v5p-gloss-detail">{g.detail}</span>
+          <strong>{name}</strong>{' '}
+          {text === null ? (
+            '설명을 불러오는 중이에요…'
+          ) : text === 'fail' ? (
+            '설명을 불러오지 못했어요. 인터넷 연결을 확인하고 다시 눌러 주세요.'
+          ) : (
+            <>
+              {text.short}
+              <span className="v5p-gloss-detail">{text.detail}</span>
+            </>
+          )}
         </span>
       ) : null}
     </span>
@@ -151,8 +170,8 @@ export function CopyLinkButton({ getUrl }: { getUrl: () => string }) {
 
 export function ExportCsvButton({ onExport, disabled, children }: { onExport: () => void; disabled?: boolean; children?: ReactNode }) {
   return (
-    <button type="button" className="button xs secondary" disabled={disabled} onClick={onExport} title="엑셀에서 열 수 있는 CSV 파일로 저장해요">
-      {children || '표를 CSV로 저장'}
+    <button type="button" className="button xs secondary" disabled={disabled} onClick={onExport} title="엑셀에서 바로 열 수 있는 파일(CSV)로 저장해요">
+      {children || '표를 엑셀 파일로 저장'}
     </button>
   )
 }

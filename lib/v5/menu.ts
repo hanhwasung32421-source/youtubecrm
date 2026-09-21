@@ -18,6 +18,7 @@ export type MenuDefinition = {
 
 export const GROUP_DAILY = '매일 업무'
 export const GROUP_GROWTH = '성장 관리'
+export const GROUP_HELP = '도움말'
 
 export const MENU_DEFINITIONS: readonly MenuDefinition[] = [
   {
@@ -26,7 +27,7 @@ export const MENU_DEFINITIONS: readonly MenuDefinition[] = [
     href: '/v5/register',
     audience: 'all',
     group: GROUP_DAILY,
-    description: '유튜브 주소와 종목을 넣으면 제목·조회수·좋아요·댓글을 자동으로 가져옵니다.'
+    description: '유튜브 주소와 종목을 넣으면 제목·조회수·좋아요·댓글을 자동으로 가져와요.'
   },
   {
     key: 'canvas',
@@ -34,7 +35,7 @@ export const MENU_DEFINITIONS: readonly MenuDefinition[] = [
     href: '/v5/canvas',
     audience: 'all',
     group: GROUP_GROWTH,
-    description: '조회수를 늘리려고 무엇을 바꿔 보는지, 결과가 어땠는지 단계별로 관리합니다.'
+    description: '조회수를 늘리려고 무엇을 바꿔 보는지, 결과가 어땠는지 단계별로 관리해요.'
   },
   {
     key: 'scoreboard',
@@ -42,7 +43,7 @@ export const MENU_DEFINITIONS: readonly MenuDefinition[] = [
     href: '/v5/scoreboard',
     audience: 'all',
     group: GROUP_GROWTH,
-    description: '영상마다 유튜브 추천을 잘 받고 있는지 점수로 비교합니다.'
+    description: '영상마다 유튜브 추천을 잘 받고 있는지 점수로 비교해요.'
   },
   {
     key: 'playbook',
@@ -50,7 +51,7 @@ export const MENU_DEFINITIONS: readonly MenuDefinition[] = [
     href: '/v5/playbook',
     audience: 'all',
     group: GROUP_GROWTH,
-    description: '반응이 좋았던 영상의 공통점을 모아 두고 다음 영상에 다시 씁니다.'
+    description: '반응이 좋았던 영상의 공통점을 모아 두고 다음 영상에 다시 써요.'
   },
   {
     key: 'retros',
@@ -58,7 +59,15 @@ export const MENU_DEFINITIONS: readonly MenuDefinition[] = [
     href: '/v5/retros',
     audience: 'admin',
     group: GROUP_GROWTH,
-    description: '한 주를 돌아보며 잘된 점, 고칠 점, 다음 주 할 일을 남깁니다.'
+    description: '한 주를 돌아보며 잘된 점, 고칠 점, 다음 주 할 일을 남겨요.'
+  },
+  {
+    key: 'help',
+    label: '사용 방법',
+    href: '/v5/help',
+    audience: 'all',
+    group: GROUP_HELP,
+    description: '영상 등록부터 되돌리기까지, 자주 쓰는 방법을 짧게 모았어요.'
   }
 ] as const
 

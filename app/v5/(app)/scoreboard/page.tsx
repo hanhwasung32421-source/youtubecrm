@@ -6,15 +6,13 @@ import { PageHeader, useV5Me } from '@/components/v5/app-shell'
 import { Kpi, Segment } from '@/components/v5/widget'
 import { Toast, useToast } from '@/components/toast'
 import { errorText, v5Post } from '@/lib/v5/client'
-import { csvFileName, scoreboardCsv } from '@/lib/v5/csv'
 import { SCORE_SORTS, SCORE_SORT_LABEL, SCORE_SPEC, type ScorePeriod, type ScoreSort } from '@/lib/v5/filters'
 import { formatCount, formatDayShort, formatKstFull, todayYmd } from '@/lib/v5/format'
 import { ActiveFilters, CopyLinkButton, ExportCsvButton, GlossaryTip, type FilterChip } from '@/lib/v5/insight-parts'
 import { AnswerBanner, EmptyBlock, LoadError, RelTime, fmtNum } from '@/lib/v5/page-parts'
 import { ScoreboardSkeleton } from '@/lib/v5/skeleton'
 import { ScoreBar, TierChip, TierDonut } from '@/lib/v5/score-viz'
-import { SCORE_FACTORS, scoreParts, sortScoreRows, strongestWeakest, totalOf } from '@/lib/v5/score-view'
-import { downloadCsv } from '@/lib/v5/share'
+import { SCORE_FACTORS, scoreParts, strongestWeakest, totalOf } from '@/lib/v5/score-view'
 import { experimentLink, nextStepFor, playbookLink } from '@/lib/v5/suggest'
 import { useV5Query } from '@/lib/v5/swr'
 import { useUrlFilters } from '@/lib/v5/use-filters'
@@ -27,15 +25,19 @@ const PERIOD_OPTIONS: Array<{ value: `${ScorePeriod}`; label: string }> = [
 ]
 
 type OwnerOption = { id: string; name: string; count: number }
+// rank: 점수 순위(1등부터). 정렬을 바꿔도 그대로다.
+type RankedRow = ScoreboardRow & { rank: number }
 type ScoreboardData = {
-  items: ScoreboardRow[]
-  shown: number
+  // 서버가 고른 정렬 순서대로 최대 200개
+  items: RankedRow[]
+  // 점수가 가장 높은 3개(점수 순). 오래된 응답에는 없을 수 있다.
+  best?: RankedRow[]
   days: ScorePeriod
   since: string
   summary: { total: number; avg: number; strong: number; weak: number }
   distribution?: Array<{ tier: ScoreTier; count: number }>
   // 점수가 가장 낮은 "아쉬움" 영상(낮은 순). 오래된 응답에는 없을 수 있다.
-  bottom?: ScoreboardRow[]
+  bottom?: RankedRow[]
   owners: OwnerOption[]
   unsynced: number
   lastSyncedAt: string | null
@@ -44,7 +46,7 @@ type ScoreboardData = {
   snapshotsTruncated: boolean
 }
 
-const PAGE_STEP = 20
+const PAGE_STEP = 50
 const FILTER_KEY = 'v5.scoreboard.filters.v1'
 
 // 보통 구간 등 다음 행동이 없는 영상에 붙이는 한 줄.
@@ -78,7 +80,8 @@ function NextStep({ row, compact }: { row: ScoreboardRow; compact?: boolean }) {
   )
 }
 
-const ScoreRow = memo(function ScoreRow({ rank, row }: { rank: number; row: ScoreboardRow }) {
+const ScoreRow = memo(function ScoreRow({ row }: { row: RankedRow }) {
+  const rank = row.rank
   const title = row.video.title || '(제목 없음)'
   const views = row.video.view_count
   const parts = scoreParts(row)
@@ -186,14 +189,15 @@ function ScoreboardView() {
   const [limit, setLimit] = useState(PAGE_STEP)
   const syncInFlight = useRef(false)
 
-  const url = ready ? `/api/v5/scoreboard?days=${days}${owner ? `&owner=${encodeURIComponent(owner)}` : ''}` : null
+  const url = ready ? `/api/v5/scoreboard?days=${days}${owner ? `&owner=${encodeURIComponent(owner)}` : ''}${sort !== 'score' ? `&sort=${sort}` : ''}` : null
   const q = useV5Query<ScoreboardData>(url, { errorFallback: '점수판을 불러오지 못했어요.' })
   const data = q.data
 
   // 저장돼 있던(또는 링크로 받은) 담당자가 이 기간에 없으면 전체로 되돌린다.
   useEffect(() => {
-    if (owner && data && !q.validating && !data.owners.some((o) => o.id === owner)) setFilters({ owner: '' })
-  }, [owner, data, q.validating, setFilters])
+    // 다른 기간의 옛 값(기간을 바꾸는 중)으로 판단하지 않는다.
+    if (owner && data && data.days === days && !q.validating && !data.owners.some((o) => o.id === owner)) setFilters({ owner: '' })
+  }, [owner, days, data, q.validating, setFilters])
 
   const changeDays = (value: `${ScorePeriod}`) => {
     setLimit(PAGE_STEP)
@@ -241,26 +245,31 @@ function ScoreboardView() {
 
   const rows = useMemo(() => data?.items || [], [data])
   const summary = data?.summary
-  const top = rows[0]
-  const rankById = useMemo(() => new Map(rows.map((r, i) => [r.video.id, i + 1])), [rows])
-  const sortedRows = useMemo(() => sortScoreRows(rows, sort), [rows, sort])
-  const visibleRows = sortedRows.slice(0, limit)
+  // 점수 1등: 서버가 따로 내려준다(정렬을 바꿔도 같다). 옛 응답이면 순위 1번인 행을 찾는다.
+  const top = data?.best?.[0] ?? rows.find((r) => r.rank === 1)
+  const visibleRows = rows.slice(0, limit)
   const ownerName = owner ? data?.owners.find((o) => o.id === owner)?.name : ''
 
   // "지금 할 일": 가장 아쉬운 영상 3개 / 가장 잘 나간 영상 3개
-  const worst = useMemo(() => (data?.bottom ? data.bottom : rows.filter((r) => r.tier === 'poor').slice(-3).reverse()).slice(0, 3), [data, rows])
-  const best = useMemo(() => rows.filter((r) => r.tier === 'excellent' || r.tier === 'good').slice(0, 3), [rows])
+  const worst = useMemo(() => (data?.bottom ? data.bottom : rows.filter((r) => r.tier === 'poor').sort((a, b) => b.rank - a.rank)).slice(0, 3), [data, rows])
+  const best = useMemo(() => (data?.best ?? rows.filter((r) => r.rank <= 3)).filter((r) => r.tier === 'excellent' || r.tier === 'good').slice(0, 3), [data, rows])
 
   const chips: FilterChip[] = []
   if (days !== SCORE_SPEC.defaults.days) chips.push({ key: 'days', label: `기간: 최근 ${days}일`, onClear: () => changeDays('30') })
   if (owner) chips.push({ key: 'owner', label: `담당자: ${ownerName || '선택한 담당자'}`, onClear: () => changeOwner('') })
   if (sort !== 'score') chips.push({ key: 'sort', label: `정렬: ${SCORE_SORT_LABEL[sort]}`, onClear: () => changeSort('score') })
 
-  const exportCsv = () => {
-    if (sortedRows.length === 0) return
-    const ok = downloadCsv(csvFileName('영상점수판', todayYmd()), scoreboardCsv(sortedRows, (r) => rankById.get(r.video.id) ?? 0))
-    if (ok) showSuccess(`영상 ${fmtNum(sortedRows.length)}개를 CSV 파일로 저장했어요.`)
-    else showErrorRef.current('파일을 저장하지 못했어요. 브라우저 설정을 확인해 주세요.')
+  // 파일 저장 도구는 버튼을 눌렀을 때 처음 불러온다(화면을 처음 여는 속도에 영향이 없게).
+  const exportCsv = async () => {
+    if (rows.length === 0) return
+    try {
+      const [{ csvFileName, scoreboardCsv }, { downloadCsv }] = await Promise.all([import('@/lib/v5/csv'), import('@/lib/v5/share')])
+      const ok = downloadCsv(csvFileName('영상점수판', todayYmd()), scoreboardCsv(rows, (r) => r.rank))
+      if (ok) showSuccess(`영상 ${fmtNum(rows.length)}개를 엑셀 파일로 저장했어요.`)
+      else showErrorRef.current('파일을 저장하지 못했어요. 브라우저 설정을 확인해 주세요.')
+    } catch {
+      showErrorRef.current('파일을 저장하지 못했어요. 인터넷 연결을 확인하고 다시 눌러 주세요.')
+    }
   }
 
   const syncButtonLabel = syncing ? '받아 오는 중…' : '유튜브에서 조회수 받기'
@@ -304,7 +313,7 @@ function ScoreboardView() {
         </span>
         <span className="v5p-toolbar-right">
           <CopyLinkButton getUrl={shareUrl} />
-          <ExportCsvButton onExport={exportCsv} disabled={sortedRows.length === 0} />
+          <ExportCsvButton onExport={() => void exportCsv()} disabled={rows.length === 0} />
         </span>
       </div>
       <ActiveFilters chips={chips} onReset={onReset} />
@@ -457,13 +466,13 @@ function ScoreboardView() {
                 <div className="v5p-section-head">
                   <h2>영상 순위</h2>
                   <span className="small muted">
-                    {SCORE_SORT_LABEL[sort]} · {fmtNum(Math.min(limit, sortedRows.length))} / {fmtNum(summary?.total ?? 0)}개 표시
+                    {SCORE_SORT_LABEL[sort]} · {fmtNum(Math.min(limit, rows.length))} / {fmtNum(summary?.total ?? 0)}개 표시
                   </span>
                 </div>
                 <div className="v5p-score-legend small muted">
                   막대는 {SCORE_FACTORS.map((f) => `${f.label} ${f.max}점`).join(' + ')} = 100점 만점이에요. 색이 칠해진 만큼이 받은 점수예요. 조회 속도 <GlossaryTip term="velocity" /> 초기 성장 <GlossaryTip term="early" />
                 </div>
-                {sortedRows.length === 0 ? (
+                {rows.length === 0 ? (
                   <div className="v5p-pick-empty">
                     {owner ? (
                       <>
@@ -480,18 +489,18 @@ function ScoreboardView() {
                 ) : (
                   <ul className="v5p-score-list">
                     {visibleRows.map((row) => (
-                      <ScoreRow key={row.video.id} rank={rankById.get(row.video.id) ?? 0} row={row} />
+                      <ScoreRow key={row.video.id} row={row} />
                     ))}
                   </ul>
                 )}
-                {sortedRows.length > limit ? (
+                {rows.length > limit ? (
                   <button className="button secondary sm" style={{ marginTop: 12 }} onClick={() => setLimit((l) => l + PAGE_STEP)}>
-                    더 보기 ({fmtNum(sortedRows.length - limit)}개 남음)
+                    더 보기 ({fmtNum(rows.length - limit)}개 남음)
                   </button>
                 ) : null}
                 {summary && summary.total > rows.length ? (
                   <div className="small muted" style={{ marginTop: 12 }}>
-                    순위는 상위 {fmtNum(rows.length)}개까지만 보여요. 평균 점수와 개수는 {fmtNum(summary.total)}개 전체 기준이에요. 담당자나 기간을 좁혀 보세요.
+                    {SCORE_SORT_LABEL[sort]}으로 {fmtNum(rows.length)}개까지만 보여요. 평균 점수와 개수는 {fmtNum(summary.total)}개 전체 기준이에요. 담당자나 기간을 좁혀 보세요.
                   </div>
                 ) : null}
                 {data.truncated ? (

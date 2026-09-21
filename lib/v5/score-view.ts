@@ -92,13 +92,13 @@ export function tierSummaryText(slices: TierSlice[]): string {
 // score: 점수 높은 순(그대로) · weak: 점수 낮은 순 · views: 조회수 많은 순 · recent: 최근 올린 순. 동률은 점수 순위를 따른다(안정 정렬).
 export type ScoreSortMode = 'score' | 'views' | 'recent' | 'weak'
 
-export function sortScoreRows(rows: readonly ScoreboardRow[], sort: ScoreSortMode): ScoreboardRow[] {
+export function sortScoreRows<T extends ScoreboardRow>(rows: readonly T[], sort: ScoreSortMode): T[] {
   const indexed = rows.map((row, i) => ({ row, i }))
-  const time = (r: ScoreboardRow) => {
+  const time = (r: T) => {
     const t = Date.parse(r.video.published_at || r.video.created_at || '')
     return Number.isFinite(t) ? t : 0
   }
-  const views = (r: ScoreboardRow) => (isNum(r.video.view_count) ? r.video.view_count : 0)
+  const views = (r: T) => (isNum(r.video.view_count) ? r.video.view_count : 0)
   if (sort === 'weak') return indexed.sort((a, b) => b.i - a.i).map((x) => x.row)
   if (sort === 'views') return indexed.sort((a, b) => views(b.row) - views(a.row) || a.i - b.i).map((x) => x.row)
   if (sort === 'recent') return indexed.sort((a, b) => time(b.row) - time(a.row) || a.i - b.i).map((x) => x.row)

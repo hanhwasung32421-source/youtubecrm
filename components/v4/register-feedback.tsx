@@ -1,10 +1,22 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { secondsLeft, type UndoState } from '@/components/v4/undo-state'
 import { loginHrefWithNext } from '@/components/v4/safe-next'
 import { needsRelogin, type RegisterErrorKind } from '@/components/v4/register-logic'
 import { LOGIN_HREF } from '@/lib/v4/menu'
+
+// 되돌리기 카운트다운용 현재 시각. 이 작은 칸만 다시 그려서, 카운트다운 동안 등록 화면 전체가 다시 그려지지 않게 한다.
+function useNowWhile(active: boolean, syncKey: number) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!active) return
+    setNow(Date.now())
+    const timer = window.setInterval(() => setNow(Date.now()), 500)
+    return () => window.clearInterval(timer)
+  }, [active, syncKey])
+  return now
+}
 
 export type FeedbackStatus = { tone: 'ok' | 'error'; text: string; kind?: RegisterErrorKind; retry?: boolean } | null
 
@@ -22,10 +34,9 @@ function ReloginLink() {
 //  2) 방금 등록한 영상 → [되돌리기 · N초] + 종목 바로 고치기
 //  3) 짧은 안내(되돌렸어요 등)
 //  4) 아무 일도 없을 때 → 사용법 한 줄
-export function RegisterFeedback({
+export const RegisterFeedback = memo(function RegisterFeedback({
   status,
   undo,
-  nowMs,
   busy,
   onUndo,
   onRetry,
@@ -34,7 +45,6 @@ export function RegisterFeedback({
 }: {
   status: FeedbackStatus
   undo: UndoState
-  nowMs: number
   busy: boolean
   onUndo: () => void
   onRetry: () => void
@@ -42,6 +52,7 @@ export function RegisterFeedback({
   idleHint: React.ReactNode
 }) {
   const recent = undo.recent
+  const nowMs = useNowWhile(undo.phase === 'open' || undo.phase === 'working', undo.expiresAt)
 
   let body: React.ReactNode
   if (status && status.tone === 'error') {
@@ -109,7 +120,7 @@ export function RegisterFeedback({
       {body}
     </div>
   )
-}
+})
 
 // 방금 등록한 영상의 종목이 틀렸을 때 그 자리에서 바로 고친다 (Enter 로 저장).
 function QuickFix({ initial, onSave }: { initial: string; onSave: (stock: string) => Promise<{ ok: boolean; message: string }> }) {
@@ -160,7 +171,7 @@ function QuickFix({ initial, onSave }: { initial: string; onSave: (stock: string
           setMsg(null)
         }}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+          if (e.key === 'Enter' && !e.nativeEvent.isComposing && e.keyCode !== 229) {
             e.preventDefault()
             e.stopPropagation()
             void save()

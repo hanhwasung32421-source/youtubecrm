@@ -4,34 +4,23 @@ import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { PageHeader } from '@/components/v4/app-shell'
 import { useV4Me } from '@/components/v4/me-context'
-import { ProgressRing, ShareBar, TimelineChart } from '@/components/v4/charts'
-import { EmptyState, KpiCard, PeriodToggle, SampleBanner } from '@/components/v4/ui'
+import { EmptyState, KpiCard, PeriodToggle } from '@/components/v4/ui'
 import { ChartSkeleton, HeroSkeleton, KpiSkeleton, ListSkeleton } from '@/components/v4/skeleton'
 import { clearDashboardCache, dashboardCache, dashboardKey } from '@/components/v4/dashboard-cache'
 import { NextActionsPanel } from '@/components/v4/next-actions-panel'
 import { deriveNextActions, setupChecklist } from '@/components/v4/next-actions'
 import { loginHrefWithNext } from '@/components/v4/safe-next'
-import { todayKst } from '@/components/v4/register-utils'
+import { msUntilNextKstMidnight, todayKst } from '@/components/v4/register-utils'
+import { useStableCallback } from '@/components/v4/use-stable-callback'
 import { computeDelta } from '@/components/v4/delta'
 import { Toast, useToast } from '@/components/toast'
 import { authedFetchJson, authedPostJson } from '@/lib/session/authed-fetch'
 import { LOGIN_HREF } from '@/lib/v4/menu'
 import { useV4Query } from '@/lib/v4/use-v4-query'
 import type { DailyPoint, Kpis, PeriodDays } from '@/lib/v4/analytics'
-import { fmtCompact, fmtNumber, fmtPercent, fmtRelative } from '@/lib/v4/format'
+import { fmtNumber, fmtPercent, fmtRelative } from '@/lib/v4/format'
 import { buildInsight } from './insight'
-
-type FeedItem = {
-  id: string
-  title: string
-  stockName: string
-  ownerName: string
-  contentType: string
-  viewCount: number
-  createdAt: string
-  thumbnailUrl: string | null
-  youtubeUrl: string
-}
+import { FeedList, GoalSection, TimelineBody, type FeedItem, type GoalInfo } from './sections'
 
 type DashboardResponse = {
   scope: 'admin' | 'staff'
@@ -46,16 +35,7 @@ type DashboardResponse = {
   daily: DailyPoint[]
   feed: FeedItem[]
   lastSyncedAt: string | null
-  goal: {
-    month: string
-    scope: 'team' | 'user' | 'derived' | 'none'
-    targetVideos: number
-    targetViews: number
-    actualVideos: number
-    actualViews: number
-    teamGoal: { targetVideos: number; targetViews: number } | null
-    sample: boolean
-  }
+  goal: GoalInfo
   error?: string
 }
 
@@ -63,14 +43,8 @@ type DashboardResponse = {
 type StaffWeekResponse = { range: { start: string; end: string }; rows: Array<{ userId: string; name: string; sparkline: number[] }> }
 type TopWeekResponse = { summary?: { top: { title: string; stockName: string; viewCount: number } | null } }
 
-const GOAL_SCOPE_LABEL: Record<DashboardResponse['goal']['scope'], string> = {
-  team: '팀 목표',
-  user: '개인 목표',
-  derived: '팀 목표를 인원수로 나눈 값',
-  none: '목표 미설정'
-}
-
 const STALE_HOURS = 24
+const AWAY_REFRESH_MS = 2 * 60 * 1000 // 다른 탭에 2분 넘게 있다가 돌아오면 숫자를 새로 확인한다
 
 export default function GrowthDashboardPage() {
   const { me, isAdmin } = useV4Me()
@@ -82,21 +56,10 @@ export default function GrowthDashboardPage() {
   const [loadError, setLoadError] = useState('')
   const [loadAuth, setLoadAuth] = useState(false)
   const [syncing, setSyncing] = useState(false)
-  const [goalVideos, setGoalVideos] = useState('')
-  const [goalViews, setGoalViews] = useState('')
-  const [savingGoal, setSavingGoal] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
   const requestRef = useRef(0)
-  const goalDirtyRef = useRef(false)
-
-  const applyGoalInputs = useCallback((res: DashboardResponse) => {
-    // 관리자가 고치는 중인 칸은 새로 받은 값으로 덮어쓰지 않는다.
-    if (goalDirtyRef.current) return
-    if (res.goal.teamGoal) {
-      setGoalVideos(String(res.goal.teamGoal.targetVideos))
-      setGoalViews(String(res.goal.teamGoal.targetViews))
-    }
-  }, [])
+  const syncingRef = useRef(false)
+  const hiddenAtRef = useRef(0)
 
   // 기간별 응답을 60초 동안 기억한다: 있으면 바로 보여 주고, 오래됐으면 화면은 그대로 둔 채 뒤에서 새로 받는다.
   // 기간을 빠르게 바꾸면 이전 요청은 취소하고 마지막 요청만 반영한다.
@@ -107,7 +70,6 @@ export default function GrowthDashboardPage() {
       if (cached) {
         setData(cached.value as DashboardResponse)
         setLoadError('')
-        applyGoalInputs(cached.value as DashboardResponse)
         if (cached.fresh && !force) {
           abortRef.current?.abort()
           setFetching(false)
@@ -137,7 +99,6 @@ export default function GrowthDashboardPage() {
         setLoadAuth(false)
         dashboardCache.set(key, res)
         setData(res)
-        applyGoalInputs(res)
       } catch (e: any) {
         if (e?.name === 'AbortError' || requestId !== requestRef.current) return
         const message = '인터넷 연결이 끊긴 것 같아요. 연결을 확인하고 "다시 불러오기"를 눌러 주세요.'
@@ -149,7 +110,7 @@ export default function GrowthDashboardPage() {
     },
     // showError 는 렌더마다 새로 만들어지지만 동작은 같다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [userId, applyGoalInputs]
+    [userId]
   )
 
   useEffect(() => {
@@ -162,52 +123,91 @@ export default function GrowthDashboardPage() {
   const view = data && data.period === period ? data : null
   const loading = !view && !loadError
 
-  const syncStats = async () => {
-    if (syncing) return
-    setSyncing(true)
-    const { ok, data: res } = await authedPostJson<{ updated: number; failed: number; total: number; error?: string }>('/api/v4/sync-stats', {})
-    setSyncing(false)
-    if (!ok || res?.error) {
-      showError(res?.error ? `${res.error} 잠시 후 다시 눌러 주세요.` : '조회수를 새로 받지 못했어요. 잠시 후 "새로 받기"를 다시 눌러 주세요.')
-      return
-    }
-    showSuccess(`영상 ${fmtNumber(res.total)}개 중 ${fmtNumber(res.updated)}개의 조회수를 새로 받았어요.${res.failed ? ` (실패 ${res.failed}개)` : ''}`)
-    clearDashboardCache(userId)
-    void load(period, true)
-    topQ.reload() // 조회수가 바뀌었으니 "최근 7일 상위 영상"도 새로 읽는다
-  }
-
-  const saveGoal = async () => {
-    if (!view || savingGoal) return
-    setSavingGoal(true)
-    const { ok, data: res } = await authedPostJson<{ error?: string }>('/api/v4/goals', {
-      month: view.goal.month,
-      userId: null,
-      targetVideos: Number(goalVideos || 0),
-      targetViews: Number(goalViews || 0)
-    })
-    setSavingGoal(false)
-    if (!ok || res?.error) {
-      showError(res?.error ? `${res.error} 입력한 숫자는 그대로예요. 다시 저장해 주세요.` : '목표를 저장하지 못했어요. 입력한 숫자는 그대로예요. 잠시 후 다시 저장해 주세요.')
-      return
-    }
-    goalDirtyRef.current = false
-    showSuccess('이번 달 팀 목표를 저장했어요.')
-    clearDashboardCache(userId)
-    void load(period, true)
-  }
-
-  const kpis = view?.kpis
-  const prev = view?.previousKpis || null
-  const goal = view?.goal
-  const videoRatio = goal && goal.targetVideos > 0 ? goal.actualVideos / goal.targetVideos : 0
-  const viewRatio = goal && goal.targetViews > 0 ? goal.actualViews / goal.targetViews : 0
-  const perDay = view && kpis ? kpis.videoCount / view.period : 0
-  const insight = view && kpis ? buildInsight({ days: view.period, scope: view.scope, kpis, daily: view.daily, targetPerDay: view.targetPerDay, previousKpis: view.previousKpis }) : null
-
   // ---- 다음 할 일: 이미 있는 응답만 읽는다 (담당자 7일 표 · 7일 상위 영상). 같은 요청은 캐시를 함께 쓴다.
   const staffQ = useV4Query<StaffWeekResponse>(isAdmin ? '/api/v4/staff?period=7' : null, { fallback: '담당자별 오늘 등록 수를 불러오지 못했어요.' })
   const topQ = useV4Query<TopWeekResponse>('/api/v4/ranking?period=7&limit=0', { fallback: '최근 7일 상위 영상을 불러오지 못했어요.' })
+  const reloadStaff = staffQ.reload
+  const reloadTop = topQ.reload
+
+  // 숫자를 전부 새로 읽는다 (조회수 새로 받기 · 목표 저장 · 오래 자리를 비웠다 돌아왔을 때 · 날짜가 바뀌었을 때)
+  const refreshAll = useStableCallback(() => {
+    // 다른 기간의 옛 숫자는 버리고, 지금 보는 기간은 그대로 둔 채 뒤에서 새로 받는다 (받지 못해도 화면이 비지 않는다).
+    const current = dashboardCache.get(dashboardKey(userId, period))
+    clearDashboardCache(userId)
+    if (current) dashboardCache.set(dashboardKey(userId, period), current.value)
+    void load(period, true)
+    reloadTop()
+    if (isAdmin) reloadStaff()
+  })
+
+  // 다른 탭에 오래 있다가 돌아오면, 그리고 한국 시간 0시가 지나면 "다음 할 일"과 숫자가 옛것이 되지 않게 새로 읽는다.
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        hiddenAtRef.current = Date.now()
+        return
+      }
+      const away = hiddenAtRef.current ? Date.now() - hiddenAtRef.current : 0
+      hiddenAtRef.current = 0
+      if (away > AWAY_REFRESH_MS) refreshAll()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    let timer = 0
+    const arm = () => {
+      timer = window.setTimeout(() => {
+        refreshAll()
+        arm()
+      }, msUntilNextKstMidnight(Date.now()) + 2000)
+    }
+    arm()
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.clearTimeout(timer)
+    }
+  }, [refreshAll])
+
+  const syncStats = async () => {
+    if (syncingRef.current) return
+    syncingRef.current = true
+    setSyncing(true)
+    try {
+      const { ok, data: res } = await authedPostJson<{ updated: number; failed: number; total: number; error?: string }>('/api/v4/sync-stats', {})
+      if (!ok || res?.error) {
+        showError(res?.error ? `${res.error} 잠시 후 다시 눌러 주세요.` : '조회수를 새로 받지 못했어요. 잠시 후 "새로 받기"를 다시 눌러 주세요.')
+        return
+      }
+      showSuccess(`영상 ${fmtNumber(res.total)}개 중 ${fmtNumber(res.updated)}개의 조회수를 새로 받았어요.${res.failed ? ` (실패 ${res.failed}개)` : ''}`)
+      refreshAll() // 조회수가 바뀌었으니 숫자와 "최근 7일 상위 영상"도 새로 읽는다
+    } catch {
+      showError('인터넷 연결이 끊긴 것 같아요. 연결을 확인하고 "조회수 새로 받기"를 다시 눌러 주세요.')
+    } finally {
+      syncingRef.current = false
+      setSyncing(false)
+    }
+  }
+
+  // 목표 저장. 화면 안내(토스트)는 여기서, 입력 칸은 GoalSection 이 맡는다.
+  const saveGoal = useStableCallback(async ({ month, targetVideos, targetViews }: { month: string; targetVideos: number; targetViews: number }) => {
+    try {
+      const { ok, data: res } = await authedPostJson<{ error?: string }>('/api/v4/goals', { month, userId: null, targetVideos, targetViews })
+      if (!ok || res?.error) {
+        showError(res?.error ? `${res.error} 입력한 숫자는 그대로예요. 다시 저장해 주세요.` : '목표를 저장하지 못했어요. 입력한 숫자는 그대로예요. 잠시 후 다시 저장해 주세요.')
+        return false
+      }
+    } catch {
+      showError('인터넷 연결이 끊긴 것 같아요. 입력한 숫자는 그대로예요. 연결을 확인하고 다시 저장해 주세요.')
+      return false
+    }
+    showSuccess('이번 달 팀 목표를 저장했어요.')
+    refreshAll()
+    return true
+  })
+
+  const kpis = view?.kpis
+  const prev = view?.previousKpis || null
+  const perDay = view && kpis ? kpis.videoCount / view.period : 0
+  const insight = view && kpis ? buildInsight({ days: view.period, scope: view.scope, kpis, daily: view.daily, targetPerDay: view.targetPerDay, previousKpis: view.previousKpis }) : null
+
   const nextReady = Boolean(view) && (!isAdmin || !staffQ.loading) && !topQ.loading
   const hasVideos = Boolean(view && kpis && (kpis.videoCount > 0 || view.feed.length > 0))
   const staffData = staffQ.data
@@ -238,13 +238,6 @@ export default function GrowthDashboardPage() {
   const checklist = view && isAdmin && !hasVideos ? setupChecklist({ hasVideos, lastSyncedAt: view.lastSyncedAt, goalScope: view.goal.scope, goalSample: view.goal.sample }) : null
   const goalSuggest = view ? Math.round(view.targetPerDay * 20) : 0
 
-  const onNextGoalSaved = () => {
-    goalDirtyRef.current = false
-    showSuccess('이번 달 팀 목표를 저장했어요.')
-    clearDashboardCache(userId)
-    void load(period, true)
-  }
-
   // 지난 기간 대비 칩: 지난 기간 값이 없으면 칩을 아예 보이지 않는다.
   const deltas = useMemo(() => {
     if (!view || !kpis || !prev) return null
@@ -259,12 +252,7 @@ export default function GrowthDashboardPage() {
   const compareLabel = view ? `지난 ${view.period}일 대비` : undefined
 
   const staleHours = view?.lastSyncedAt ? (Date.now() - new Date(view.lastSyncedAt).getTime()) / 3600000 : null
-  const syncStale = Boolean(view) && (staleHours === null || staleHours > STALE_HOURS)
-
-  const goalSummary =
-    goal && goal.scope !== 'none'
-      ? `영상 ${Math.round(videoRatio * 100)}% · 조회수 ${Math.round(viewRatio * 100)}% 달성`
-      : '아직 목표가 없어요'
+  const syncStale = Boolean(view) && (staleHours === null || Number.isNaN(staleHours) || staleHours > STALE_HOURS)
 
   return (
     <>
@@ -273,7 +261,7 @@ export default function GrowthDashboardPage() {
         subtitle={
           view
             ? `${view.range.start} ~ ${view.range.end} · ${view.scope === 'admin' ? `직원 ${fmtNumber(view.staffCount)}명 전체` : '내 영상'} 기준`
-            : '조회수와 업로드가 어떻게 흘러가는지, 지금 무엇을 봐야 하는지 한눈에 봅니다.'
+            : '조회수와 업로드가 어떻게 흘러가는지, 지금 무엇을 봐야 하는지 한눈에 볼 수 있어요.'
         }
         actions={<PeriodToggle value={period} onChange={setPeriod} />}
       />
@@ -316,7 +304,7 @@ export default function GrowthDashboardPage() {
               {fetching ? ' · 새로 확인하는 중…' : ''}
             </span>
             {isAdmin ? (
-              <button type="button" className="button secondary v4-mini" onClick={syncStats} disabled={syncing || fetching} title="유튜브에서 모든 영상의 최신 조회수·좋아요·댓글을 다시 가져옵니다">
+              <button type="button" className="button secondary v4-mini" onClick={syncStats} disabled={syncing || fetching} title="유튜브에서 모든 영상의 최신 조회수·좋아요·댓글을 다시 가져와요">
                 {syncing ? '받는 중…' : '유튜브에서 최신 조회수 받기'}
               </button>
             ) : null}
@@ -335,7 +323,10 @@ export default function GrowthDashboardPage() {
           onSync={syncStats}
           goalMonth={view.goal.month}
           goalSuggest={goalSuggest}
-          onGoalSaved={onNextGoalSaved}
+          onGoalSaved={() => {
+            showSuccess('이번 달 팀 목표를 저장했어요.')
+            refreshAll()
+          }}
         />
       ) : null}
 
@@ -372,7 +363,7 @@ export default function GrowthDashboardPage() {
         <SkeletonKpis />
       )}
 
-      {/* 3) 하루하루의 흐름 */}
+      {/* 3) 하루하루의 흐름 (그래프는 화면에 가까워질 때 내려받는다) */}
       <div className="panel">
         <div className="panel-header">
           <div>
@@ -382,13 +373,7 @@ export default function GrowthDashboardPage() {
         </div>
         {view ? (
           kpis && kpis.videoCount > 0 ? (
-            <>
-              <TimelineChart points={view.daily} target={view.targetPerDay} />
-              <div className="v4-share-row">
-                <div className="card-title">롱폼 · 숏폼 비중</div>
-                <ShareBar a={kpis.longformCount} b={kpis.shortformCount} />
-              </div>
-            </>
+            <TimelineBody points={view.daily} target={view.targetPerDay} longform={kpis.longformCount} shortform={kpis.shortformCount} />
           ) : (
             <EmptyState
               title="이 기간에 올린 영상이 없어요"
@@ -398,7 +383,7 @@ export default function GrowthDashboardPage() {
                 </Link>
               }
             >
-              영상을 등록하면 날마다 올린 개수와 조회수가 여기에 그려집니다. 기간을 넓혀 보는 것도 방법이에요.
+              영상을 등록하면 날마다 올린 개수와 조회수가 여기에 그려져요. 기간을 넓혀 보는 것도 방법이에요.
             </EmptyState>
           )
         ) : loadError ? (
@@ -413,10 +398,10 @@ export default function GrowthDashboardPage() {
         <div className="panel-header">
           <div>
             <div className="panel-title">방금 올라온 영상</div>
-            <p className="panel-subtitle">가장 최근에 등록된 영상 20개예요. 제목을 누르면 유튜브에서 열립니다.</p>
+            <p className="panel-subtitle">가장 최근에 등록된 영상 20개예요. 제목을 누르면 유튜브에서 열려요.</p>
           </div>
           <Link className="button secondary v4-mini" href="/v4/ranking">
-            성과 순위 보기
+            영상 성과 순위 보기
           </Link>
         </div>
         {!view && !loadError ? <ListSkeleton rows={6} thumb /> : null}
@@ -429,125 +414,14 @@ export default function GrowthDashboardPage() {
               </Link>
             }
           >
-            영상이 등록되면 이곳에 최신순으로 쌓입니다.
+            영상이 등록되면 이곳에 최신순으로 쌓여요.
           </EmptyState>
         ) : null}
-        {view && view.feed.length > 0 ? (
-          <ul className="v4-feed">
-            {view.feed.map((item) => (
-              <li className={`v4-feed-item ${item.contentType === 'shortform' ? 'short' : ''}`} key={item.id}>
-                {item.thumbnailUrl ? (
-                  <img className="v4-thumb" src={item.thumbnailUrl} alt="" loading="lazy" width={72} height={42} />
-                ) : (
-                  <div className="v4-thumb-placeholder" aria-hidden="true">
-                    썸네일 없음
-                  </div>
-                )}
-                <div style={{ minWidth: 0 }}>
-                  <div className="v4-feed-title">
-                    {item.youtubeUrl ? (
-                      <a href={item.youtubeUrl} target="_blank" rel="noopener noreferrer" title={item.title}>
-                        {item.title}
-                      </a>
-                    ) : (
-                      item.title
-                    )}
-                  </div>
-                  <div className="v4-feed-meta">
-                    <span>종목 {item.stockName}</span>
-                    {view.scope === 'admin' ? <span>담당 {item.ownerName}</span> : null}
-                    <span>{item.contentType === 'shortform' ? '숏폼' : '롱폼'}</span>
-                  </div>
-                </div>
-                <div className="v4-feed-right">
-                  <strong>{fmtNumber(item.viewCount)}회</strong>
-                  {fmtRelative(item.createdAt)}
-                </div>
-              </li>
-            ))}
-          </ul>
-        ) : null}
+        {view && view.feed.length > 0 ? <FeedList items={view.feed} showOwner={view.scope === 'admin'} /> : null}
       </div>
 
       {/* 5) 이번 달 목표 — 평소엔 접어 두고, 필요할 때 펼쳐 본다 */}
-      <details className="panel v4-goal">
-        <summary>
-          <span className="v4-goal-title">{goal?.month || '이번 달'} 목표</span>
-          <span className="v4-goal-summary">{view ? goalSummary : ''}</span>
-        </summary>
-        <div className="v4-goal-body">
-          <SampleBanner show={Boolean(goal?.sample)} what="이번 달 목표" />
-          {goal && goal.scope !== 'none' ? (
-            <>
-              <p className="small muted">{GOAL_SCOPE_LABEL[goal.scope]} 기준으로, 이번 달 1일부터 오늘까지 얼마나 채웠는지 보여줘요.</p>
-              <div className="v4-ring-row">
-                <ProgressRing value={videoRatio} label="영상 수" sublabel={`${fmtNumber(goal.actualVideos)} / ${fmtNumber(goal.targetVideos)}개`} />
-                <ProgressRing value={viewRatio} label="조회수" sublabel={`${fmtCompact(goal.actualViews)} / ${fmtCompact(goal.targetViews)}`} color="#10b981" />
-              </div>
-            </>
-          ) : view ? (
-            <EmptyState title="이번 달 목표가 아직 없어요">
-              {isAdmin ? '아래에서 팀 목표를 정하면 달성률이 여기에 표시됩니다.' : '관리자가 팀 목표를 정하면 나에게 맞게 나눈 목표가 표시됩니다.'}
-            </EmptyState>
-          ) : (
-            <div className="small muted">{loadError ? '목표를 불러오지 못했어요.' : '불러오는 중…'}</div>
-          )}
-
-          {isAdmin && view ? (
-            <form
-              className="v4-goal-edit"
-              onSubmit={(e) => {
-                e.preventDefault()
-                void saveGoal()
-              }}
-            >
-              <div className="panel-title">팀 목표 정하기</div>
-              <p className="small muted">팀 전체가 이번 달에 달성할 영상 수와 조회수예요. 직원 화면에는 인원수로 나눈 값이 보입니다.</p>
-              <div className="v4-goal-form">
-                <div className="field">
-                  <label className="label" htmlFor="v4-goal-videos">
-                    목표 영상 수 (개)
-                  </label>
-                  <input
-                    id="v4-goal-videos"
-                    className="input"
-                    type="number"
-                    min={0}
-                    inputMode="numeric"
-                    autoComplete="off"
-                    value={goalVideos}
-                    onChange={(e) => {
-                      goalDirtyRef.current = true
-                      setGoalVideos(e.target.value)
-                    }}
-                  />
-                </div>
-                <div className="field">
-                  <label className="label" htmlFor="v4-goal-views">
-                    목표 조회수 (회)
-                  </label>
-                  <input
-                    id="v4-goal-views"
-                    className="input"
-                    type="number"
-                    min={0}
-                    inputMode="numeric"
-                    autoComplete="off"
-                    value={goalViews}
-                    onChange={(e) => {
-                      goalDirtyRef.current = true
-                      setGoalViews(e.target.value)
-                    }}
-                  />
-                </div>
-                <button type="submit" className="button" disabled={savingGoal}>
-                  {savingGoal ? '저장 중…' : '목표 저장'}
-                </button>
-              </div>
-            </form>
-          ) : null}
-        </div>
-      </details>
+      <GoalSection goal={view ? view.goal : null} state={loadError ? 'error' : 'loading'} isAdmin={isAdmin} onSave={saveGoal} />
     </>
   )
 }

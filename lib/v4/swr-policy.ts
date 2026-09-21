@@ -1,7 +1,7 @@
 // 화면 쪽 "옛 값을 먼저 보여주고 뒤에서 새로 받는" 캐시의 판단 규칙 (순수 함수, React/브라우저 의존 없음).
 
-export const SWR_FRESH_MS = 15_000 // 이 안이면 그대로 쓰고 서버에 묻지 않는다
-export const SWR_MAX_AGE_MS = 60_000 // 이 안이면 옛 값을 먼저 보여주고 뒤에서 새로 받는다. 넘으면 버린다.
+export const SWR_FRESH_MS = 5_000 // 이 안이면 그대로 쓰고 서버에 묻지 않는다 (영상을 등록·삭제한 직후 옛 숫자가 오래 남지 않게 짧게)
+export const SWR_MAX_AGE_MS = 30_000 // 이 안이면 옛 값을 먼저 보여주고 뒤에서 새로 받는다. 넘으면 버린다.
 export const SWR_MAX_ENTRIES = 40
 
 export type CachePhase = 'fresh' | 'stale' | 'expired'

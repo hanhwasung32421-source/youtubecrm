@@ -46,6 +46,6 @@ export async function GET(request: Request) {
       dailyTarget: DAILY_TARGET
     })
   } catch (e) {
-    return v4ErrorResponse(e, '담당자 성과 비교 조회 실패')
+    return v4ErrorResponse(e, '담당자별 성과를 불러오지 못했어요')
   }
 }

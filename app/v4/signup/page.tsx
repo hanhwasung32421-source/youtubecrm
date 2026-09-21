@@ -40,6 +40,7 @@ export default function SignupPage() {
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
 
+  const submittingRef = useRef(false)
   const emailRef = useRef<HTMLInputElement | null>(null)
   const loginIdRef = useRef<HTMLInputElement | null>(null)
   const passwordRef = useRef<HTMLInputElement | null>(null)
@@ -53,7 +54,8 @@ export default function SignupPage() {
     setAntiBotCode('')
     try {
       const res = await fetch('/api/auth/challenge')
-      const data = (await res.json()) as { code: string }
+      const data = (await res.json()) as { code?: string }
+      if (!res.ok || !data.code) throw new Error('challenge')
       setChallengeCode(data.code)
     } catch {
       setChallengeCode('----')
@@ -106,7 +108,7 @@ export default function SignupPage() {
       const data = await res.json().catch(() => ({}))
 
       if (!res.ok) {
-        setFieldError('email', data?.error || '이메일 중복확인에 실패했어요. 잠시 후 다시 시도해 주세요.')
+        setFieldError('email', data?.error || '이메일 중복확인을 하지 못했어요. 잠시 후 다시 시도해 주세요.')
         return
       }
 
@@ -130,6 +132,9 @@ export default function SignupPage() {
 
   // 빠진 칸이 있으면 첫 번째 칸에 커서를 두고 칸마다 이유를 보여준다.
   const onSubmit = async () => {
+    if (submittingRef.current) return
+    submittingRef.current = true
+    let leaving = false // 가입이 끝나 다른 화면으로 가는 중이면 버튼을 계속 잠가 둔다 (두 번 눌려 가입이 두 번 되지 않게)
     setError('')
     setMessage('')
     setLoading(true)
@@ -179,7 +184,7 @@ export default function SignupPage() {
 
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
-        setError(data?.error || '회원가입에 실패했어요. 입력한 내용을 확인해 주세요.')
+        setError(data?.error || '가입하지 못했어요. 입력한 내용을 확인해 주세요.')
         await refresh()
         return
       }
@@ -191,7 +196,8 @@ export default function SignupPage() {
       })
 
       if (signInError || !signInData.session?.access_token) {
-        setMessage('회원가입이 완료되었습니다. 로그인 화면으로 이동해 주세요.')
+        leaving = true
+        setMessage('가입이 끝났어요. 로그인 화면으로 이동할게요.')
         setTimeout(() => {
           router.push(LOGIN_HREF)
         }, 1000)
@@ -202,24 +208,30 @@ export default function SignupPage() {
       void fetch('/api/auth/log-login', {
         method: 'POST',
         headers: { Authorization: `Bearer ${signInData.session.access_token}` }
-      })
+      }).catch(() => {})
 
       let homeHref = homeHrefForRole(null)
       try {
         const me = await fetchMe(signInData.session.access_token)
         homeHref = homeHrefForRole(me.roleType)
       } catch {
-        setMessage('회원가입이 완료되었습니다. 자동 로그인 후 화면 이동에 실패했습니다.')
+        leaving = true
+        setMessage('가입은 끝났어요. 화면을 옮기지 못해서 로그인 화면으로 이동할게요.')
+        setTimeout(() => {
+          router.push(LOGIN_HREF)
+        }, 1500)
         return
       }
 
-      setMessage('회원가입이 완료되어 자동 로그인됩니다.')
+      leaving = true
+      setMessage('가입이 끝났어요. 자동으로 로그인하고 첫 화면으로 이동해요.')
       router.push(homeHref)
     } catch {
       setError('가입 중 문제가 생겼어요. 인터넷 연결을 확인하고 다시 시도해 주세요.')
       await refresh()
     } finally {
-      setLoading(false)
+      submittingRef.current = false
+      if (!leaving) setLoading(false)
     }
   }
 
@@ -231,7 +243,7 @@ export default function SignupPage() {
         <div className="panel soft">
           <img className="auth-logo" src="/logo-ant.png" alt="" width={56} height={56} />
           <div className="panel-title">회원가입</div>
-          <p className="panel-subtitle">이메일 중복확인을 먼저 하고, 이어서 가입 정보를 입력하면 가입이 완료됩니다.</p>
+          <p className="panel-subtitle">이메일이 이미 쓰이고 있는지 먼저 확인하고, 이어서 가입 정보를 적으면 가입이 끝나요.</p>
         </div>
 
         <form
@@ -273,11 +285,11 @@ export default function SignupPage() {
                 }}
               />
               <button className="button secondary nowrap" type="button" disabled={loading} onClick={() => void checkEmailDuplicate()}>
-                {loading && !emailReady ? '확인 중...' : emailReady ? '확인됨 ✓' : '중복확인'}
+                {loading && !emailReady ? '확인 중…' : emailReady ? '확인됨 ✓' : '중복확인'}
               </button>
             </div>
             <div id="v4-su-email-help" className="small muted">
-              로그인할 때 쓰는 이메일이에요. 입력하고 Enter 를 누르면 중복확인이 됩니다.
+              로그인할 때 쓰는 이메일이에요. 적고 Enter 를 누르면 중복확인이 돼요.
             </div>
             <FieldError id="v4-su-email-err" text={fieldErrors.email} />
           </div>
@@ -462,7 +474,7 @@ export default function SignupPage() {
               </div>
 
               <button className="button" type="submit" disabled={loading}>
-                {loading ? '처리 중...' : '가입하기'}
+                {loading ? '가입하는 중…' : '가입하기'}
               </button>
             </>
           ) : null}
@@ -478,7 +490,7 @@ export default function SignupPage() {
             </div>
           ) : null}
           <div className="small muted">
-            이미 계정이 있나요? <Link className="link" href="/v4/login">로그인</Link>
+            이미 계정이 있나요? <Link className="link" href="/v4/login">로그인하러 가기</Link>
           </div>
         </form>
       </div>

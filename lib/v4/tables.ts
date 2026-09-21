@@ -17,8 +17,7 @@ export const V4_TABLES = {
 } as const
 
 export const V4_SQL_FILE = 'supabase/sql/v4/100_v4_growth.sql'
-export const MISSING_TABLE_MESSAGE = `V4 테이블이 아직 생성되지 않았습니다. ${V4_SQL_FILE} 을 실행해 주세요.`
-export const SAMPLE_BANNER_MESSAGE = `샘플 데이터 표시 중 — ${V4_SQL_FILE} 실행 후 실데이터로 전환됩니다`
+export const MISSING_TABLE_MESSAGE = `기록을 저장할 공간이 아직 만들어지지 않았어요. 개발 담당자에게 ${V4_SQL_FILE} 실행을 요청해 주세요.`
 
 // PostgREST가 "테이블 없음"을 알려주는 방식은 버전에 따라 42P01 코드이거나 schema cache 메시지다.
 export function isMissingTableError(error: unknown) {

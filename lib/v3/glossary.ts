@@ -48,8 +48,4 @@ export const GLOSSARY: Record<GlossaryKey, GlossaryEntry> = {
   }
 }
 
-export function glossaryEntry(key: GlossaryKey): GlossaryEntry {
-  return GLOSSARY[key]
-}
-
 export const GLOSSARY_STORAGE_PREFIX = 'v3:glossary-seen:v1:'

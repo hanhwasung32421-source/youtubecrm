@@ -49,10 +49,6 @@ export const GLOSSARY: Record<GlossaryKey, GlossaryEntry> = {
   }
 }
 
-export function glossaryLabel(key: GlossaryKey): string {
-  return GLOSSARY[key].label
-}
-
 export function glossaryTitle(key: GlossaryKey): string {
   const entry = GLOSSARY[key]
   const alias = entry.aliases?.length ? ` (${entry.aliases.join(', ')}이라고도 해요)` : ''

@@ -58,11 +58,11 @@ export function todayKst(now = new Date()) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now)
 }
 
-export function isTodayKst(iso: string | null | undefined) {
-  if (!iso) return false
-  const t = new Date(iso)
-  if (Number.isNaN(t.getTime())) return false
-  return todayKst(t) === todayKst()
+// 다음 한국 시간 0시까지 남은 밀리초 (한국은 서머타임이 없어서 UTC+9 고정). 정각이면 24시간 뒤를 돌려준다.
+export function msUntilNextKstMidnight(nowMs: number) {
+  const DAY = 24 * 60 * 60 * 1000
+  const shifted = nowMs + 9 * 60 * 60 * 1000
+  return DAY - (((shifted % DAY) + DAY) % DAY)
 }
 
 export function readStorage(key: string): string | null {

@@ -65,7 +65,13 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
         let data: Awaited<ReturnType<typeof fetchMe>>
         try {
           data = await fetchMe(accessToken)
-        } catch {
+        } catch (e) {
+          if (cancelled) return
+          // 인터넷이 잠깐 끊긴 것(TypeError)이면 로그인 화면으로 쫓아내지 않고, 다시 시도할 수 있게 안내만 한다.
+          if (e instanceof TypeError) {
+            setError('인터넷 연결이 불안정해요. 연결을 확인하고 "새로고침"을 눌러 주세요.')
+            return
+          }
           router.replace(loginHref())
           return
         }
@@ -73,8 +79,8 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
         const next: V4Me = { crmUserId: data.crmUserId, name: data.name, roleType: data.roleType, roleName: data.roleName || data.roleType }
         // 같은 사람이면 그대로 둬서 아래 화면들이 괜히 다시 그려지지 않게 한다.
         setMe((prev) => (prev && prev.crmUserId === next.crmUserId && prev.roleType === next.roleType && prev.name === next.name ? prev : next))
-      } catch (e: any) {
-        if (!cancelled) setError(e?.message || '로그인 확인 중 문제가 생겼습니다. 새로고침하거나 다시 로그인해 주세요.')
+      } catch {
+        if (!cancelled) setError('로그인 상태를 확인하지 못했어요. "새로고침"을 눌러 보고, 계속되면 다시 로그인해 주세요.')
       }
     }
     void run()
@@ -99,11 +105,11 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
       <div className="panel" style={{ margin: 24 }}>
         <div className="message-error" role="alert">{error}</div>
         <div className="row" style={{ marginTop: 12 }}>
-          <button className="button secondary" onClick={() => window.location.reload()}>
+          <button type="button" className="button secondary" onClick={() => window.location.reload()}>
             새로고침
           </button>
-          <button className="button secondary" onClick={() => router.replace(LOGIN_HREF)}>
-            로그인 화면으로
+          <button type="button" className="button secondary" onClick={() => router.replace(LOGIN_HREF)}>
+            로그인 화면으로 가기
           </button>
         </div>
       </div>

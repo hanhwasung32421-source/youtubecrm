@@ -34,20 +34,6 @@ export function formatPct(value: number | null | undefined, digits = 1): string 
   return `${value.toFixed(digits)}%`
 }
 
-export function formatSignedPct(value: number | null | undefined, digits = 1): string {
-  if (!isNum(value)) return DASH
-  const sign = value > 0 ? '+' : ''
-  return `${sign}${value.toFixed(digits)}%`
-}
-
-// 색에만 기대지 않는 변화 표기: ▲ 12% / ▼ 8% / 변화 없음
-export function formatArrowPct(value: number | null | undefined, digits = 0): string {
-  if (!isNum(value)) return DASH
-  const rounded = Number(Math.abs(value).toFixed(digits))
-  if (rounded === 0) return '변화 없음'
-  return `${value > 0 ? '▲' : '▼'} ${num.format(rounded)}%`
-}
-
 // 사람이 읽는 "며칠/몇 시간" 표기
 export function formatDays(days: number | null | undefined): string {
   if (!isNum(days)) return DASH
@@ -91,15 +77,6 @@ export function formatKstDateTime(value: string | number | Date | null | undefin
   const year = kstFields(now).year
   const head = f.year === year ? '' : `${f.year}/`
   return `${head}${f.month}/${f.day} (${f.weekday}) ${f.hour}:${f.minute}`
-}
-
-// "9/21 (월)"
-export function formatKstDay(value: string | number | Date | null | undefined, now: number = Date.now()): string {
-  const ms = toMs(value)
-  if (!Number.isFinite(ms)) return DASH
-  const f = kstFields(ms)
-  const head = f.year === kstFields(now).year ? '' : `${f.year}/`
-  return `${head}${f.month}/${f.day} (${f.weekday})`
 }
 
 // 예전 이름 그대로 쓰는 화면이 있어서 새 표기로 연결해 둔다.

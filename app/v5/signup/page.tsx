@@ -131,14 +131,14 @@ export default function SignupPage() {
       const data = await res.json().catch(() => ({}))
 
       if (!res.ok) {
-        setFieldError('email', cleanServerMessage(data?.error, '이메일 확인에 실패했습니다. 잠시 후 다시 시도해 주세요.'))
+        setFieldError('email', cleanServerMessage(data?.error, '이메일을 확인하지 못했어요. 잠시 뒤 다시 시도해 주세요.'))
         return
       }
 
       if (data.exists) {
         setEmailChecked(false)
         setEmailCheckedValue('')
-        setFieldError('email', '이미 가입된 이메일입니다. 다른 이메일을 입력하거나 로그인해 주세요.')
+        setFieldError('email', '이미 가입된 이메일이에요. 다른 이메일을 입력하거나 로그인해 주세요.')
         emailRef.current?.focus()
         return
       }
@@ -146,7 +146,7 @@ export default function SignupPage() {
       setEmailChecked(true)
       setEmailCheckedValue(value)
     } catch (e: any) {
-      setFieldError('email', e instanceof TypeError ? NETWORK_MESSAGE : '이메일 확인 중 문제가 생겼습니다. 잠시 후 다시 시도해 주세요.')
+      setFieldError('email', e instanceof TypeError ? NETWORK_MESSAGE : '이메일을 확인하다가 문제가 생겼어요. 잠시 뒤 다시 시도해 주세요.')
     } finally {
       setLoading(false)
     }
@@ -156,7 +156,7 @@ export default function SignupPage() {
   const validate = (): boolean => {
     const next: FieldErrors = {}
     if (loginId.trim().length < 2) next.loginId = '아이디를 2자 이상 입력해 주세요.'
-    if (password.length < 6) next.password = '비밀번호는 6자 이상이어야 합니다.'
+    if (password.length < 6) next.password = '비밀번호는 6자 이상이어야 해요.'
     if (!name.trim()) next.name = '이름을 입력해 주세요.'
     if (!/^\d{8}$/.test(birthDate)) next.birthDate = '숫자 8자리로 입력해 주세요. 예: 19950710'
     if (!/^\d{4}$/.test(phoneMid) || !/^\d{4}$/.test(phoneLast)) next.phone = '010 뒤 번호를 4자리씩 모두 입력해 주세요.'
@@ -185,6 +185,7 @@ export default function SignupPage() {
 
     busyRef.current = true
     setLoading(true)
+    let moved = false // 화면이 바뀔 때까지 버튼을 잠가 둔다(가입 요청이 두 번 가지 않게)
     try {
       const res = await fetch('/api/auth/signup', {
         method: 'POST',
@@ -203,7 +204,7 @@ export default function SignupPage() {
 
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
-        const text = cleanServerMessage(data?.error, '회원가입에 실패했습니다. 입력한 내용을 다시 확인해 주세요.')
+        const text = cleanServerMessage(data?.error, '가입하지 못했어요. 입력한 내용을 다시 확인해 주세요.')
         const field = pickFieldForMessage(text)
         if (field) {
           setFieldError(field, text)
@@ -222,9 +223,10 @@ export default function SignupPage() {
       })
 
       if (signInError || !signInData.session?.access_token) {
-        setMessage('회원가입이 완료되었습니다. 로그인 화면으로 이동해 주세요.')
+        setMessage('가입이 끝났어요. 로그인 화면으로 이동할게요.')
+        moved = true
         setTimeout(() => {
-          router.push('/v5/login')
+          router.replace('/v5/login')
         }, 1000)
         return
       }
@@ -239,18 +241,21 @@ export default function SignupPage() {
       try {
         me = await fetchMe(signInData.session.access_token)
       } catch {
-        setMessage('회원가입이 완료되었습니다. 자동 로그인 후 화면 이동에 실패했습니다.')
+        setMessage('가입은 끝났어요. 화면을 옮기지 못했으니 로그인 화면에서 로그인해 주세요.')
         return
       }
 
-      setMessage('회원가입이 완료되어 자동 로그인됩니다.')
-      router.push(getHomeHref(me.roleType))
+      setMessage('가입이 끝났어요. 바로 로그인할게요.')
+      moved = true
+      router.replace(getHomeHref(me.roleType))
     } catch (e: any) {
-      setFormError(e instanceof TypeError ? NETWORK_MESSAGE : '회원가입 중 문제가 생겼습니다. 잠시 후 다시 시도해 주세요.')
+      setFormError(e instanceof TypeError ? NETWORK_MESSAGE : '가입하다가 문제가 생겼어요. 잠시 뒤 다시 시도해 주세요.')
       await refresh()
     } finally {
-      busyRef.current = false
-      setLoading(false)
+      if (!moved) {
+        busyRef.current = false
+        setLoading(false)
+      }
     }
   }
 
@@ -260,7 +265,7 @@ export default function SignupPage() {
         <div className="panel soft">
           <img className="auth-logo" src="/logo-ant.png" alt="" width={56} height={56} />
           <div className="panel-title">회원가입</div>
-          <p className="panel-subtitle">이메일을 먼저 확인한 뒤, 아이디·이름 등을 입력하면 바로 가입되고 로그인됩니다.</p>
+          <p className="panel-subtitle">이메일을 먼저 확인한 뒤 아이디·이름 등을 입력하면, 바로 가입되고 로그인돼요.</p>
         </div>
 
         <form
@@ -314,7 +319,7 @@ export default function SignupPage() {
               </p>
             ) : (
               <p id="v5-su-email-help" className="v5-auth-help">
-                {emailChecked ? '사용 가능한 이메일입니다.' : '입력한 뒤 Enter 또는 중복확인을 누르면 사용할 수 있는지 확인합니다.'}
+                {emailChecked ? '사용할 수 있는 이메일이에요.' : '입력한 뒤 Enter나 ‘중복확인’을 누르면 사용할 수 있는지 확인해요.'}
               </p>
             )}
           </div>
@@ -339,7 +344,7 @@ export default function SignupPage() {
                   }}
                 />
                 <p id="v5-su-loginid-help" className={errors.loginId ? 'v5-auth-error' : 'v5-auth-help'} role={errors.loginId ? 'alert' : undefined}>
-                  {errors.loginId || '로그인할 때 쓰는 아이디입니다. 2자 이상.'}
+                  {errors.loginId || '로그인할 때 쓰는 아이디예요. 2자 이상으로 정해 주세요.'}
                 </p>
               </div>
 

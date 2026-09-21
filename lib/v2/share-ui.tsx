@@ -4,7 +4,7 @@
 //  - CSV 는 브라우저 안에서 만들어 바로 내려받는다 (서버에 보내지 않는다). 엑셀에서 한글이 깨지지 않도록 BOM 이 들어간다.
 //  - 링크 복사는 클립보드 권한이 없으면 임시 입력칸 복사로, 그것도 안 되면 주소를 보여 주고 직접 복사하게 한다.
 import { useEffect, useRef, useState } from 'react'
-import { buildCsv, csvFileName, type CsvValue } from './csv'
+import type { CsvValue } from './csv'
 import { kstYmd } from './dates'
 
 export type CsvTable = { name: string; headers: string[]; rows: CsvValue[][] }
@@ -86,11 +86,21 @@ export function ShareBar({
     if (manualLink) inputRef.current?.select()
   }, [manualLink])
 
-  const onCsv = () => {
+  const onCsv = async () => {
     if (!getCsv) return
     const table = getCsv()
-    const csv = buildCsv(table.headers, table.rows)
-    if (downloadCsv(csvFileName(table.name, kstYmd()), csv)) say(`표 ${table.rows.length.toLocaleString('ko-KR')}줄을 파일로 저장했어요. 엑셀에서 열 수 있어요.`)
+    // CSV 를 만드는 코드는 버튼을 처음 눌렀을 때만 내려받는다.
+    let csv = ''
+    let fileName = ''
+    try {
+      const { buildCsv, csvFileName } = await import('./csv')
+      csv = buildCsv(table.headers, table.rows)
+      fileName = csvFileName(table.name, kstYmd())
+    } catch {
+      say('파일을 만들지 못했어요. 인터넷 연결을 확인하고 다시 눌러 주세요.')
+      return
+    }
+    if (downloadCsv(fileName, csv)) say(`표 ${table.rows.length.toLocaleString('ko-KR')}줄을 파일로 저장했어요. 엑셀에서 열 수 있어요.`)
     else say('파일을 저장하지 못했어요. 브라우저의 다운로드 차단을 확인해 주세요.')
   }
 
@@ -109,7 +119,7 @@ export function ShareBar({
     <div className="v2a-share">
       <div className="v2a-share-buttons">
         {getCsv ? (
-          <button type="button" className="button secondary xs" onClick={onCsv} disabled={Boolean(csvDisabledReason)} title={csvDisabledReason || '지금 보이는 조건의 표 전체를 엑셀에서 열 수 있는 파일(CSV)로 저장해요.'}>
+          <button type="button" className="button secondary xs" onClick={() => void onCsv()} disabled={Boolean(csvDisabledReason)} title={csvDisabledReason || '지금 보이는 조건의 표 전체를 엑셀에서 열 수 있는 파일(CSV)로 저장해요.'}>
             표를 CSV로 저장
           </button>
         ) : null}

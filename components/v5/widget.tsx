@@ -19,7 +19,7 @@ export function SampleBanner({ show, sqlFile = 'supabase/sql/v5/100_v5_growth_la
   if (!show) return null
   return (
     <div className="v5-banner" role="status">
-      샘플 데이터 표시 중 · <code>{sqlFile}</code> 실행 후 실제 데이터로 바뀝니다
+      샘플 데이터를 보여 주고 있어요 · <code>{sqlFile}</code> 실행 후 실제 데이터로 바뀌어요
     </div>
   )
 }
@@ -239,6 +239,9 @@ export function Tabs<T extends string>({ value, tabs, onChange, label, idBase, v
   const autoId = useId()
   const base = idBase || autoId
   const refs = useRef<Array<HTMLButtonElement | null>>([])
+  // Tab 키로 들어갈 탭 하나: 선택된 탭. 선택된 탭이 없거나 못 누르는 탭이면 첫 번째로 누를 수 있는 탭(그래야 탭 줄에 키보드로 들어올 수 있다).
+  const selectedIdx = tabs.findIndex((t) => t.value === value && !t.disabled)
+  const entryIdx = selectedIdx >= 0 ? selectedIdx : tabs.findIndex((t) => !t.disabled)
 
   const move = (from: number, step: number) => {
     // 못 누르는 탭은 건너뛴다.
@@ -251,10 +254,13 @@ export function Tabs<T extends string>({ value, tabs, onChange, label, idBase, v
       }
     }
   }
+  // Home/End: 맨 앞/뒤에서 가장 가까운, 누를 수 있는 탭으로.
   const jump = (idx: number) => {
-    if (tabs[idx] && !tabs[idx].disabled) {
-      onChange(tabs[idx].value)
-      refs.current[idx]?.focus()
+    const order = idx === 0 ? tabs.map((_, i) => i) : tabs.map((_, i) => tabs.length - 1 - i)
+    const target = order.find((i) => !tabs[i].disabled)
+    if (target !== undefined) {
+      onChange(tabs[target].value)
+      refs.current[target]?.focus()
     }
   }
 
@@ -272,16 +278,17 @@ export function Tabs<T extends string>({ value, tabs, onChange, label, idBase, v
             role="tab"
             id={tabId(base, tab.value)}
             aria-selected={selected}
-            aria-controls={panelId(base, tab.value)}
-            tabIndex={selected ? 0 : -1}
+            aria-controls={selected ? panelId(base, tab.value) : undefined}
+            tabIndex={i === entryIdx ? 0 : -1}
             disabled={tab.disabled}
             className={`v5-tab ${selected ? 'active' : ''}`}
             onClick={() => onChange(tab.value)}
             onKeyDown={(e) => {
-              if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+              // 가로 탭이므로 ←→ 만 쓴다(↑↓ 는 화면을 스크롤하는 데 그대로 둔다).
+              if (e.key === 'ArrowRight') {
                 e.preventDefault()
                 move(i, 1)
-              } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+              } else if (e.key === 'ArrowLeft') {
                 e.preventDefault()
                 move(i, -1)
               } else if (e.key === 'Home') {
@@ -367,6 +374,30 @@ export function SkeletonRegion({ label = '불러오는 중', className, children
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
+// 덮개가 여러 개 겹치거나 닫히는 순서가 어긋나도 스크롤 잠금이 풀리지 않는 일이 없도록 열린 덮개를 세어 둔다.
+//  - 맨 처음 열릴 때만 body 의 원래 스타일을 기억하고, 마지막 덮개가 닫힐 때만 되돌린다.
+//  - Esc · Tab 은 가장 위(마지막으로 열린) 덮개만 처리한다.
+const drawerStack: object[] = []
+let savedBodyStyle: { overflow: string; paddingRight: string } | null = null
+
+function lockBodyScroll() {
+  if (drawerStack.length === 1 || !savedBodyStyle) {
+    const body = document.body
+    savedBodyStyle = { overflow: body.style.overflow, paddingRight: body.style.paddingRight }
+    const scrollbar = window.innerWidth - document.documentElement.clientWidth
+    body.style.overflow = 'hidden'
+    if (scrollbar > 0) body.style.paddingRight = `${scrollbar}px`
+  }
+}
+
+function unlockBodyScroll() {
+  if (drawerStack.length === 0 && savedBodyStyle) {
+    document.body.style.overflow = savedBodyStyle.overflow
+    document.body.style.paddingRight = savedBodyStyle.paddingRight
+    savedBodyStyle = null
+  }
+}
+
 function focusables(root: HTMLElement | null) {
   if (!root) return []
   return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((el) => el.getClientRects().length > 0)
@@ -390,12 +421,9 @@ export function Drawer({ title, onClose, footer, children }: { title: ReactNode;
   })
 
   useEffect(() => {
-    const body = document.body
-    const prevOverflow = body.style.overflow
-    const prevPaddingRight = body.style.paddingRight
-    const scrollbar = window.innerWidth - document.documentElement.clientWidth
-    body.style.overflow = 'hidden'
-    if (scrollbar > 0) body.style.paddingRight = `${scrollbar}px`
+    const token = {}
+    drawerStack.push(token)
+    lockBodyScroll()
 
     // 안쪽에서 이미 포커스를 가져갔으면 건드리지 않고, 아니면 첫 입력칸(없으면 패널)으로.
     const panel = panelRef.current
@@ -406,7 +434,9 @@ export function Drawer({ title, onClose, footer, children }: { title: ReactNode;
     }
 
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !e.defaultPrevented) {
+      if (drawerStack[drawerStack.length - 1] !== token) return // 위에 다른 덮개가 열려 있으면 그쪽이 처리한다
+      // 한글 입력 중(조합 중)의 Esc 는 입력을 취소하는 키이므로 덮개를 닫지 않는다.
+      if (e.key === 'Escape' && !e.defaultPrevented && !e.isComposing) {
         e.preventDefault()
         closeRef.current()
         return
@@ -437,8 +467,9 @@ export function Drawer({ title, onClose, footer, children }: { title: ReactNode;
 
     return () => {
       window.removeEventListener('keydown', onKeyDown)
-      body.style.overflow = prevOverflow
-      body.style.paddingRight = prevPaddingRight
+      const at = drawerStack.indexOf(token)
+      if (at >= 0) drawerStack.splice(at, 1)
+      unlockBodyScroll()
       if (opener && document.contains(opener)) opener.focus()
     }
   }, [opener])

@@ -56,7 +56,7 @@ export function buildInsight({ days, scope, kpis, daily, targetPerDay, previousK
   if (kpis.videoCount === 0) {
     return {
       headline: `${period} 동안 등록된 영상이 없어요.`,
-      detail: '영상을 등록하면 조회수와 반응이 여기에 자동으로 모입니다.',
+      detail: '영상을 등록하면 조회수와 반응이 여기에 자동으로 모여요.',
       tone: 'neutral',
       next: { label: '영상 등록하러 가기', why: '주소와 종목명만 넣으면 1분도 걸리지 않아요.', href: '/v4/register' }
     }

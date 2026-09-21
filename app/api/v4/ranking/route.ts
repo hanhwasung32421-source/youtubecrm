@@ -78,6 +78,6 @@ export async function GET(request: Request) {
       }
     })
   } catch (e) {
-    return v4ErrorResponse(e, '콘텐츠 성과 랭킹 조회 실패')
+    return v4ErrorResponse(e, '영상 순위를 불러오지 못했어요')
   }
 }

@@ -12,8 +12,6 @@ import { useSearchField } from '@/lib/v4/use-search-field'
 import { useV4Query } from '@/lib/v4/use-v4-query'
 import type { PeriodDays, StockAggregate } from '@/lib/v4/analytics'
 import { STOCKS_SPEC, rankingHref, type StocksFilters } from '@/lib/v4/page-filters'
-import { buildCsv, csvFilename, csvKstDateTime } from '@/lib/v4/csv'
-import { downloadCsvFile } from '@/lib/v4/download'
 import {
   NO_STOCK_NAME,
   STOCK_FOLD_MAX_MULTIPLE,
@@ -35,7 +33,6 @@ type StocksResponse = {
   range: { start: string; end: string }
   previousRange: { start: string; end: string }
   items: StockAggregate[]
-  top5Recent: Array<{ stockName: string; videoCount: number; totalViews: number; avgViews: number }>
   totals: { stockCount: number; videoCount: number }
   error?: string
 }
@@ -151,8 +148,9 @@ function StocksScreen() {
   }
   const clearFilters = () => reset(RESET_KEYS)
 
-  const exportCsv = () => {
+  const exportCsv = async () => {
     if (rows.length === 0) return
+    const [{ buildCsv, csvFilename, csvKstDateTime }, { downloadCsvFile }] = await Promise.all([import('@/lib/v4/csv'), import('@/lib/v4/download')])
     const headers = ['순위', '종목', '영상 수', '총 조회수', '영상당 평균 조회수', '반응 점수(팀 평균 대비 배수)', '직전 기간 총 조회수', '지난 기간 대비 변화(%)', '흐름', '마지막 영상 시각(한국 시간)', '담당자 수', '참고 신호']
     const body = rows.map((s, i) => {
       const m = multipleOf(s)
@@ -172,7 +170,7 @@ function StocksScreen() {
       ]
     })
     downloadCsvFile(csvFilename(`종목반응_최근${period}일`), buildCsv(headers, body))
-    showSuccess(`종목 ${fmtNumber(rows.length)}개를 CSV로 저장했어요.`)
+    showSuccess(`종목 ${fmtNumber(rows.length)}개를 엑셀 파일로 저장했어요.`)
   }
 
   const failed = Boolean(error) && (!data || stale)
@@ -187,7 +185,7 @@ function StocksScreen() {
     <>
       <PageHeader
         title="종목 트렌드"
-        subtitle="어떤 종목 영상이 조회수를 끌어오는지 보고, 다음에 뭘 올릴지 정합니다."
+        subtitle="어떤 종목 영상이 조회수를 끌어오는지 보고, 다음에 뭘 올릴지 정할 수 있어요."
         actions={
           <>
             <CopyLinkButton getUrl={shareUrl} onResult={(ok) => (ok ? showSuccess('이 화면 링크를 복사했어요. 받은 사람도 같은 조건으로 볼 수 있어요.') : showError('링크를 복사하지 못했어요. 주소창의 주소를 직접 복사해 주세요.'))} />
@@ -202,7 +200,7 @@ function StocksScreen() {
           <ErrorPanel message={error} status={status} onRetry={reload} busy={fetching} />
         ) : noData ? (
           <EmptyPanel title="이 기간에 등록된 영상이 아직 없어요">
-            이 화면은 종목별로 영상이 몇 개인지, 조회수가 얼마나 나왔는지 보여주고 “다음에 어떤 종목을 올릴지” 알려줘요. 영상을 등록할 때 종목명을 적으면 자동으로 모입니다. 기간을 더 길게 바꿔 볼 수도 있어요.
+            이 화면은 종목별로 영상이 몇 개인지, 조회수가 얼마나 나왔는지 보여주고 “다음에 어떤 종목을 올릴지” 알려줘요. 영상을 등록할 때 종목명을 적으면 자동으로 모여요. 기간을 더 길게 바꿔 볼 수도 있어요.
           </EmptyPanel>
         ) : (
           <>
@@ -212,7 +210,7 @@ function StocksScreen() {
               headline={
                 advice.top.length > 0 ? (
                   <>
-                    이번 기간 반응이 좋은 종목 Top {advice.top.length}: <span className="em">{advice.top.map((s) => s.stockName).join(' · ')}</span>
+                    이번 기간 반응이 좋은 종목 상위 {advice.top.length}개: <span className="em">{advice.top.map((s) => s.stockName).join(' · ')}</span>
                   </>
                 ) : zeroViews ? (
                   '아직 조회수를 받아오지 않았어요'
@@ -360,7 +358,7 @@ function StocksScreen() {
               sub="열 제목을 누르면 정렬돼요. 위 타일에 없는 종목도 여기서 찾을 수 있어요."
               actions={
                 <>
-                  <CsvButton onExport={exportCsv} disabled={!data || rows.length === 0} />
+                  <CsvButton onExport={() => void exportCsv()} disabled={!data || rows.length === 0} />
                   <input
                     className="input v4p-search-input"
                     type="search"
@@ -470,7 +468,7 @@ function StocksScreen() {
                 <p>영상당 평균 = 종목의 총 조회수 ÷ 그 종목 영상 수. 괄호 안 “배”는 팀 평균과 비교한 값(반응 점수)이에요. 영상이 1개뿐인 종목은 우연일 수 있어서, 영상이 2개 이상인 종목만 “더 올려 보세요”로 골라요.</p>
                 <p>지난 기간 대비 = (이번 기간 총 조회수 − 직전 같은 길이 기간 총 조회수) ÷ 직전 기간 총 조회수. 비교 기간: {data ? `${fmtYmdKo(data.previousRange.start)} ~ ${fmtYmdKo(data.previousRange.end)}` : '직전 같은 길이'}.</p>
                 <p>±5% 이내는 &quot;비슷해요&quot;, 지난 기간에 영상이 없던 종목은 &quot;새로 등장&quot;으로 표시해요.</p>
-                <p>“표를 CSV로 저장”은 지금 검색·정렬 조건에 맞는 종목 전부를 저장해요.</p>
+                <p>“표를 엑셀 파일로 저장”은 지금 검색·정렬 조건에 맞는 종목 전부를 저장해요.</p>
               </Formula>
               <GlossaryList terms={['reactionScore', 'avgViews', 'trend', 'sample', 'foldCandidate']} />
             </Card>

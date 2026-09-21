@@ -28,7 +28,7 @@ const toNumberOrNull = (v: string | undefined) => {
 export async function fetchYoutubeStatsBatch(ids: string[], apiKey: string): Promise<Map<string, YoutubeStats>> {
   const out = new Map<string, YoutubeStats>()
   if (ids.length === 0) return out
-  if (ids.length > YOUTUBE_BATCH_SIZE) throw new Error('한 번에 50개까지만 조회할 수 있습니다.')
+  if (ids.length > YOUTUBE_BATCH_SIZE) throw new Error('한 번에 50개까지만 조회할 수 있어요.')
 
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 15_000)

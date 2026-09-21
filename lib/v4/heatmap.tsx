@@ -4,7 +4,7 @@
 // - 표(grid)로 만들어 스크린리더가 칸마다 "월요일 오후 3시 · 평균 조회수 1.2만 · 영상 4개" 를 읽어 준다.
 // - Tab 으로 표에 한 번 들어와 화살표 키/Home/End 로 칸을 옮긴다 (칸이 168개라 칸마다 Tab 을 멈추지 않는다).
 // - 마우스를 올리거나 칸을 누르거나 키보드로 가면 아래 한 줄에 정확한 숫자가 나온다 (터치 화면 포함).
-// - 색만으로 구분하지 않는다: 칸 안에 숫자, 추천 칸은 ★ + 테두리, 영상이 3개 미만인 칸(표본이 적어요)은 점선 테두리.
+// - 색만으로 구분하지 않는다: 칸 안에 숫자, 추천 칸은 ★ + 테두리, 영상이 3개 미만인 칸(영상이 적어요)은 점선 테두리.
 // - 칸을 누르면 그 칸이 고정되고, 아래 줄에 "이 시간대에 올린 영상 보기" 링크(hrefFor)가 나온다.
 // - 화면이 좁으면 가로(24시간)가 아니라 세로로 24시간을 세워 7열로 보여준다 (가로 스크롤 없음).
 
@@ -183,7 +183,7 @@ export function Heatmap({
             {shownCell && shownCell.count > 0 ? (
               <>
                 {' · '}영상 {fmtNumber(shownCell.count)}개 · 평균 조회수 {fmtNumber(shownCell.avgViews)}회
-                {isThinCell(shownCell.count) ? ` (영상 ${TIMING_RELIABLE_MIN}개 미만이라 표본이 적어요)` : ''}
+                {isThinCell(shownCell.count) ? ` (영상 ${TIMING_RELIABLE_MIN}개 미만이라 참고만 하세요)` : ''}
                 {hrefFor ? (
                   <>
                     {' · '}
@@ -208,7 +208,7 @@ export function Heatmap({
         </span>
         <span className="v4p-legend-item"><i className="v4p-swatch" /> 올린 영상 없음</span>
         <span className="v4p-legend-item"><i className="v4p-swatch rec" /> ★ 추천 시간대</span>
-        {mode === 'avg' ? <span className="v4p-legend-item"><i className="v4p-swatch thin" /> 점선 = 영상 {TIMING_RELIABLE_MIN}개 미만이라 표본이 적어요</span> : null}
+        {mode === 'avg' ? <span className="v4p-legend-item"><i className="v4p-swatch thin" /> 점선 = 영상 {TIMING_RELIABLE_MIN}개 미만이라 참고만 하세요</span> : null}
       </div>
     </div>
   )

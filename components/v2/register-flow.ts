@@ -127,14 +127,33 @@ export const UNDO_WINDOW_MS = 10_000
 
 export type EntryType = 'longform' | 'shortform'
 
+// 방금 등록한 영상이 어디서 왔는지(등록 직전 확인 결과):
+//  · created  — 확인해 보니 그때까지 없던 영상. 이번에 새로 만들어졌다.
+//  · existing — 이미 있던 영상(내 것이거나 다른 담당자 것)
+//  · unknown  — 확인하지 못했다(네트워크 등)
+export type EntryOrigin = 'created' | 'existing' | 'unknown'
+
 export type LastEntry = {
   videoId: string
   url: string // 되돌리면 주소 칸에 다시 채워 줄 주소
   stock: string
   type: EntryType
   nth: number // 오늘 몇 번째인지
-  // 이미 있던 영상의 종목만 바꾼 경우: 되돌리면 삭제가 아니라 이 값으로 복원한다(영상 자체는 지우지 않는다)
+  origin: EntryOrigin
+  // 이미 있던 내 영상의 종목만 바꾼 경우: 되돌리면 삭제가 아니라 이 값으로 복원한다(영상 자체는 지우지 않는다)
   updatedFrom: { stock: string; type: EntryType } | null
+  // 새로 만든 영상을 되돌릴 때 서버가 "이 시각 이후에 만든 영상만" 지우도록 확인하는 기준(서버 시각)
+  guard: string | null
+}
+
+// 되돌리기 방식: 새로 만든 것을 확인했을 때만 삭제('delete'), 이미 있던 내 영상은 이전 값으로 복원('restore'),
+// 그 밖에는 되돌리기를 열지 않는다('none' — 남의 영상이나 확인 못 한 영상을 지우는 일이 없도록).
+export type UndoKind = 'delete' | 'restore' | 'none'
+
+export function undoKindOf(entry: Pick<LastEntry, 'origin' | 'updatedFrom' | 'guard'>): UndoKind {
+  if (entry.updatedFrom) return 'restore'
+  if (entry.origin === 'created' && entry.guard) return 'delete'
+  return 'none'
 }
 
 export type UndoPhase = 'none' | 'open' | 'busy' | 'closed'
@@ -160,13 +179,14 @@ export type UndoAction =
 export function undoReducer(state: UndoState, action: UndoAction): UndoState {
   switch (action.type) {
     case 'registered':
-      return { entry: action.entry, expiresAt: action.now + UNDO_WINDOW_MS, phase: 'open', error: '' }
+      // 되돌릴 수 없는 등록(이미 있던 남의 영상 등)은 처음부터 닫힌 상태로 둔다
+      return { entry: action.entry, expiresAt: action.now + UNDO_WINDOW_MS, phase: undoKindOf(action.entry) === 'none' ? 'closed' : 'open', error: '' }
     case 'tick':
       if (state.phase === 'open' && action.now >= state.expiresAt) return { ...state, phase: 'closed' }
       return state
     case 'undo_start':
       // 시간이 지났거나 이미 처리 중이면 시작하지 않는다
-      if (state.phase !== 'open' || !state.entry || action.now >= state.expiresAt) return state
+      if (state.phase !== 'open' || !state.entry || action.now >= state.expiresAt || undoKindOf(state.entry) === 'none') return state
       return { ...state, phase: 'busy', error: '' }
     case 'undo_ok':
       // 그 사이 다음 영상을 등록했다면(다른 videoId) 새 항목을 지우지 않는다

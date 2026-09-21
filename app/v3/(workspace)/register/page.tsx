@@ -1,5 +1,6 @@
 'use client'
 
+import dynamic from 'next/dynamic'
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { PageHeader } from '@/components/v3/app-shell'
 import { useV3Me } from '@/components/v3/auth-guard'
@@ -10,7 +11,6 @@ import { Skel, VideoListSkeleton } from '@/components/v3/skeleton'
 import { Toast, useToast } from '@/components/toast'
 import { authedFetchJson } from '@/lib/session/authed-fetch'
 import { isTodayKst } from '@/lib/v3/engagement'
-import { BulkRegister } from './bulk-register'
 import { DailyProgress } from './daily-progress'
 import { readDraft, writeDraft } from './draft'
 import { MyVideosList, type MineVideo } from './my-videos'
@@ -24,12 +24,15 @@ import {
   explainInvalidUrl,
   findDuplicate,
   groupByStock,
+  isImeKey,
+  noUndoNote,
   parseGoal,
+  planUndo,
   registeredAtLabel,
   undoReduce,
   undoSecondsLeft,
   type Failure,
-  type UndoPlan
+  type PriorState
 } from './register-logic'
 import { StatusSlot, type RegStatus } from './status-slot'
 import { readStored, writeStored } from './youtube-url'
@@ -59,6 +62,17 @@ const HIGHLIGHT_MS = 4500
 const LIST_PAGE_SIZE = 20 // /api/videos/mine 의 한 페이지 크기
 const LIST_MAX_PAGES = 4
 const LOOKUP_WAIT_MS = 2500
+// 여러 개 등록은 두 번째 방식이라 필요할 때(처음 열 때)만 내려받는다.
+const loadBulk = () => import('./bulk-register').then((m) => m.BulkRegister)
+const BulkRegister = dynamic(loadBulk, {
+  ssr: false,
+  loading: () => (
+    <div className="v3-bulk" aria-busy="true">
+      <Skel h={140} r={10} />
+    </div>
+  )
+})
+
 const PASTE_FALLBACK = '주소 칸을 누르고 Ctrl+V(맥은 ⌘+V)로 붙여넣어 주세요.'
 
 function typeLabel(type: ContentType) {
@@ -155,6 +169,9 @@ export default function RegisterPage() {
   const touchOnly = useRef(false) // 휴대폰: 저절로 커서를 옮기면 키보드가 화면을 가리므로 옮기지 않는다.
   const modeRef = useRef(mode)
   const draftReady = useRef(false)
+  const flashTimers = useRef(new Set<number>())
+  const mineSeq = useRef(0) // 목록 요청이 겹쳤을 때 늦게 도착한 옛 결과가 새 결과를 덮지 않게
+  const toastRef = useRef({ showSuccess, showError })
 
   const normalized = useMemo(() => findYoutube(youtubeUrl), [youtubeUrl])
   const validId = normalized.ok ? normalized.videoId : ''
@@ -239,7 +256,7 @@ export default function RegisterPage() {
       const linkedFormat = query.get('format')
       if (linkedStock) {
         setStockName(linkedStock)
-        setUrlNote(`'${linkedStock}' 후속 영상이에요. 주소만 붙여 넣으면 됩니다.`)
+        setUrlNote(`'${linkedStock}' 후속 영상이에요. 주소만 붙여넣으면 돼요.`)
       }
       if (linkedFormat === 'longform' || linkedFormat === 'shortform') setContentType(linkedFormat)
     } catch {
@@ -261,6 +278,16 @@ export default function RegisterPage() {
   useEffect(() => {
     modeRef.current = mode
   }, [mode])
+
+  useEffect(() => {
+    toastRef.current = { showSuccess, showError }
+  })
+
+  // 화면을 떠날 때 남아 있는 "방금 등록" 강조 타이머를 치운다.
+  useEffect(() => {
+    const timers = flashTimers.current
+    return () => timers.forEach((timer) => window.clearTimeout(timer))
+  }, [])
 
   const invalidateLookups = useCallback(() => {
     lookupGen.current++
@@ -295,13 +322,14 @@ export default function RegisterPage() {
   }, [validId, mode, ensureLookup])
 
   const loadMine = useCallback(async (): Promise<number | null> => {
+    const seq = ++mineSeq.current
     try {
       const all: MineVideo[] = []
       for (let page = 1; page <= LIST_MAX_PAGES; page++) {
         const { ok, data } = await authedFetchJson<{ items: MineVideo[] }>(`/api/videos/mine?page=${page}`)
         if (!ok) {
           if (page === 1) {
-            setListError(true)
+            if (seq === mineSeq.current) setListError(true)
             return null
           }
           break
@@ -311,12 +339,15 @@ export default function RegisterPage() {
         // 한 페이지가 전부 오늘 등록한 것이면 다음 페이지도 오늘 것일 수 있으니 이어서 받는다.
         if (items.length < LIST_PAGE_SIZE || !isTodayKst(items[items.length - 1].created_at)) break
       }
-      setListError(false)
-      setVideos(all)
-      setRecentStocks((prev) => mergeStocks(prev, all.map((v) => v.stock_name || '')))
+      // 더 나중에 시작한 요청이 있으면 이 (옛) 결과로 화면을 덮지 않는다. 숫자만 돌려준다.
+      if (seq === mineSeq.current) {
+        setListError(false)
+        setVideos(all)
+        setRecentStocks((prev) => mergeStocks(prev, all.map((v) => v.stock_name || '')))
+      }
       return all.filter((v) => isTodayKst(v.created_at)).length
     } catch {
-      setListError(true)
+      if (seq === mineSeq.current) setListError(true)
       return null
     }
   }, [])
@@ -348,7 +379,11 @@ export default function RegisterPage() {
         previewCache.current.set(target.videoId, result)
         setPreview({ id: target.videoId, data: result })
       } catch {
-        // 미리보기는 없어도 등록에는 영향이 없다.
+        // 미리보기는 없어도 등록에는 영향이 없다. 실패도 기억해 두어서 "확인하는 중" 표시가 계속 남지 않게 한다.
+        if (token !== previewToken.current) return
+        const result: PreviewResponse = { error: 'no-preview' }
+        previewCache.current.set(target.videoId, result)
+        setPreview({ id: target.videoId, data: result })
       }
     }, PREVIEW_DELAY_MS)
     return () => {
@@ -386,23 +421,24 @@ export default function RegisterPage() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  const chooseType = (type: ContentType) => {
+  // 아래 함수들은 자식 화면(목록·진행 막대·여러 개 등록)에 넘겨서, 글자를 칠 때마다 그 화면들이 다시 그려지지 않게 고정해 둔다.
+  const chooseType = useCallback((type: ContentType) => {
     setContentType(type)
     writeStored(TYPE_KEY, type)
-  }
+  }, [])
 
-  const rememberStock = (name: string) => {
+  const rememberStock = useCallback((name: string) => {
     setRecentStocks((prev) => {
       const next = mergeStocks([name], prev)
       writeStored(STOCKS_KEY, JSON.stringify(next))
       return next
     })
-  }
+  }, [])
 
-  const changeGoal = (next: number) => {
+  const changeGoal = useCallback((next: number) => {
     setGoal(next)
     writeStored(GOAL_KEY, String(next))
-  }
+  }, [])
 
   const changeAutoSubmit = (on: boolean) => {
     setAutoSubmit(on)
@@ -410,17 +446,19 @@ export default function RegisterPage() {
   }
 
   // 방금 등록한 줄을 잠깐 강조한다.
-  const flash = (id: string | null) => {
+  const flash = useCallback((id: string | null) => {
     if (!id) return
     setHighlightIds((prev) => new Set(prev).add(id))
-    window.setTimeout(() => {
+    const timer = window.setTimeout(() => {
+      flashTimers.current.delete(timer)
       setHighlightIds((prev) => {
         const next = new Set(prev)
         next.delete(id)
         return next
       })
     }, HIGHLIGHT_MS)
-  }
+    flashTimers.current.add(timer)
+  }, [])
 
   const switchMode = (next: 'single' | 'bulk', seedText?: string) => {
     setMode(next)
@@ -518,7 +556,7 @@ export default function RegisterPage() {
   }
 
   const onUrlKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.nativeEvent.isComposing) return
+    if (isImeKey(e)) return
     if (e.key === 'Escape' && youtubeUrl && !saving) {
       // Esc: 주소 칸을 비우고 처음부터 다시
       e.preventDefault()
@@ -548,7 +586,12 @@ export default function RegisterPage() {
   }
 
   const onStockKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.nativeEvent.isComposing || e.key !== 'Escape' || saving) return
+    if (isImeKey(e)) {
+      // 한글 조합을 끝내려고 누른 Enter가 등록으로 이어지지 않게 한다(사파리는 조합이 끝난 뒤에 Enter가 들어온다).
+      if (e.key === 'Enter' && !e.nativeEvent.isComposing) e.preventDefault()
+      return
+    }
+    if (e.key !== 'Escape' || saving) return
     e.preventDefault()
     if (stockName) clearStock() // Esc 한 번으로 종목 비우기
     else urlRef.current?.focus()
@@ -618,16 +661,29 @@ export default function RegisterPage() {
       // 이미 등록한 영상인지 확인(주소를 붙일 때 이미 요청해 둬서 보통 바로 끝난다). 확인이 안 되면 그냥 등록한다.
       const lookup = await resolveExisting(target.videoId)
       const listed = findDuplicate(videos, target.videoId)
-      const existing =
-        lookup && lookup.found && lookup.mine
-          ? lookup.video
-          : listed
-            ? { id: listed.id, stock_name: listed.stock_name, content_type: listed.content_type, content_category: undefined as string | null | undefined }
-            : null
-      const takenFromOther = !!lookup && lookup.found && !lookup.mine
 
-      if (opts.auto && (existing || takenFromOther)) {
-        // 바로 등록을 켜 둬도, 이미 있는 영상을 덮어쓰지는 않는다. 안내 카드가 보이므로 종목 칸에서 멈춘다.
+      // 등록하기 전에 이 영상이 어땠는지. 조회로 "없다"고 확실히 확인된 경우에만 새로 만든 것으로 본다(그때만 되돌리기로 지운다).
+      let prior: PriorState
+      let existing: { id: string; stock_name: string | null; content_type: ContentType; content_category: string | null | undefined } | null = null
+      if (lookup) {
+        if (!lookup.found) {
+          prior = 'new'
+        } else if (lookup.mine) {
+          prior = 'mine'
+          existing = lookup.video
+        } else {
+          prior = 'other'
+        }
+      } else if (listed) {
+        prior = 'mine'
+        existing = { id: listed.id, stock_name: listed.stock_name, content_type: listed.content_type, content_category: undefined }
+      } else {
+        prior = 'unknown'
+      }
+
+      if (opts.auto && prior !== 'new') {
+        // 바로 등록을 켜 둬도, 이미 있는(또는 있는지 모르는) 영상을 덮어쓰지는 않는다. 안내 카드가 보이므로 종목 칸에서 멈춘다.
+        if (prior === 'unknown') setUrlNote('이미 등록한 영상인지 확인하지 못해서 자동 등록은 멈췄어요. 종목을 확인하고 등록을 눌러 주세요.')
         focusStock()
         return
       }
@@ -655,17 +711,17 @@ export default function RegisterPage() {
       writeStored(TYPE_KEY, type)
       invalidateLookups()
 
-      const plan: UndoPlan = !result.id
-        ? { kind: 'none' }
-        : existing
-          ? { kind: 'restore', stock: existing.stock_name, type: existing.content_type }
-          : takenFromOther
-            ? { kind: 'none' }
-            : { kind: 'delete' }
+      const plan = planUndo({ hasId: !!result.id, prior, before: existing ? { stock: existing.stock_name, type: existing.content_type } : null })
       if (result.id) setLastRegId(result.id)
       dispatchUndo({ type: 'registered', entry: { id: result.id || '', stock, plan }, now: Date.now() })
 
-      const id = sayOk(existing ? '다시 등록했어요' : '등록됐어요', `${stock} · ${typeLabel(type)}`, existing ? undefined : todayCount + 1)
+      const title = prior === 'mine' ? '다시 등록했어요' : prior === 'other' ? '내 영상으로 등록했어요' : '등록됐어요'
+      const id = sayOk(
+        title,
+        `${stock} · ${typeLabel(type)}`,
+        prior === 'new' ? todayCount + 1 : undefined,
+        plan.kind === 'none' ? noUndoNote(result.id ? prior : 'unknown') : undefined
+      )
       flash(result.id)
       readyForNext(stock)
 
@@ -727,18 +783,22 @@ export default function RegisterPage() {
       dispatchUndo({ type: 'tick', now }) // 시간이 막 지났다면 조용히 닫는다.
       return
     }
-    dispatchUndo({ type: 'start', now })
-
     const plan = entry.plan
+    if (plan.kind === 'none') {
+      dispatchUndo({ type: 'dismiss' }) // 되돌릴 것이 없는 등록에는 원래 이 버튼이 나오지 않는다
+      return
+    }
+    dispatchUndo({ type: 'start', now })
+    const statusAtStart = statusId.current
+
     let res
     if (plan.kind === 'delete') {
-      res = await callMyVideo(entry.id, 'DELETE')
-    } else if (plan.kind === 'restore') {
+      // undo: 서버가 "방금 새로 만든 영상"일 때만 지운다(전에 있던 영상은 지우지 않는다).
+      res = await callMyVideo(entry.id, 'DELETE', undefined, { undo: true })
+    } else {
       const body: Record<string, string> = { content_type: plan.type }
       if (plan.stock) body.stock_name = plan.stock
       res = await callMyVideo(entry.id, 'PATCH', body)
-    } else {
-      return
     }
 
     if (!res.ok) {
@@ -746,27 +806,48 @@ export default function RegisterPage() {
       return
     }
     dispatchUndo({ type: 'succeeded', id: entry.id, now: Date.now() })
-    sayOk(plan.kind === 'restore' ? '이전 종목·형식으로 되돌렸어요' : '등록을 취소했어요', entry.stock, undefined, '다음 영상 주소를 붙여넣으세요.')
     invalidateLookups()
     if (plan.kind === 'delete') setVideos((prev) => (prev ? prev.filter((v) => v.id !== entry.id) : prev))
-    setLastRegId(null)
     void loadMine()
+    // 되돌리는 동안 다른 영상을 이미 등록했다면 그 등록 결과를 덮어쓰지 않는다.
+    if (statusId.current !== statusAtStart) return
+    setLastRegId(null)
+    sayOk(plan.kind === 'restore' ? '이전 종목·형식으로 되돌렸어요' : '등록을 취소했어요', entry.stock, undefined, '다음 영상 주소를 붙여넣으세요.')
     focusUrl()
   }
 
   // 수정·삭제 결과는 다시 받아 오지 않고 화면의 목록에 바로 반영한다.
-  const onPatched = (id: string, patch: { stock_name: string | null; content_type: ContentType }) => {
-    setVideos((prev) => (prev ? prev.map((v) => (v.id === id ? { ...v, ...patch } : v)) : prev))
-    if (patch.stock_name) rememberStock(patch.stock_name)
-    invalidateLookups()
-    dispatchUndo({ type: 'dismiss' }) // 직접 고쳤다면 이전 되돌리기는 더 이상 맞지 않는다.
-  }
-  const onDeleted = (id: string) => {
-    setVideos((prev) => (prev ? prev.filter((v) => v.id !== id) : prev))
-    invalidateLookups()
-    dispatchUndo({ type: 'dismiss' })
-  }
-  const onNotice = (text: string, tone: 'success' | 'error') => (tone === 'success' ? showSuccess(text) : showError(text))
+  const onPatched = useCallback(
+    (id: string, patch: { stock_name: string | null; content_type: ContentType }) => {
+      setVideos((prev) => (prev ? prev.map((v) => (v.id === id ? { ...v, ...patch } : v)) : prev))
+      if (patch.stock_name) rememberStock(patch.stock_name)
+      invalidateLookups()
+      dispatchUndo({ type: 'dismiss' }) // 직접 고쳤다면 이전 되돌리기는 더 이상 맞지 않는다.
+    },
+    [rememberStock, invalidateLookups]
+  )
+  const onDeleted = useCallback(
+    (id: string) => {
+      setVideos((prev) => (prev ? prev.filter((v) => v.id !== id) : prev))
+      invalidateLookups()
+      dispatchUndo({ type: 'dismiss' })
+    },
+    [invalidateLookups]
+  )
+  const onNotice = useCallback(
+    (text: string, tone: 'success' | 'error') => (tone === 'success' ? toastRef.current.showSuccess(text) : toastRef.current.showError(text)),
+    []
+  )
+  const onBulkRegistered = useCallback(({ stock }: { id: string | null; stock: string }) => rememberStock(stock), [rememberStock])
+  const onBulkDone = useCallback(
+    async (ids: string[]) => {
+      invalidateLookups()
+      await loadMine()
+      // 목록에 나타난 뒤에 강조해야 눈에 띈다.
+      ids.forEach((id) => flash(id))
+    },
+    [invalidateLookups, loadMine, flash]
+  )
 
   const showFallback = videos !== null && todayVideos.length === 0 && videos.length > 0
   const firstRun = videos !== null && videos.length === 0
@@ -794,7 +875,7 @@ export default function RegisterPage() {
 
   return (
     <>
-      <PageHeader title="영상 등록" subtitle="유튜브 주소와 종목만 넣으면 등록됩니다. 제목·조회수는 자동으로 가져옵니다." />
+      <PageHeader title="영상 등록" subtitle="유튜브 주소와 종목만 넣으면 등록돼요. 제목·조회수는 자동으로 가져와요." />
 
       <datalist id={STOCK_LIST_ID}>
         {recentStocks.map((name) => (
@@ -813,7 +894,7 @@ export default function RegisterPage() {
           }}
           onKeyDown={(e) => {
             // Ctrl(맥은 ⌘)+Enter: 어느 칸에 있든 등록
-            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.nativeEvent.isComposing) {
+            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !isImeKey(e)) {
               e.preventDefault()
               void submit()
             }
@@ -1041,7 +1122,13 @@ export default function RegisterPage() {
         </form>
 
         <div className="v3-reg-modelink">
-          <button type="button" className="v3-text-button" onClick={() => switchMode('bulk')}>
+          <button
+            type="button"
+            className="v3-text-button"
+            onClick={() => switchMode('bulk')}
+            onPointerEnter={() => void loadBulk()}
+            onFocus={() => void loadBulk()}
+          >
             여러 개를 한꺼번에 등록하기 (여러 개 붙여넣기) ›
           </button>
         </div>
@@ -1063,13 +1150,8 @@ export default function RegisterPage() {
             onChooseType={chooseType}
             recentStocks={recentStocks}
             todayIds={todayIds}
-            onRegistered={({ stock }) => rememberStock(stock)}
-            onBatchDone={async (ids) => {
-              invalidateLookups()
-              await loadMine()
-              // 목록에 나타난 뒤에 강조해야 눈에 띈다.
-              ids.forEach((id) => flash(id))
-            }}
+            onRegistered={onBulkRegistered}
+            onBatchDone={onBulkDone}
           />
         </div>
       ) : null}

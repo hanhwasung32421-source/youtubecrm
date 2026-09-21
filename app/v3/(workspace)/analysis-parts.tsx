@@ -6,7 +6,6 @@
 import '@/lib/v3/interact.css'
 import Link from 'next/link'
 import { useState, type CSSProperties, type ReactNode } from 'react'
-import { V3_SQL_FILE } from '@/lib/v3/tables'
 import { SESSION_EXPIRED } from '@/lib/v3/api-client'
 import { DASH, formatKstDateTime, formatRelative } from '@/lib/v3/format'
 
@@ -180,18 +179,8 @@ export function SectionSkeleton({ children, titleWidth = 220 }: { children: Reac
   )
 }
 
-// 예전 이름 그대로 쓰는 곳을 위해 남겨 둔다. 글자만 있는 안내 대신 뼈대를 보여 준다.
-export function LoadingBlock({ children = '불러오는 중이에요…' }: { children?: ReactNode }) {
-  return (
-    <SkeletonShell label={typeof children === 'string' ? children : '불러오는 중이에요…'}>
-      <AnswerSkeleton />
-      <RowsSkeleton rows={4} />
-    </SkeletonShell>
-  )
-}
-
 // ── 실패 / 로그인 만료 / 빈 화면 ─────────────────────────────────
-export const LOGIN_HREF = '/v3/login'
+const LOGIN_HREF = '/v3/login'
 
 // 저장/수정 중에 로그인이 만료되면 오류 문장 뒤에 바로 다시 로그인할 수 있는 링크를 붙여 준다.
 export function withLoginLink(message: string | null | undefined): ReactNode {
@@ -312,14 +301,12 @@ export function EmptyBlock({
   )
 }
 
-// ── 준비 안내 한 줄(SQL 미실행) ─────────────────────────────────
+// ── 준비 안내 한 줄 ─────────────────────────────────────────────
+// 이 기능을 쓰려면 관리자가 먼저 준비해야 할 때 쓴다. 무엇을 하면 되는지(children)만 적는다.
 export function SetupNote({ children }: { children: ReactNode }) {
   return (
     <div className="v3-sample-banner" role="status">
-      <span aria-hidden>🧪</span>
-      <span>
-        {children} <code>{V3_SQL_FILE}</code>
-      </span>
+      <span>{children}</span>
     </div>
   )
 }

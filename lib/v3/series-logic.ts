@@ -1,4 +1,4 @@
-// 시리즈 관리 화면의 순수 로직: 이름 중복, ↑↓ 순서 바꾸기, 영상 검색해서 추가, 화면 먼저 바꾸기(낙관적 갱신)와 되돌리기.
+// 시리즈 관리 화면의 순수 로직: 이름 중복, ↑↓ 순서 바꾸기(서버에 저장), 영상 검색해서 추가, 화면 먼저 바꾸기(낙관적 갱신)와 되돌리기.
 // (외부 import 없음 — 서버 규칙(같은 이름 금지, 영상은 한 시리즈에만)과 같은 기준으로 미리 걸러 준다)
 
 export type Member = { id: string; title: string }
@@ -15,6 +15,24 @@ export function findDuplicateName<T extends { id: string; name: string }>(name: 
   return all.find((s) => s.id !== exceptId && normalizeName(s.name) === target) || null
 }
 
+// ── 롱폼 vs 숏폼 비교 ──
+export type FormatSide = 'longform' | 'shortform'
+
+// 두 값이 얼마나 차이 나는지(%, 작은 쪽 기준). 둘 다 0 이하면 0, 작은 쪽만 0 이하면 아주 큰 차이(Infinity)로 본다.
+export function gapPct(a: number, b: number): number {
+  const hi = Math.max(a, b)
+  const lo = Math.min(a, b)
+  if (!Number.isFinite(hi) || !Number.isFinite(lo) || !(hi > 0)) return 0
+  if (!(lo > 0)) return Infinity
+  return ((hi - lo) / lo) * 100
+}
+
+// 눈에 띄게(기본 5% 이상) 더 높은 쪽. 차이가 작으면 null(비슷해요)
+export function pickWinner(long: number, short: number, thresholdPct = 5): FormatSide | null {
+  if (gapPct(long, short) < thresholdPct) return null
+  return long > short ? 'longform' : 'shortform'
+}
+
 // ── 순서 바꾸기 ──
 export function moveItem(ids: string[], id: string, dir: -1 | 1): string[] {
   const from = ids.indexOf(id)
@@ -25,37 +43,42 @@ export function moveItem(ids: string[], id: string, dir: -1 | 1): string[] {
   return next
 }
 
-// 저장해 둔 순서를 적용한다. 저장본에 없는 영상(새로 추가)은 원래 순서대로 뒤에 붙고, 사라진 영상은 무시한다.
-export function applyOrder<T extends { id: string }>(items: T[], saved: string[] | null | undefined): T[] {
-  if (!saved || saved.length === 0) return items
-  const byId = new Map(items.map((i) => [i.id, i]))
-  const out: T[] = []
+// 요청한 순서(requested)를 현재 멤버(current)에 맞춰 정리한다. 결과는 항상 current 의 순열이다.
+//   - 요청에 있지만 지금은 시리즈에 없는 영상(그사이 빠졌을 수 있다)과 중복은 버린다.
+//   - 지금 있지만 요청에 없는 영상(그사이 새로 추가됨)은 원래 순서대로 뒤에 붙인다.
+export function mergeOrder(current: string[], requested: string[]): string[] {
+  const inSeries = new Set(current)
   const seen = new Set<string>()
-  for (const id of saved) {
-    const hit = byId.get(id)
-    if (hit && !seen.has(id)) {
-      out.push(hit)
+  const out: string[] = []
+  for (const id of requested) {
+    if (inSeries.has(id) && !seen.has(id)) {
+      out.push(id)
       seen.add(id)
     }
   }
-  for (const item of items) if (!seen.has(item.id)) out.push(item)
+  for (const id of current) if (!seen.has(id)) out.push(id)
   return out
 }
 
-export function orderKey(seriesId: string): string {
-  return `v3:series-order:v1:${seriesId}`
+// 순서는 "추가된 시각(added_at)" 칸에 담는다. 순서대로 1초 간격의 시각을 만든다. 모두 지금(nowMs)보다 이전이라서,
+// 이 뒤에 새로 추가되는 영상(추가 시각 = 그때의 지금)은 자연스럽게 맨 뒤에 온다.
+export function orderTimestamps(count: number, nowMs: number): string[] {
+  const out: string[] = []
+  for (let i = 0; i < count; i += 1) out.push(new Date(nowMs - (count - i) * 1000).toISOString())
+  return out
 }
 
-// 저장된 글자 -> id 목록. 깨졌으면 null
-export function decodeOrder(raw: string | null | undefined): string[] | null {
-  if (!raw) return null
-  try {
-    const parsed = JSON.parse(raw) as unknown
-    if (!Array.isArray(parsed) || !parsed.every((x) => typeof x === 'string')) return null
-    return parsed as string[]
-  } catch {
-    return null
-  }
+// 화면에서 먼저 순서를 바꿔 보여 준다. 없는 영상 번호는 무시하고, 빠진 영상은 원래 순서로 뒤에 붙는다.
+export function withReordered<S extends SeriesLike>(list: S[], seriesId: string, ids: string[]): S[] {
+  return list.map((s) => {
+    if (s.id !== seriesId) return s
+    const byId = new Map(s.members.map((m) => [m.id, m]))
+    const order = mergeOrder(
+      s.members.map((m) => m.id),
+      ids
+    )
+    return { ...s, members: order.map((id) => byId.get(id) as Member) }
+  })
 }
 
 // ── 영상 검색해서 추가 ──

@@ -82,6 +82,8 @@ export function useUrlFilters(pageKey: string, spec: FilterSpec): UseFilters {
       const qs = serializeFilters(sp, next)
       // 이미 그 주소이고 아직 반영을 기다리는 변경도 없을 때만 건너뛴다.
       if (qs === current && written.current.length === 0) return
+      // 방금 적은 것과 같은 값을 또 적으면(개발 모드에서 효과가 두 번 도는 경우 등) 대기열에 찌꺼기가 남으므로 건너뛴다.
+      if (written.current.length > 0 && written.current[written.current.length - 1] === qs) return
       written.current.push(qs)
       r.replace(qs ? `${path}?${qs}` : path, { scroll: false })
     },

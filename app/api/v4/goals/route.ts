@@ -1,4 +1,3 @@
-import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { getKstYmd } from '@/lib/attendance/time'
 import { firstIssueMessage } from '@/lib/v4/errors'
@@ -49,13 +48,13 @@ export async function GET(request: Request) {
     if (error) {
       if (isMissingTableError(error)) {
         const { staff } = await loadUsers(ctx.supabaseAdmin)
-        return NextResponse.json({ sample: true, month, items: [getSampleGoal(month, staff.length)] })
+        return noStoreJson({ sample: true, month, items: [getSampleGoal(month, staff.length)] })
       }
       throw dbError(error)
     }
-    return NextResponse.json({ sample: false, month, items: (data || []).map(mapGoal) })
+    return noStoreJson({ sample: false, month, items: (data || []).map(mapGoal) })
   } catch (e) {
-    return v4ErrorResponse(e, '성장 목표 조회 실패')
+    return v4ErrorResponse(e, '성장 목표를 불러오지 못했어요')
   }
 }
 
@@ -116,7 +115,7 @@ export async function POST(request: Request) {
 
     return noStoreJson({ item: mapGoal(result.data) })
   } catch (e) {
-    return v4ErrorResponse(e, '성장 목표 저장 실패')
+    return v4ErrorResponse(e, '성장 목표를 저장하지 못했어요')
   }
 }
 
@@ -140,6 +139,6 @@ export async function DELETE(request: Request) {
     }
     return noStoreJson({ ok: true })
   } catch (e) {
-    return v4ErrorResponse(e, '성장 목표 삭제 실패')
+    return v4ErrorResponse(e, '성장 목표를 지우지 못했어요')
   }
 }

@@ -5,6 +5,8 @@ import { V3_TABLES } from '@/lib/v3/tables'
 const THRESHOLD_MULTIPLIER = 2
 const MIN_TEAM_SAMPLE = 5
 const MAX_ITEMS = 30
+// 최근 30일 팀 영상을 읽는 한도(하루 90개씩이어도 2,700개)
+const TEAM_LIMIT = 4000
 const PERIOD_DAYS = [7, 14, 30]
 
 // 바이럴 신호 레이더
@@ -12,6 +14,7 @@ const PERIOD_DAYS = [7, 14, 30]
 //   최근 30일 팀 전체 영상의 조회 속도 중앙값을 기준으로, 그 2배를 넘으면 "🔥 바이럴 후보"
 //   선택 조건(모두 생략 가능): ?staffId=(관리자만) &format=longform|shortform &days=7|14|30
 //   조건을 걸어도 "평소" 기준(팀 중앙값)은 늘 팀 전체 30일 영상으로 계산한다.
+//   ratio = 하루 조회수 ÷ 팀 중앙값(배). 비율(likeRatePct 등)은 % 단위(0~100).
 export async function GET(request: Request) {
   const auth = await authenticate(request)
   if (!auth.ok) return auth.response
@@ -27,7 +30,7 @@ export async function GET(request: Request) {
     const days = PERIOD_DAYS.includes(daysParam) ? daysParam : 30
 
     const now = new Date()
-    const teamVideos = await loadTeamVideos(supabaseAdmin, { sinceIso: isoDaysAgo(30, now), limit: 3000, fields: VIDEO_FIELDS_RATES })
+    const teamVideos = await loadTeamVideos(supabaseAdmin, { sinceIso: isoDaysAgo(30, now), limit: TEAM_LIMIT, fields: VIDEO_FIELDS_RATES })
     const velocities = teamVideos.map((v) => viewVelocity(v, now))
     const teamMedian = median(velocities)
     // 왜 떴는지 설명할 때 쓰는 팀 기준(좋아요·댓글 비율의 중앙값). 조회수가 있는 영상만 센다.
@@ -94,15 +97,11 @@ export async function GET(request: Request) {
         publishedAt: row.video.published_at || row.video.created_at,
         velocity: Math.round(row.velocity),
         ratio: row.ratio,
-        note: `${row.video.stock_name || '이'} 영상이 팀 중앙값 대비 ${row.ratio.toFixed(1)}배 빠르게 조회수가 오르고 있습니다.`,
         // 왜 떴는지 설명하는 재료 (팀 중앙값과 비교는 화면에서 한다)
-        likeCount: Number(row.video.like_count || 0),
-        commentCount: Number(row.video.comment_count || 0),
         likeRatePct: like,
         commentRatePct: comment,
         engagementPct: engagement,
         ageDays: Math.round(daysSince(row.video.published_at || row.video.created_at, now) * 10) / 10,
-        ownerId: row.video.primary_owner_user_id,
         ownerName: isAdmin ? names.get(row.video.primary_owner_user_id) || null : null,
         acknowledged: !!ack,
         actionNote: ack?.note || null,
@@ -123,13 +122,7 @@ export async function GET(request: Request) {
       // 조건에 맞는 급상승 영상이 화면 한도(30개)보다 많을 때 알려 주려고
       matchedCount: candidates.length,
       maxItems: MAX_ITEMS,
-      filters: { staffId, format, days },
       staffOptions: staff.map((s) => ({ id: s.id, name: s.name })),
-      summary: insufficientData
-        ? '최근 30일간 등록된 영상이 충분하지 않아 바이럴 신호를 계산할 수 없습니다.'
-        : items.length > 0
-          ? `팀 중앙값 대비 2배 이상 빠르게 성장 중인 영상 ${items.length}건을 찾았습니다. 1위는 "${items[0].title}"(${items[0].ratio.toFixed(1)}배)입니다.`
-          : '현재 팀 중앙값 대비 2배 이상 빠르게 성장 중인 영상이 없습니다.',
       items
     })
   } catch (e) {

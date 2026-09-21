@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { CONTENT_TYPE_LABELS } from '@/lib/v2/types'
-import { UNDO_WINDOW_MS, undoSecondsLeft, type UndoState } from './register-flow'
+import { UNDO_WINDOW_MS, undoKindOf, undoSecondsLeft, type UndoState } from './register-flow'
+import { isImeKey } from './register-utils'
 
 export type RegisterErrorView = { text: string; retry: boolean; relogin: boolean }
 
@@ -74,7 +75,8 @@ export function RegisterStatus({ error, info, undo, now, saving, loginHref, stoc
   }
 
   const secondsLeft = undoSecondsLeft(undo.expiresAt, now)
-  const undoLabel = entry?.updatedFrom ? '이전 종목으로 되돌리기' : '되돌리기'
+  const kind = entry ? undoKindOf(entry) : 'none'
+  const undoLabel = kind === 'restore' ? '이전 종목으로 되돌리기' : '되돌리기'
 
   let body: React.ReactNode
   if (error) {
@@ -103,7 +105,7 @@ export function RegisterStatus({ error, info, undo, now, saving, loginHref, stoc
       <div className="v2-last">
         <div className="v2-confirm v2-last-line">
           <span aria-hidden="true">✓</span>{' '}
-          {entry.updatedFrom ? (
+          {entry.updatedFrom && entry.updatedFrom.stock !== entry.stock ? (
             <>
               종목을 바꿨어요
               <span className="muted">
@@ -111,9 +113,17 @@ export function RegisterStatus({ error, info, undo, now, saving, loginHref, stoc
                 · {entry.updatedFrom.stock} → {entry.stock}
               </span>
             </>
-          ) : (
+          ) : entry.origin === 'created' ? (
             <>
               등록됨 · 오늘 {entry.nth}번째
+              <span className="muted">
+                {' '}
+                · {entry.stock} · {typeLabel}
+              </span>
+            </>
+          ) : (
+            <>
+              등록했어요 · 이미 있던 영상이에요
               <span className="muted">
                 {' '}
                 · {entry.stock} · {typeLabel}
@@ -141,7 +151,7 @@ export function RegisterStatus({ error, info, undo, now, saving, loginHref, stoc
                 setFixError('')
               }}
               onKeyDown={(e) => {
-                if (e.nativeEvent.isComposing) return
+                if (isImeKey(e)) return
                 // 이 칸은 등록 폼 안에 있으므로 Enter가 등록 폼으로 번지지 않게 여기서 멈춘다
                 if (e.key === 'Enter') {
                   e.preventDefault()
@@ -178,7 +188,11 @@ export function RegisterStatus({ error, info, undo, now, saving, loginHref, stoc
               </button>
             ) : (
               <span className="v2-hint quiet v2-undo-gone">
-                되돌리기 시간이 지났어요. 잘못 등록했다면 아래 목록에서 「삭제」를 눌러 주세요.
+                {kind === 'none'
+                  ? entry.origin === 'existing'
+                    ? '이미 등록돼 있던 영상이라 새로 만들어진 것은 없어요. 그래서 되돌리기는 없고, 종목만 「종목 고치기」로 바꿀 수 있어요.'
+                    : '새 영상인지 확인하지 못해서 되돌리기는 열지 않았어요. 종목은 「종목 고치기」로 바꿀 수 있어요.'
+                  : '되돌리기 시간이 지났어요. 잘못 등록했다면 아래 목록에서 「삭제」를 눌러 주세요.'}
               </span>
             )}
             {undo.phase !== 'busy' ? (

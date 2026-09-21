@@ -22,13 +22,20 @@ export function useUrlFilters<T>(spec: FilterSpec<T>, storageKey: string) {
   paramsRef.current = params
   // 우리가 직접 바꾼 주소(뒤따라 오는 "주소가 바뀌었어요" 알림을 바깥 이동으로 오해하지 않기 위해)
   const issuedRef = useRef<string[]>([])
+  const issuedAtRef = useRef(0)
 
   const sig = useCallback((f: T) => filterSignature(spec, f), [spec])
 
   const goto = useCallback(
     (qs: string) => {
-      if (qs === paramsRef.current.toString()) return
-      issuedRef.current.push(qs)
+      // 아직 도착하지 않은 우리 이동이 있으면 그 마지막 값과 비교한다(빠르게 눌러 원래 값으로 돌아왔을 때 주소가 어긋나지 않게).
+      // 2초가 지나도 안 온 이동은 취소된 것으로 본다.
+      if (Date.now() - issuedAtRef.current > 2000) issuedRef.current = []
+      const pending = issuedRef.current
+      const latest = pending.length > 0 ? pending[pending.length - 1] : paramsRef.current.toString()
+      if (qs === latest) return
+      issuedRef.current = [...pending, qs].slice(-8)
+      issuedAtRef.current = Date.now()
       router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false })
     },
     [router, pathname]
