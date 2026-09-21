@@ -1,0 +1,200 @@
+/* V3 입력/확인 부품 전용 스타일 (.v3-theme 범위 안에서만) */
+
+.v3-theme .v3i-req {
+  margin-left: 3px;
+  color: #b8392f;
+  font-weight: 700;
+}
+
+.v3-theme .v3i-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.v3-theme .v3i-confirm {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+}
+
+.v3-theme .v3i-confirm-q {
+  font-size: 12px;
+  font-weight: 600;
+  color: #b8392f;
+}
+
+.v3-theme .button.danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+
+.v3-theme .button.danger:hover:not(:disabled) {
+  filter: brightness(0.94);
+}
+
+.v3-theme .v3i-edit {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.v3-theme .v3i-edit .field {
+  flex: 1 1 220px;
+  min-width: 0;
+  gap: 4px;
+}
+
+.v3-theme .v3i-edit .label {
+  font-size: 12px;
+}
+
+.v3-theme .v3i-edit .input {
+  padding: 7px 10px;
+  font-size: 13px;
+}
+
+.v3-theme .v3i-edit-actions {
+  display: flex;
+  gap: 6px;
+  /* 라벨 높이만큼 내려서 입력칸과 같은 줄에 맞춘다 */
+  padding-top: 22px;
+}
+
+/* ── 급상승 카드의 "확인했어요" 폼: 라벨은 입력칸 위, 버튼은 입력칸 옆 ── */
+.v3-theme .v3i-ackform {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.v3-theme .v3i-ackform .field {
+  flex: 1 1 220px;
+  min-width: 0;
+  gap: 4px;
+}
+
+.v3-theme .v3i-ackform .label {
+  font-size: 12px;
+}
+
+.v3-theme .v3i-ackform .input {
+  padding: 7px 10px;
+  font-size: 13px;
+}
+
+/* ── 안내 상자(새로고침 결과 등) ───────────────────────────── */
+.v3-theme .v3i-notice {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--bg-soft);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.v3-theme .v3i-notice.good {
+  border-left-color: var(--success);
+}
+
+.v3-theme .v3i-notice.warn {
+  border-left-color: var(--warning);
+}
+
+.v3-theme .v3i-notice ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* ── 시리즈 카드 안의 영상 목록/도구 줄 ────────────────────── */
+.v3-theme .v3i-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.v3-theme .v3i-members {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.v3-theme .v3i-member {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+
+.v3-theme .v3i-member:last-child {
+  border-bottom: none;
+}
+
+.v3-theme .v3i-member-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.v3-theme .v3i-linkbtn {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  text-decoration: underline;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.v3-theme .v3i-linkbtn:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.v3-theme .v3i-linkbtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* 새로고침 중에도 카드 높이가 튀지 않도록 살짝만 흐리게 */
+.v3-theme .v3i-refreshing {
+  opacity: 0.7;
+  transition: opacity 0.15s ease;
+}
+
+.v3-theme .v3i-inline-note {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+@media (max-width: 640px) {
+  .v3-theme .v3i-edit-actions {
+    padding-top: 0;
+  }
+}

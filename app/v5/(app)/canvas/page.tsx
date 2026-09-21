@@ -1,14 +1,15 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { PageHeader } from '@/components/v5/app-shell'
-import { Badge, Drawer, Segment } from '@/components/v5/widget'
+import { PageHeader, useV5Me } from '@/components/v5/app-shell'
+import { Badge, Segment } from '@/components/v5/widget'
 import { Toast, useToast } from '@/components/toast'
-import { authedFetchJson, authedPostJson } from '@/lib/session/authed-fetch'
-import { authedPatchJson } from '@/lib/v5/client'
-import { daysSince, formatDate, todayYmd } from '@/lib/v5/format'
+import { authedDeleteJson, authedPatchJson, errorText, v5Get, v5Post } from '@/lib/v5/client'
+import { diffDays, formatDate, todayYmd } from '@/lib/v5/format'
 import { AnswerBanner, EmptyBlock, FormField, LoadError, LoadingLine, SampleNote, fmtNum } from '@/lib/v5/page-parts'
+import { ConfirmDelete, FormDrawer, useEscape, usePref } from '@/lib/v5/ui'
+import { VideoPicker, type PickedVideo } from '@/lib/v5/video-picker'
 import {
   EXPERIMENT_DIMENSIONS,
   EXPERIMENT_DIMENSION_LABEL,
@@ -18,8 +19,6 @@ import {
   type ExperimentStatus,
   type GrowthExperiment
 } from '@/lib/v5/types'
-
-type VideoOption = { id: string; title: string | null; stock_name: string; content_type: string }
 
 const STATUS_TONE: Record<ExperimentStatus, 'indigo' | 'green' | 'red' | 'amber'> = {
   running: 'indigo',
@@ -44,17 +43,33 @@ const COLUMN_EMPTY: Record<ExperimentStatus, string> = {
 
 const MOVE_LABEL: Record<ExperimentStatus, string> = {
   running: '다시 진행',
-  won: '성공으로 표시',
-  lost: '실패로 표시',
+  won: '성공으로 기록',
+  lost: '실패로 기록',
   paused: '보류'
 }
 
 const DIMENSION_HINT = '여러 개 골라도 돼요. 예: 썸네일 + 제목'
+// 이 일수를 넘게 진행 중이면 "결과 확인할 때예요"로 알려 준다.
+const OVERDUE_DAYS = 14
+const MAX_TARGETS = 30
+
+// 진행 일수(D+N): 시작일 당일이 D+0.
+const daysRunning = (startedOn: string) => Math.max(diffDays(startedOn, todayYmd()), 0)
+const isOverdue = (exp: GrowthExperiment) => exp.status === 'running' && daysRunning(exp.started_on) > OVERDUE_DAYS
+
+const videoName = (v: { title: string | null; stock_name: string }) => v.title || v.stock_name
+
+function targetSummary(exp: GrowthExperiment) {
+  const list = exp.videos || []
+  if (list.length === 0) return exp.missing_videos ? '대상 영상이 지워졌어요' : '대상 영상 없음'
+  const first = videoName(list[0])
+  return list.length > 1 ? `${first} 외 ${list.length - 1}개` : first
+}
 
 function makeEmptyForm() {
   return {
     dimensions: [] as ExperimentDimension[],
-    videoIds: [] as string[],
+    videos: [] as PickedVideo[],
     hypothesis: '',
     metricDefinition: '',
     startedOn: todayYmd(),
@@ -64,152 +79,330 @@ function makeEmptyForm() {
 }
 
 type FormState = ReturnType<typeof makeEmptyForm>
-type FormErrors = Partial<Record<'dimensions' | 'videoIds' | 'hypothesis' | 'startedOn' | 'endedOn', string>>
+type FormErrors = Partial<Record<'dimensions' | 'videos' | 'hypothesis' | 'startedOn' | 'endedOn', string>>
 
 function validate(form: FormState): FormErrors {
   const errors: FormErrors = {}
   if (form.dimensions.length === 0) errors.dimensions = '무엇을 바꿔 볼지 1개 이상 골라 주세요.'
   if (!form.hypothesis.trim()) errors.hypothesis = '가설을 한 줄로 적어 주세요.'
-  if (form.videoIds.length === 0) errors.videoIds = '실험할 영상을 1개 이상 골라 주세요.'
+  if (form.videos.length === 0) errors.videos = '실험할 영상을 1개 이상 골라 주세요.'
   if (!form.startedOn) errors.startedOn = '시작일을 골라 주세요.'
   if (form.endedOn && form.startedOn && form.endedOn < form.startedOn) errors.endedOn = '종료일은 시작일보다 빠를 수 없어요.'
   return errors
 }
 
-const videoName = (v: { title: string | null; stock_name: string }) => v.title || v.stock_name
-
-function targetSummary(exp: GrowthExperiment) {
-  const list = exp.videos || []
-  if (list.length === 0) return '대상 영상 없음'
-  const first = videoName(list[0])
-  return list.length > 1 ? `${first} 외 ${list.length - 1}개` : first
+// "32", "+32", "-8", "12.5%" 를 숫자로. 빈 칸이면 null, 숫자가 아니면 undefined.
+function parseEffect(text: string): number | null | undefined {
+  const t = text.trim().replace(/[%\s,]/g, '')
+  if (t === '') return null
+  const n = Number(t)
+  if (!Number.isFinite(n) || n < -1000 || n > 1000) return undefined
+  return Math.round(n * 100) / 100
 }
+
+const effectText = (n: number | null) => (n === null ? '' : String(n))
+const effectLabel = (n: number | null) => (n === null ? '' : `${n >= 0 ? '+' : ''}${n}%`)
+
+type CardMode = 'view' | 'edit' | 'record'
 
 function ExperimentCard({
   exp,
+  canEdit,
   busy,
   onPatch,
   onDelete
 }: {
   exp: GrowthExperiment
+  canEdit: boolean
   busy: boolean
-  onPatch: (body: Record<string, unknown>) => Promise<boolean>
-  onDelete: () => void
+  // 실패하면 사람이 읽을 오류 문장, 성공하면 null
+  onPatch: (body: Record<string, unknown>) => Promise<string | null>
+  onDelete: () => Promise<string | null>
 }) {
   const [open, setOpen] = useState(false)
+  const [mode, setMode] = useState<CardMode>('view')
+  const [recordStatus, setRecordStatus] = useState<'won' | 'lost'>('won')
+  const [hypoDraft, setHypoDraft] = useState(exp.hypothesis)
+  const [metricDraft, setMetricDraft] = useState(exp.metric_definition)
   const [nextDraft, setNextDraft] = useState(exp.next_action || '')
-  const [effectDraft, setEffectDraft] = useState(exp.effect_size === null ? '' : String(exp.effect_size))
-  const [confirmDelete, setConfirmDelete] = useState(false)
-  const [effectError, setEffectError] = useState('')
+  const [effectDraft, setEffectDraft] = useState(effectText(exp.effect_size))
+  const [fieldError, setFieldError] = useState<{ hypo?: string; effect?: string }>({})
+  const [error, setError] = useState('')
 
-  const dirty = nextDraft.trim() !== (exp.next_action || '') || effectDraft.trim() !== (exp.effect_size === null ? '' : String(exp.effect_size))
+  useEscape(mode !== 'view', () => setMode('view'))
 
-  const save = async () => {
-    const body: Record<string, unknown> = {}
-    if (nextDraft.trim() !== (exp.next_action || '')) body.nextAction = nextDraft.trim()
-    if (effectDraft.trim() !== (exp.effect_size === null ? '' : String(exp.effect_size))) {
-      if (effectDraft.trim() === '') {
-        body.effectSize = null
-      } else {
-        const n = Number(effectDraft)
-        if (!Number.isFinite(n) || n < -1000 || n > 1000) {
-          setEffectError('숫자만 적어 주세요. 예: 32 또는 -8')
-          return
-        }
-        body.effectSize = n
-      }
-    }
-    setEffectError('')
-    await onPatch(body)
-  }
-
+  const overdue = isOverdue(exp)
   const tone = exp.status === 'won' ? 'good' : exp.status === 'lost' ? 'bad' : 'neutral'
 
+  const startEdit = () => {
+    setHypoDraft(exp.hypothesis)
+    setMetricDraft(exp.metric_definition)
+    setNextDraft(exp.next_action || '')
+    setEffectDraft(effectText(exp.effect_size))
+    setFieldError({})
+    setError('')
+    setMode('edit')
+  }
+
+  const startRecord = (status: 'won' | 'lost') => {
+    setRecordStatus(status)
+    setNextDraft(exp.next_action || '')
+    setEffectDraft(effectText(exp.effect_size))
+    setFieldError({})
+    setError('')
+    setOpen(true)
+    setMode('record')
+  }
+
+  const saveEdit = async () => {
+    const hypo = hypoDraft.trim()
+    if (!hypo) {
+      setFieldError({ hypo: '가설을 비워 둘 수 없어요.' })
+      return
+    }
+    const body: Record<string, unknown> = {}
+    if (hypo !== exp.hypothesis) body.hypothesis = hypo
+    if (metricDraft.trim() !== exp.metric_definition) body.metricDefinition = metricDraft.trim()
+    if (nextDraft.trim() !== (exp.next_action || '')) body.nextAction = nextDraft.trim()
+    if (exp.status !== 'running') {
+      const parsed = parseEffect(effectDraft)
+      if (parsed === undefined) {
+        setFieldError({ effect: '숫자만 적어 주세요. 예: 32 또는 -8' })
+        return
+      }
+      if (parsed !== exp.effect_size) body.effectSize = parsed
+    }
+    setFieldError({})
+    if (Object.keys(body).length === 0) {
+      setMode('view')
+      return
+    }
+    const message = await onPatch(body)
+    if (message) setError(message)
+    else {
+      setError('')
+      setMode('view')
+    }
+  }
+
+  const saveRecord = async () => {
+    const parsed = parseEffect(effectDraft)
+    if (parsed === undefined) {
+      setFieldError({ effect: '숫자만 적어 주세요. 예: 32 또는 -8' })
+      return
+    }
+    setFieldError({})
+    const body: Record<string, unknown> = { status: recordStatus }
+    if (parsed !== null || exp.effect_size !== null) body.effectSize = parsed
+    if (nextDraft.trim() !== (exp.next_action || '')) body.nextAction = nextDraft.trim()
+    const message = await onPatch(body)
+    if (message) setError(message)
+    // 성공하면 카드가 다른 칸으로 옮겨가므로 여기서 할 일이 없다.
+  }
+
+  const changeStatus = async (status: ExperimentStatus) => {
+    const message = await onPatch({ status })
+    setError(message || '')
+  }
+
+  const remove = async () => {
+    const message = await onDelete()
+    if (message) setError(message)
+  }
+
   return (
-    <div className={`v5p-card ${tone} ${open ? 'open' : ''}`}>
+    <div className={`v5p-card ${tone} ${open ? 'open' : ''} ${overdue ? 'due' : ''}`}>
       <button type="button" className="v5p-card-head" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        {exp.status === 'running' ? (
+          <span className="v5p-card-flags">
+            <span className="v5p-dday">D+{fmtNum(daysRunning(exp.started_on))}</span>
+            {overdue ? <span className="v5p-due">결과 확인할 때예요</span> : null}
+          </span>
+        ) : null}
         <span className="v5p-card-hypo">{exp.hypothesis}</span>
         <span className="v5p-card-line">
           <span className="v5p-card-key">대상 영상</span>
           <span className="v5p-card-val">{targetSummary(exp)}</span>
         </span>
+        {exp.status === 'won' || exp.status === 'lost' ? (
+          <span className="v5p-card-line">
+            <span className="v5p-card-key">결과</span>
+            <span className={`v5p-card-val ${exp.effect_size === null ? 'faint' : ''}`}>{exp.effect_size === null ? '숫자를 아직 안 적었어요' : effectLabel(exp.effect_size)}</span>
+          </span>
+        ) : null}
         <span className="v5p-card-line">
           <span className="v5p-card-key">다음 할 일</span>
-          <span className={`v5p-card-val ${exp.next_action ? '' : 'faint'}`}>{exp.next_action || (exp.status === 'running' ? '아직 없어요 · 눌러서 적기' : '없음')}</span>
+          <span className={`v5p-card-val ${exp.next_action ? '' : 'faint'}`}>{exp.next_action || (exp.status === 'running' && canEdit ? '아직 없어요 · 눌러서 적기' : '없음')}</span>
         </span>
         <span className="v5p-card-more" aria-hidden>
           {open ? '접기 ▲' : '자세히 ▼'}
         </span>
       </button>
 
+      {/* 진행 중인 카드는 펼치지 않고도 바로 결과를 남길 수 있게 */}
+      {exp.status === 'running' && canEdit && mode !== 'record' ? (
+        <div className={`v5p-quick ${overdue ? 'due' : ''}`}>
+          <span className="small muted">{overdue ? '충분히 지났어요. 결과는?' : '결과가 나왔나요?'}</span>
+          <button type="button" className="button xs secondary" disabled={busy} onClick={() => startRecord('won')}>
+            성공
+          </button>
+          <button type="button" className="button xs secondary" disabled={busy} onClick={() => startRecord('lost')}>
+            실패
+          </button>
+        </div>
+      ) : null}
+
       {open ? (
         <div className="v5p-card-body">
-          <dl className="v5p-kv">
-            <dt>바꿔 본 것</dt>
-            <dd>
-              {exp.dimensions.map((d) => (
-                <span className="v5-tag" key={d} style={{ marginRight: 4 }}>
-                  {EXPERIMENT_DIMENSION_LABEL[d]}
-                </span>
-              ))}
-            </dd>
-            <dt>판단 기준</dt>
-            <dd>{exp.metric_definition}</dd>
-            <dt>기간</dt>
-            <dd>
-              {formatDate(exp.started_on)} ~ {exp.ended_on ? formatDate(exp.ended_on) : '진행 중'}
-              {exp.status === 'running' ? ` (${fmtNum(daysSince(exp.started_on))}일째)` : ''}
-            </dd>
-            {exp.videos && exp.videos.length > 1 ? (
-              <>
-                <dt>전체 대상</dt>
-                <dd>{exp.videos.map(videoName).join(', ')}</dd>
-              </>
-            ) : null}
-            <dt>만든 사람</dt>
-            <dd>{exp.author_name || '알 수 없음'}</dd>
-          </dl>
-
-          <div className="v5p-card-edit">
-            <FormField label="다음 할 일" optional>
-              <input className="input" value={nextDraft} maxLength={200} onChange={(e) => setNextDraft(e.target.value)} placeholder="예: 3일 뒤 클릭률 다시 확인하기" />
-            </FormField>
-            {exp.status !== 'running' ? (
-              <FormField label="결과 (%)" optional hint="좋아졌으면 +, 나빠졌으면 - 로 적어요. 예: 32" error={effectError}>
-                <input className="input" inputMode="decimal" value={effectDraft} onChange={(e) => setEffectDraft(e.target.value)} placeholder="예: 32" />
+          {mode === 'record' ? (
+            <form
+              className="v5p-record"
+              onSubmit={(e) => {
+                e.preventDefault()
+                if (!busy) void saveRecord()
+              }}
+            >
+              <div className="v5p-record-title">{recordStatus === 'won' ? '성공으로 기록' : '실패로 기록'}</div>
+              <FormField
+                label="얼마나 달라졌나요? (%)"
+                optional
+                hint={recordStatus === 'won' ? '좋아졌으면 + 숫자로 적어요. 예: 32 (모르면 비워도 돼요)' : '나빠졌으면 - 숫자로 적어요. 예: -8 (모르면 비워도 돼요)'}
+                error={fieldError.effect}
+                htmlFor={`v5p-rec-effect-${exp.id}`}
+              >
+                <input
+                  id={`v5p-rec-effect-${exp.id}`}
+                  className="input"
+                  inputMode="decimal"
+                  autoFocus
+                  value={effectDraft}
+                  onChange={(e) => setEffectDraft(e.target.value)}
+                  placeholder={recordStatus === 'won' ? '예: 32' : '예: -8'}
+                />
               </FormField>
-            ) : null}
-            <div className="row" style={{ gap: 8 }}>
-              <button className="button sm" type="button" disabled={busy || !dirty} onClick={save}>
-                {busy ? '저장 중…' : '저장'}
-              </button>
-            </div>
-          </div>
+              <FormField label="다음 할 일" optional htmlFor={`v5p-rec-next-${exp.id}`}>
+                <input
+                  id={`v5p-rec-next-${exp.id}`}
+                  className="input"
+                  maxLength={200}
+                  value={nextDraft}
+                  onChange={(e) => setNextDraft(e.target.value)}
+                  placeholder={recordStatus === 'won' ? '예: 다른 종목 영상에도 같은 썸네일 써 보기' : '예: 제목 대신 첫 3초를 바꿔 다시 해 보기'}
+                />
+              </FormField>
+              {error ? (
+                <div className="v5p-field-error" role="alert">
+                  {error}
+                </div>
+              ) : null}
+              <div className="row" style={{ gap: 8 }}>
+                <button className="button sm" type="submit" disabled={busy}>
+                  {busy ? '저장 중…' : recordStatus === 'won' ? '성공으로 기록' : '실패로 기록'}
+                </button>
+                <button className="button sm secondary" type="button" disabled={busy} onClick={() => setMode('view')}>
+                  취소
+                </button>
+              </div>
+            </form>
+          ) : (
+            <>
+              <dl className="v5p-kv">
+                <dt>바꿔 본 것</dt>
+                <dd>
+                  {exp.dimensions.map((d) => (
+                    <span className="v5-tag" key={d} style={{ marginRight: 4 }}>
+                      {EXPERIMENT_DIMENSION_LABEL[d]}
+                    </span>
+                  ))}
+                </dd>
+                <dt>판단 기준</dt>
+                <dd>{exp.metric_definition}</dd>
+                <dt>기간</dt>
+                <dd>
+                  {formatDate(exp.started_on)} ~ {exp.ended_on ? formatDate(exp.ended_on) : '진행 중'}
+                </dd>
+                {exp.videos && exp.videos.length > 1 ? (
+                  <>
+                    <dt>전체 대상</dt>
+                    <dd>{exp.videos.map(videoName).join(', ')}</dd>
+                  </>
+                ) : null}
+                {exp.missing_videos ? (
+                  <>
+                    <dt>참고</dt>
+                    <dd className="muted">지워진 영상 {fmtNum(exp.missing_videos)}개는 목록에서 빠졌어요.</dd>
+                  </>
+                ) : null}
+                <dt>만든 사람</dt>
+                <dd>{exp.author_name || '알 수 없음'}</dd>
+              </dl>
 
-          <div className="v5p-card-actions">
-            <span className="small muted">상태 바꾸기</span>
-            {EXPERIMENT_STATUS_ORDER.filter((s) => s !== exp.status).map((s) => (
-              <button key={s} type="button" className="button xs secondary" disabled={busy} onClick={() => void onPatch({ status: s })}>
-                {MOVE_LABEL[s]}
-              </button>
-            ))}
-            <span className="v5p-spacer" />
-            {confirmDelete ? (
-              <>
-                <span className="small">정말 지울까요?</span>
-                <button type="button" className="button xs danger" disabled={busy} onClick={onDelete}>
-                  지우기
-                </button>
-                <button type="button" className="button xs secondary" onClick={() => setConfirmDelete(false)}>
-                  아니요
-                </button>
-              </>
-            ) : (
-              <button type="button" className="button xs ghost v5p-danger-text" disabled={busy} onClick={() => setConfirmDelete(true)}>
-                삭제
-              </button>
-            )}
-          </div>
+              {mode === 'edit' ? (
+                <form
+                  className="v5p-card-edit"
+                  onSubmit={(e) => {
+                    e.preventDefault()
+                    if (!busy) void saveEdit()
+                  }}
+                >
+                  <FormField label="가설" error={fieldError.hypo} htmlFor={`v5p-e-hypo-${exp.id}`}>
+                    <input id={`v5p-e-hypo-${exp.id}`} className="input" autoFocus maxLength={500} value={hypoDraft} onChange={(e) => setHypoDraft(e.target.value)} />
+                  </FormField>
+                  <FormField label="판단 기준" optional htmlFor={`v5p-e-metric-${exp.id}`}>
+                    <input id={`v5p-e-metric-${exp.id}`} className="input" maxLength={200} value={metricDraft} onChange={(e) => setMetricDraft(e.target.value)} />
+                  </FormField>
+                  {exp.status !== 'running' ? (
+                    <FormField label="결과 (%)" optional hint="좋아졌으면 +, 나빠졌으면 - 로 적어요. 예: 32" error={fieldError.effect} htmlFor={`v5p-e-effect-${exp.id}`}>
+                      <input id={`v5p-e-effect-${exp.id}`} className="input" inputMode="decimal" value={effectDraft} onChange={(e) => setEffectDraft(e.target.value)} placeholder="예: 32" />
+                    </FormField>
+                  ) : null}
+                  <FormField label="다음 할 일" optional htmlFor={`v5p-e-next-${exp.id}`}>
+                    <input id={`v5p-e-next-${exp.id}`} className="input" maxLength={200} value={nextDraft} onChange={(e) => setNextDraft(e.target.value)} placeholder="예: 3일 뒤 클릭률 다시 확인하기" />
+                  </FormField>
+                  {error ? (
+                    <div className="v5p-field-error" role="alert">
+                      {error}
+                    </div>
+                  ) : null}
+                  <div className="row" style={{ gap: 8 }}>
+                    <button className="button sm" type="submit" disabled={busy}>
+                      {busy ? '저장 중…' : '저장'}
+                    </button>
+                    <button className="button sm secondary" type="button" disabled={busy} onClick={() => setMode('view')}>
+                      취소
+                    </button>
+                  </div>
+                </form>
+              ) : null}
+
+              {canEdit && mode === 'view' ? (
+                <div className="v5p-card-actions">
+                  <button type="button" className="button xs secondary" disabled={busy} onClick={startEdit}>
+                    내용 고치기
+                  </button>
+                  {EXPERIMENT_STATUS_ORDER.filter((s) => s !== exp.status).map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      className="button xs secondary"
+                      disabled={busy}
+                      onClick={() => (s === 'won' || s === 'lost' ? startRecord(s) : void changeStatus(s))}
+                    >
+                      {MOVE_LABEL[s]}
+                    </button>
+                  ))}
+                  <span className="v5p-spacer" />
+                  <ConfirmDelete busy={busy} onConfirm={remove} />
+                </div>
+              ) : null}
+              {mode === 'view' && error ? (
+                <div className="v5p-field-error" role="alert">
+                  {error}
+                </div>
+              ) : null}
+              {!canEdit ? <div className="small muted">다른 사람이 만든 실험이라 볼 수만 있어요.</div> : null}
+            </>
+          )}
         </div>
       ) : null}
     </div>
@@ -217,86 +410,84 @@ function ExperimentCard({
 }
 
 export default function CanvasPage() {
-  const { toast, showSuccess, showError } = useToast()
+  const me = useV5Me()
+  const { toast, showSuccess } = useToast()
   const [items, setItems] = useState<GrowthExperiment[]>([])
   const [sample, setSample] = useState(false)
-  const [loading, setLoading] = useState(true)
+  const [loaded, setLoaded] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
   const [loadError, setLoadError] = useState('')
-  const [view, setView] = useState<'kanban' | 'list'>('kanban')
-  const [videoOptions, setVideoOptions] = useState<VideoOption[]>([])
+  const [view, setView, viewReady] = usePref<'kanban' | 'list'>('v5.canvas.view', 'kanban', (v): v is 'kanban' | 'list' => v === 'kanban' || v === 'list')
+  const [authorFilter, setAuthorFilter, authorReady] = usePref<string>('v5.canvas.author', '', (v): v is string => typeof v === 'string')
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [form, setForm] = useState<FormState>(makeEmptyForm)
   const [submitted, setSubmitted] = useState(false)
+  const [formError, setFormError] = useState('')
   const [moreOpen, setMoreOpen] = useState(false)
-  const [videoQuery, setVideoQuery] = useState('')
   const [saving, setSaving] = useState(false)
   const [busyId, setBusyId] = useState<string | null>(null)
 
-  const load = async () => {
-    setLoading(true)
+  const load = useCallback(async () => {
+    setRefreshing(true)
     setLoadError('')
-    const res = await authedFetchJson<{ sample: boolean; items: GrowthExperiment[]; error?: string }>('/api/v5/growth-experiments')
+    const res = await v5Get<{ sample: boolean; items: GrowthExperiment[] }>('/api/v5/growth-experiments')
     if (res.ok) {
       setItems(res.data.items || [])
       setSample(Boolean(res.data.sample))
+      setLoaded(true)
     } else {
-      setLoadError(res.data?.error || '실험 목록을 불러오지 못했어요.')
+      setLoadError(errorText(res, '실험 목록을 불러오지 못했어요.'))
     }
-    setLoading(false)
-  }
+    setRefreshing(false)
+  }, [])
 
   useEffect(() => {
     void load()
-    const run = async () => {
-      const res = await authedFetchJson<{ items: VideoOption[] }>('/api/v5/videos')
-      if (res.ok) setVideoOptions(res.data.items || [])
-    }
-    void run()
-  }, [])
+  }, [load])
+
+  const authors = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const it of items) if (it.created_by) map.set(it.created_by, it.author_name || '이름 없음')
+    return Array.from(map, ([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name, 'ko'))
+  }, [items])
+  const activeAuthor = authors.some((a) => a.id === authorFilter) ? authorFilter : ''
+  const visibleItems = useMemo(() => (activeAuthor ? items.filter((it) => it.created_by === activeAuthor) : items), [items, activeAuthor])
 
   const grouped = useMemo(() => {
     const map = new Map<ExperimentStatus, GrowthExperiment[]>()
     for (const status of EXPERIMENT_STATUS_ORDER) map.set(status, [])
-    for (const item of items) map.get(item.status)?.push(item)
+    for (const item of visibleItems) map.get(item.status)?.push(item)
+    // 진행 중은 오래된 것부터: 결과 확인이 급한 실험이 위로 온다.
+    map.get('running')?.sort((a, b) => a.started_on.localeCompare(b.started_on))
     return map
-  }, [items])
+  }, [visibleItems])
 
-  // "다음에 확인할 것": 가장 오래 진행 중인 실험을 기준으로 안내한다.
   const focus = useMemo(() => {
-    const running = (grouped.get('running') || []).slice().sort((a, b) => a.started_on.localeCompare(b.started_on))
-    return { count: running.length, oldest: running[0] || null }
+    const running = grouped.get('running') || []
+    return { count: running.length, oldest: running[0] || null, overdue: running.filter(isOverdue) }
   }, [grouped])
 
   const errors = useMemo(() => validate(form), [form])
   const showErr = <K extends keyof FormErrors>(key: K) => (submitted ? errors[key] : undefined)
+  const formDirty = form.dimensions.length > 0 || form.videos.length > 0 || form.hypothesis.trim() !== '' || form.nextAction.trim() !== '' || form.metricDefinition.trim() !== '' || form.endedOn !== ''
 
-  const filteredVideos = useMemo(() => {
-    const q = videoQuery.trim().toLowerCase()
-    const list = q ? videoOptions.filter((v) => `${v.title || ''} ${v.stock_name}`.toLowerCase().includes(q)) : videoOptions
-    return list
-  }, [videoOptions, videoQuery])
+  const canEditItem = (exp: GrowthExperiment) => !sample && (exp.can_edit ?? Boolean(me?.isAdmin || (me && exp.created_by === me.crmUserId)))
 
   const openDrawer = () => {
     setForm(makeEmptyForm())
     setSubmitted(false)
+    setFormError('')
     setMoreOpen(false)
-    setVideoQuery('')
     setDrawerOpen(true)
   }
 
   const toggleDimension = (dim: ExperimentDimension) => {
-    setForm((f) => ({
-      ...f,
-      dimensions: f.dimensions.includes(dim) ? f.dimensions.filter((d) => d !== dim) : [...f.dimensions, dim]
-    }))
-  }
-
-  const toggleVideo = (id: string) => {
-    setForm((f) => ({ ...f, videoIds: f.videoIds.includes(id) ? f.videoIds.filter((v) => v !== id) : [...f.videoIds, id] }))
+    setForm((f) => ({ ...f, dimensions: f.dimensions.includes(dim) ? f.dimensions.filter((d) => d !== dim) : [...f.dimensions, dim] }))
   }
 
   const onCreate = async () => {
     setSubmitted(true)
+    setFormError('')
     const errs = validate(form)
     if (Object.keys(errs).length > 0) {
       if (errs.endedOn) setMoreOpen(true)
@@ -305,9 +496,9 @@ export default function CanvasPage() {
 
     setSaving(true)
     try {
-      const res = await authedPostJson('/api/v5/growth-experiments', {
+      const res = await v5Post<{ item: GrowthExperiment }>('/api/v5/growth-experiments', {
         dimensions: form.dimensions,
-        videoIds: form.videoIds,
+        videoIds: form.videos.map((v) => v.id),
         hypothesis: form.hypothesis.trim(),
         metricDefinition: form.metricDefinition.trim() || undefined,
         startedOn: form.startedOn,
@@ -315,46 +506,50 @@ export default function CanvasPage() {
         nextAction: form.nextAction.trim() || undefined
       })
       if (!res.ok) {
-        showError((res.data as any)?.error || '실험을 저장하지 못했어요. 잠시 뒤 다시 해 주세요.')
+        setFormError(errorText(res, '실험을 저장하지 못했어요. 잠시 뒤 다시 해 주세요.'))
         return
       }
-      showSuccess('새 실험을 추가했어요.')
       setDrawerOpen(false)
-      await load()
+      showSuccess('새 실험을 “진행중” 칸에 추가했어요.')
+      setItems((prev) => [res.data.item, ...prev])
     } finally {
       setSaving(false)
     }
   }
 
-  const onPatch = async (id: string, body: Record<string, unknown>) => {
+  const onPatch = async (id: string, body: Record<string, unknown>): Promise<string | null> => {
     setBusyId(id)
     try {
-      const res = await authedPatchJson(`/api/v5/growth-experiments/${id}`, body)
+      const res = await authedPatchJson<{ item: GrowthExperiment }>(`/api/v5/growth-experiments/${id}`, body)
       if (!res.ok) {
-        showError((res.data as any)?.error || '저장하지 못했어요. 잠시 뒤 다시 해 주세요.')
-        return false
+        if (res.status === 404) setItems((prev) => prev.filter((it) => it.id !== id)) // 이미 지워진 카드
+        return errorText(res, '저장하지 못했어요. 잠시 뒤 다시 해 주세요.')
       }
-      setItems((prev) => prev.map((it) => (it.id === id ? (res.data as any).item : it)))
-      showSuccess('저장했어요.')
-      return true
+      const updated = res.data.item
+      setItems((prev) => prev.map((it) => (it.id === id ? updated : it)))
+      if (typeof body.status === 'string' && body.status !== 'running') {
+        showSuccess(`실험을 “${EXPERIMENT_STATUS_LABEL[body.status as ExperimentStatus]}” 칸으로 옮겼어요.`)
+      }
+      return null
     } finally {
       setBusyId(null)
     }
   }
 
-  const onDelete = async (id: string) => {
+  const onDelete = async (id: string): Promise<string | null> => {
     setBusyId(id)
     try {
-      const res = await authedFetchJson(`/api/v5/growth-experiments/${id}`, { method: 'DELETE' })
-      if (!res.ok) {
-        showError((res.data as any)?.error || '삭제하지 못했어요.')
-        return
-      }
+      const res = await authedDeleteJson(`/api/v5/growth-experiments/${id}`)
+      if (!res.ok) return errorText(res, '지우지 못했어요. 잠시 뒤 다시 해 주세요.')
       setItems((prev) => prev.filter((it) => it.id !== id))
+      return null
     } finally {
       setBusyId(null)
     }
   }
+
+  const ready = loaded && viewReady && authorReady
+  const showLoadError = Boolean(loadError)
 
   return (
     <>
@@ -370,18 +565,18 @@ export default function CanvasPage() {
 
       <SampleNote show={sample} />
 
-      {loadError ? (
-        <LoadError message={loadError} onRetry={() => void load()} />
-      ) : loading ? (
-        <LoadingLine />
-      ) : (
-        <>
+      {showLoadError ? <LoadError message={loadError} onRetry={() => void load()} /> : null}
+      {!ready && !showLoadError ? <LoadingLine /> : null}
+
+      {ready ? (
+        <div className={refreshing ? 'v5p-refreshing' : undefined}>
           <AnswerBanner
             label="오늘의 한 줄"
+            tone={focus.overdue.length > 0 ? 'bad' : 'neutral'}
             aside={
               focus.oldest ? (
                 <span className="small muted">
-                  가장 오래된 실험 · {fmtNum(daysSince(focus.oldest.started_on))}일째 · “{focus.oldest.hypothesis.slice(0, 40)}
+                  가장 오래된 실험 · D+{fmtNum(daysRunning(focus.oldest.started_on))} · “{focus.oldest.hypothesis.slice(0, 40)}
                   {focus.oldest.hypothesis.length > 40 ? '…' : ''}”
                 </span>
               ) : null
@@ -391,6 +586,11 @@ export default function CanvasPage() {
               <>아직 실험이 없어요. 첫 실험을 시작해 보세요.</>
             ) : focus.count === 0 ? (
               <>진행 중인 실험이 없어요 · 새 실험을 하나 시작해 볼까요?</>
+            ) : focus.overdue.length > 0 ? (
+              <>
+                결과를 확인할 실험 <strong>{fmtNum(focus.overdue.length)}개</strong>
+                <span className="v5p-answer-sub">{OVERDUE_DAYS}일 넘게 진행 중이에요. 카드에서 “성공 / 실패”로 결과를 남겨 주세요. (진행 중 {fmtNum(focus.count)}개)</span>
+              </>
             ) : (
               <>
                 지금 진행 중인 실험 <strong>{fmtNum(focus.count)}개</strong> · 다음에 확인할 것:{' '}
@@ -418,14 +618,26 @@ export default function CanvasPage() {
             <>
               <div className="v5p-toolbar">
                 <span className="small muted">카드를 누르면 자세한 내용을 보고 고칠 수 있어요.</span>
-                <Segment
-                  value={view}
-                  onChange={setView}
-                  options={[
-                    { value: 'kanban', label: '보드' },
-                    { value: 'list', label: '목록' }
-                  ]}
-                />
+                <span className="v5p-toolbar-right">
+                  {authors.length > 1 ? (
+                    <select className="select v5p-owner-select" value={activeAuthor} onChange={(e) => setAuthorFilter(e.target.value)} aria-label="만든 사람별로 보기">
+                      <option value="">모든 사람</option>
+                      {authors.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.name}
+                        </option>
+                      ))}
+                    </select>
+                  ) : null}
+                  <Segment
+                    value={view}
+                    onChange={setView}
+                    options={[
+                      { value: 'kanban', label: '보드' },
+                      { value: 'list', label: '목록' }
+                    ]}
+                  />
+                </span>
               </div>
 
               {view === 'kanban' ? (
@@ -443,7 +655,14 @@ export default function CanvasPage() {
                         </div>
                         {list.length === 0 ? <div className="v5p-col-empty">{COLUMN_EMPTY[status]}</div> : null}
                         {list.map((exp) => (
-                          <ExperimentCard key={exp.id} exp={exp} busy={busyId === exp.id} onPatch={(body) => onPatch(exp.id, body)} onDelete={() => onDelete(exp.id)} />
+                          <ExperimentCard
+                            key={exp.id}
+                            exp={exp}
+                            canEdit={canEditItem(exp)}
+                            busy={busyId === exp.id}
+                            onPatch={(body) => onPatch(exp.id, body)}
+                            onDelete={() => onDelete(exp.id)}
+                          />
                         ))}
                       </div>
                     )
@@ -464,7 +683,7 @@ export default function CanvasPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {items.map((exp) => (
+                      {visibleItems.map((exp) => (
                         <tr key={exp.id}>
                           <td style={{ maxWidth: 260 }}>{exp.hypothesis}</td>
                           <td>{exp.dimensions.map((d) => EXPERIMENT_DIMENSION_LABEL[d]).join(', ')}</td>
@@ -474,50 +693,60 @@ export default function CanvasPage() {
                           </td>
                           <td>
                             <Badge tone={STATUS_TONE[exp.status]}>{EXPERIMENT_STATUS_LABEL[exp.status]}</Badge>
+                            {exp.status === 'running' ? <span className="v5p-dday inline">D+{fmtNum(daysRunning(exp.started_on))}</span> : null}
+                            {isOverdue(exp) ? <span className="v5p-due inline">결과 확인할 때예요</span> : null}
                           </td>
-                          <td className="num">{exp.effect_size !== null ? `${exp.effect_size >= 0 ? '+' : ''}${exp.effect_size}%` : '-'}</td>
+                          <td className="num">{exp.effect_size !== null ? effectLabel(exp.effect_size) : '-'}</td>
                           <td className="small muted">{exp.next_action || '-'}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
+                  <div className="v5p-list-note small muted">고치거나 지우려면 “보드”에서 카드를 눌러 주세요.</div>
                 </div>
               )}
             </>
           )}
-        </>
-      )}
+        </div>
+      ) : null}
 
       {drawerOpen ? (
-        <Drawer
+        <FormDrawer
           title="새 실험 만들기"
+          formId="v5p-exp-form"
+          dirty={formDirty}
+          saving={saving}
+          submitLabel="실험 시작하기"
+          onSubmit={onCreate}
           onClose={() => setDrawerOpen(false)}
-          footer={
-            <>
-              <button className="button secondary" type="button" onClick={() => setDrawerOpen(false)}>
-                취소
-              </button>
-              <button className="button" type="button" disabled={saving} onClick={onCreate}>
-                {saving ? '저장 중…' : '실험 시작하기'}
-              </button>
-            </>
-          }
         >
-          <FormField label="1. 무엇을 바꿔 보나요?" hint={DIMENSION_HINT} error={showErr('dimensions')}>
+          {formError ? (
+            <div className="v5p-error" role="alert" style={{ marginTop: 0 }}>
+              {formError}
+            </div>
+          ) : null}
+
+          <FormField label="1. 무엇을 바꿔 보나요?" required hint={DIMENSION_HINT} error={showErr('dimensions')}>
             <div className="v5p-chips">
-              {EXPERIMENT_DIMENSIONS.map((dim) => (
-                <button key={dim} type="button" aria-pressed={form.dimensions.includes(dim)} className={`v5p-chip ${form.dimensions.includes(dim) ? 'on' : ''}`} onClick={() => toggleDimension(dim)}>
+              {EXPERIMENT_DIMENSIONS.map((dim, i) => (
+                <button
+                  key={dim}
+                  type="button"
+                  data-autofocus={i === 0 ? '' : undefined}
+                  aria-pressed={form.dimensions.includes(dim)}
+                  className={`v5p-chip ${form.dimensions.includes(dim) ? 'on' : ''}`}
+                  onClick={() => toggleDimension(dim)}
+                >
                   {EXPERIMENT_DIMENSION_LABEL[dim]}
                 </button>
               ))}
             </div>
           </FormField>
 
-          <FormField label="2. 가설" hint="“이렇게 바꾸면 이렇게 될 것이다”를 한 줄로 적어요." error={showErr('hypothesis')} htmlFor="v5p-hypo">
-            <textarea
+          <FormField label="2. 가설" required hint="“이렇게 바꾸면 이렇게 될 것이다”를 한 줄로 적어요." error={showErr('hypothesis')} htmlFor="v5p-hypo">
+            <input
               id="v5p-hypo"
-              className="textarea"
-              rows={3}
+              className="input"
               maxLength={500}
               value={form.hypothesis}
               onChange={(e) => setForm((f) => ({ ...f, hypothesis: e.target.value }))}
@@ -525,33 +754,21 @@ export default function CanvasPage() {
             />
           </FormField>
 
-          <FormField label="3. 대상 영상" hint={`실험할 영상을 골라요. ${fmtNum(form.videoIds.length)}개 선택됨`} error={showErr('videoIds')}>
-            {videoOptions.length === 0 ? (
-              <div className="v5p-note">
-                아직 등록된 영상이 없어요. <Link href="/v5/register">영상 등록</Link>에서 먼저 영상을 넣어 주세요.
-              </div>
-            ) : (
-              <>
-                <input className="input" type="search" value={videoQuery} onChange={(e) => setVideoQuery(e.target.value)} placeholder="종목명이나 제목으로 찾기 (예: 삼성전자)" />
-                <div className="v5p-picker" role="group" aria-label="대상 영상 선택">
-                  {filteredVideos.slice(0, 40).map((v) => {
-                    const on = form.videoIds.includes(v.id)
-                    return (
-                      <label key={v.id} className={`v5p-pick-row ${on ? 'on' : ''}`}>
-                        <input type="checkbox" checked={on} onChange={() => toggleVideo(v.id)} />
-                        <span className="v5p-pick-stock">{v.stock_name}</span>
-                        <span className="v5p-pick-title">{v.title || '(제목 없음)'}</span>
-                      </label>
-                    )
-                  })}
-                  {filteredVideos.length === 0 ? <div className="v5p-pick-empty">찾는 영상이 없어요.</div> : null}
-                  {filteredVideos.length > 40 ? <div className="v5p-pick-empty">최근 {fmtNum(filteredVideos.length)}개 중 40개만 보여요. 검색으로 좁혀 보세요.</div> : null}
-                </div>
-              </>
-            )}
+          <FormField label="3. 대상 영상" required hint={`실험할 영상을 골라요. ${fmtNum(form.videos.length)}개 선택됨`} error={showErr('videos')} htmlFor="v5p-exp-video-search">
+            <VideoPicker
+              selected={form.videos}
+              onChange={(videos) => setForm((f) => ({ ...f, videos }))}
+              max={MAX_TARGETS}
+              searchId="v5p-exp-video-search"
+              emptyHint={
+                <>
+                  아직 등록된 영상이 없어요. <Link href="/v5/register">영상 등록</Link>에서 먼저 영상을 넣어 주세요.
+                </>
+              }
+            />
           </FormField>
 
-          <FormField label="4. 시작일" error={showErr('startedOn')} htmlFor="v5p-start">
+          <FormField label="4. 시작일" required error={showErr('startedOn')} htmlFor="v5p-start">
             <input id="v5p-start" className="input" type="date" value={form.startedOn} onChange={(e) => setForm((f) => ({ ...f, startedOn: e.target.value }))} />
           </FormField>
 
@@ -569,7 +786,7 @@ export default function CanvasPage() {
               </FormField>
             </div>
           </details>
-        </Drawer>
+        </FormDrawer>
       ) : null}
 
       <Toast toast={toast} />

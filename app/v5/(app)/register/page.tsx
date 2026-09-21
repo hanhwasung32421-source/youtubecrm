@@ -1,33 +1,29 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { PageHeader, useV5Me } from '@/components/v5/app-shell'
+import { BulkRegister } from '@/components/v5/bulk-register'
+import { MyVideosTable, type MineVideo } from '@/components/v5/my-videos-table'
+import {
+  CONTENT_TYPE_LABEL,
+  DAILY_GOAL,
+  extractVideoId,
+  friendlyError,
+  isShortsUrl,
+  isYoutubeUrl,
+  normalizeUrl,
+  registerVideo,
+  type ContentType
+} from '@/components/v5/register-utils'
 import { Badge, EmptyState } from '@/components/v5/widget'
 import { authedFetchJson, authedPostJson } from '@/lib/session/authed-fetch'
-import { toYmd } from '@/lib/v5/format'
-
-type ContentType = 'longform' | 'shortform'
-
-type MineVideo = {
-  id: string
-  title: string | null
-  stock_name: string
-  content_type: ContentType
-  published_at: string | null
-  view_count: number | null
-  like_count: number | null
-  comment_count: number | null
-  youtube_url: string
-  created_at: string
-}
 
 type PlaybookOption = { id: string; title: string; usage_count: number }
 
 type Confirmation =
-  | { kind: 'ok'; stock: string; type: ContentType; title: string | null }
+  | { kind: 'ok'; id: string; stock: string; type: ContentType; title: string | null; refreshed: boolean; nth: number | null }
   | { kind: 'error'; message: string }
 
-const CONTENT_TYPE_LABEL: Record<ContentType, string> = { longform: '롱폼', shortform: '숏폼' }
 const LS_TYPE = 'v5.register.contentType'
 const LS_STOCKS = 'v5.register.recentStocks'
 const MAX_RECENT_STOCKS = 8
@@ -48,41 +44,6 @@ function writeStorage(key: string, value: string) {
   } catch {}
 }
 
-// 붙여넣은 글에서 유튜브 주소만 뽑아 정리한다. 앞뒤 공백/줄바꿈 제거, https:// 없으면 붙여 준다.
-function normalizeUrl(raw: string): string {
-  const text = raw.trim()
-  if (!text) return ''
-  const match = text.match(/(?:https?:\/\/)?(?:www\.|m\.|music\.)?(?:youtube\.com|youtu\.be)\/[^\s]+/i)
-  const picked = match ? match[0] : text.split(/\s+/)[0]
-  return /^https?:\/\//i.test(picked) ? picked : `https://${picked}`
-}
-
-function extractVideoId(url: string): string | null {
-  const m =
-    url.match(/[?&]v=([\w-]{11})/) ||
-    url.match(/youtu\.be\/([\w-]{11})/) ||
-    url.match(/youtube\.com\/(?:shorts|embed|live)\/([\w-]{11})/)
-  return m ? m[1] : null
-}
-
-function isYoutubeUrl(url: string) {
-  try {
-    const host = new URL(url).hostname.replace(/^(www|m|music)\./, '')
-    return host === 'youtube.com' || host === 'youtu.be'
-  } catch {
-    return false
-  }
-}
-
-function formatWhen(value: string) {
-  const d = new Date(value)
-  if (Number.isNaN(d.getTime())) return '-'
-  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-  return toYmd(d) === toYmd(new Date()) ? `오늘 ${hm}` : `${toYmd(d).slice(5)} ${hm}`
-}
-
-const num = (v: number | null | undefined) => (v ?? 0).toLocaleString('ko-KR')
-
 // ---- 화면 ----------------------------------------------------------------
 
 export default function RegisterPage() {
@@ -91,8 +52,12 @@ export default function RegisterPage() {
   const stockRef = useRef<HTMLInputElement | null>(null)
   const submitRef = useRef<HTMLButtonElement | null>(null)
 
+  const [mode, setMode] = useState<'single' | 'bulk'>('single')
+  const [bulkBusy, setBulkBusy] = useState(false)
+
   const [youtubeUrl, setYoutubeUrl] = useState('')
   const [contentType, setContentType] = useState<ContentType>('longform')
+  const [autoTypeNote, setAutoTypeNote] = useState(false)
   const [stockName, setStockName] = useState('')
   const [recentStocks, setRecentStocks] = useState<string[]>([])
   const [contentCategory, setContentCategory] = useState('')
@@ -105,10 +70,14 @@ export default function RegisterPage() {
   const [items, setItems] = useState<MineVideo[]>([])
   const [loadedOnce, setLoadedOnce] = useState(false)
   const [listError, setListError] = useState(false)
-  const [justJoinedId, setJustJoinedId] = useState<string | null>(null)
+  const [highlightIds, setHighlightIds] = useState<Set<string>>(new Set())
   const [page, setPage] = useState(1)
   const [totalCount, setTotalCount] = useState(0)
   const [todayCount, setTodayCount] = useState(0)
+  const [teamToday, setTeamToday] = useState<number | null>(null)
+
+  const pageRef = useRef(1)
+  const refreshTimer = useRef<number | null>(null)
 
   const isAdmin = Boolean(me?.isAdmin)
 
@@ -123,35 +92,50 @@ export default function RegisterPage() {
     urlRef.current?.focus()
   }, [])
 
-  // 목록 + "오늘 등록한 수". 오늘 등록분이 한 페이지를 넘으면 다음 페이지까지 세어 본다.
+  useEffect(() => {
+    pageRef.current = page
+  }, [page])
+
+  useEffect(
+    () => () => {
+      if (refreshTimer.current) window.clearTimeout(refreshTimer.current)
+    },
+    []
+  )
+
   const loadMine = useCallback(async (targetPage: number) => {
     type Res = { items: MineVideo[]; pagination: { page: number; pageSize: number; totalCount: number } }
-    const res = await authedFetchJson<Res>(`/api/videos/mine?page=${targetPage}`)
-    if (!res.ok) {
+    try {
+      const res = await authedFetchJson<Res>(`/api/v5/my-videos?page=${targetPage}`)
+      if (!res.ok) {
+        setListError(true)
+        setLoadedOnce(true)
+        return null
+      }
+      setListError(false)
+      const rows = res.data.items || []
+      setItems(rows)
+      setTotalCount(res.data.pagination?.totalCount || 0)
+      setLoadedOnce(true)
+      return rows
+    } catch {
       setListError(true)
       setLoadedOnce(true)
       return null
     }
-    setListError(false)
-    const rows = res.data.items || []
-    setItems(rows)
-    setTotalCount(res.data.pagination?.totalCount || 0)
-    setLoadedOnce(true)
-    return rows
   }, [])
 
-  const countToday = useCallback(async () => {
-    const today = toYmd(new Date())
-    let count = 0
-    for (let p = 1; p <= 5; p += 1) {
-      const res = await authedFetchJson<{ items: MineVideo[] }>(`/api/videos/mine?page=${p}`)
-      if (!res.ok) break
-      const rows = res.data.items || []
-      const todays = rows.filter((v) => toYmd(new Date(v.created_at)) === today).length
-      count += todays
-      if (todays < rows.length || rows.length === 0) break
+  // "오늘 N번째"의 기준 숫자: 서버가 한국 시간 기준으로 센 값.
+  const refreshToday = useCallback(async (): Promise<number | null> => {
+    try {
+      const res = await authedFetchJson<{ count: number; teamCount?: number }>('/api/v5/my-today')
+      if (!res.ok) return null
+      setTodayCount(res.data.count || 0)
+      setTeamToday(typeof res.data.teamCount === 'number' ? res.data.teamCount : null)
+      return res.data.count || 0
+    } catch {
+      return null
     }
-    setTodayCount(count)
   }, [])
 
   useEffect(() => {
@@ -159,8 +143,8 @@ export default function RegisterPage() {
   }, [page, loadMine])
 
   useEffect(() => {
-    void countToday()
-  }, [countToday])
+    void refreshToday()
+  }, [refreshToday])
 
   useEffect(() => {
     const run = async () => {
@@ -170,21 +154,56 @@ export default function RegisterPage() {
     void run()
   }, [])
 
+  const highlight = useCallback((id: string) => {
+    setHighlightIds((prev) => new Set(prev).add(id))
+    window.setTimeout(() => {
+      setHighlightIds((prev) => {
+        const next = new Set(prev)
+        next.delete(id)
+        return next
+      })
+    }, 3000)
+  }, [])
+
+  // 목록 맨 위(1쪽)와 오늘 숫자를 새로 읽는다. 여러 개 등록 중에는 몰아서 한 번만.
+  const refreshAll = useCallback(() => {
+    if (pageRef.current !== 1) setPage(1)
+    else void loadMine(1)
+    void refreshToday()
+  }, [loadMine, refreshToday])
+
+  const scheduleRefresh = useCallback(() => {
+    if (refreshTimer.current) window.clearTimeout(refreshTimer.current)
+    refreshTimer.current = window.setTimeout(refreshAll, 700)
+  }, [refreshAll])
+
+  const registeredIds = useMemo(() => {
+    const set = new Set<string>()
+    for (const v of items) {
+      const id = extractVideoId(v.youtube_url)
+      if (id) set.add(id)
+    }
+    return set
+  }, [items])
+
   // ---- 입력 검사(붉은 벽 대신 입력칸 아래 한 줄 힌트) ----
   const cleanUrl = normalizeUrl(youtubeUrl)
   const urlProblem =
-    !cleanUrl ? (touched ? '유튜브 주소를 붙여 넣어 주세요.' : '') : !isYoutubeUrl(cleanUrl) || !extractVideoId(cleanUrl) ? '유튜브 영상 주소가 맞는지 확인해 주세요.' : ''
+    !cleanUrl ? (touched ? '유튜브 주소를 붙여 넣어 주세요.' : '') : !isYoutubeUrl(cleanUrl) || !extractVideoId(cleanUrl) ? '유효하지 않은 주소입니다. 유튜브 영상 주소가 맞는지 확인해 주세요.' : ''
   const videoId = cleanUrl ? extractVideoId(cleanUrl) : null
-  const alreadyRegistered = Boolean(videoId && items.some((v) => v.youtube_url.includes(videoId)))
+  const alreadyRegistered = Boolean(videoId && registeredIds.has(videoId))
   const stockProblem = touched && !stockName.trim() ? '종목명을 적어 주세요.' : ''
 
   const chooseType = (t: ContentType) => {
     setContentType(t)
+    setAutoTypeNote(false)
     writeStorage(LS_TYPE, t)
   }
 
-  const rememberStock = (stock: string) => {
-    const next = [stock, ...recentStocks.filter((s) => s !== stock)].slice(0, MAX_RECENT_STOCKS)
+  const rememberStocks = (stocks: string[]) => {
+    const fresh = Array.from(new Set(stocks.map((s) => s.trim()).filter(Boolean))).reverse()
+    if (fresh.length === 0) return
+    const next = [...fresh, ...recentStocks.filter((s) => !fresh.includes(s))].slice(0, MAX_RECENT_STOCKS)
     setRecentStocks(next)
     writeStorage(LS_STOCKS, JSON.stringify(next))
   }
@@ -199,7 +218,7 @@ export default function RegisterPage() {
     if (saving) return
     setTouched(true)
     setConfirmation(null)
-    if (!cleanUrl || urlProblem) {
+    if (!cleanUrl || urlProblem || !videoId) {
       urlRef.current?.focus()
       return
     }
@@ -210,16 +229,12 @@ export default function RegisterPage() {
 
     const stock = stockName.trim()
     const type = contentType
+    const refreshed = alreadyRegistered
     setSaving(true)
     try {
-      const res = await authedPostJson<{ ok: boolean; video: { id: string; title: string | null }; error?: string }>('/api/videos/create', {
-        youtubeUrl: cleanUrl,
-        contentType: type,
-        stockName: stock,
-        contentCategory: contentCategory.trim() || undefined
-      })
+      const res = await registerVideo({ videoId, contentType: type, stockName: stock, contentCategory: contentCategory.trim() })
       if (!res.ok) {
-        setConfirmation({ kind: 'error', message: (res.data as any)?.error || '영상 등록에 실패했습니다. 잠시 후 다시 시도해 주세요.' })
+        setConfirmation({ kind: 'error', message: res.message })
         return
       }
 
@@ -228,29 +243,27 @@ export default function RegisterPage() {
         void authedPostJson(`/api/v5/playbook/${usedPlaybookId}/use`, {})
       }
 
-      const newId = res.data.video.id
-      rememberStock(stock)
-      setTodayCount((n) => n + 1)
-      setConfirmation({ kind: 'ok', stock, type, title: res.data.video.title || null })
+      rememberStocks([stock])
+      setConfirmation({ kind: 'ok', id: res.id, stock, type, title: res.title, refreshed, nth: null })
 
       // 다음 영상을 바로 붙여 넣을 수 있게 입력을 비우고 URL 칸으로 돌아간다.
       setYoutubeUrl('')
       setStockName('')
       setContentCategory('')
       setUsedPlaybookId('')
+      setAutoTypeNote(false)
       setTouched(false)
       urlRef.current?.focus()
 
-      // 목록은 뒤에서 갱신하고, 새 줄만 잠깐 강조한다.
+      // 목록과 오늘 숫자는 뒤에서 갱신하고, 새 줄만 잠깐 강조한다.
       void (async () => {
-        if (page !== 1) setPage(1)
+        const countPromise = refreshToday()
+        if (pageRef.current !== 1) setPage(1)
         else await loadMine(1)
-        void countToday()
-        setJustJoinedId(newId)
-        window.setTimeout(() => setJustJoinedId(null), 2800)
+        const count = await countPromise
+        setConfirmation((prev) => (prev && prev.kind === 'ok' && prev.id === res.id ? { ...prev, nth: count } : prev))
+        highlight(res.id)
       })()
-    } catch (e: any) {
-      setConfirmation({ kind: 'error', message: e?.message || '영상 등록 중 오류가 발생했습니다.' })
     } finally {
       setSaving(false)
     }
@@ -258,172 +271,228 @@ export default function RegisterPage() {
 
   const totalPages = Math.max(Math.ceil(totalCount / 20), 1)
 
+  const goalPct = Math.min(Math.round((todayCount / DAILY_GOAL) * 100), 100)
+
   return (
     <>
       <PageHeader
         title="영상 등록"
         subtitle="유튜브 주소를 붙여 넣고 종목을 적은 뒤 Enter. 제목·조회수·좋아요·댓글은 자동으로 가져옵니다."
         actions={
-          <Badge tone="indigo">
-            {isAdmin ? '오늘 전체 등록' : '오늘 등록'} {todayCount.toLocaleString('ko-KR')}개
-          </Badge>
+          isAdmin ? (
+            <Badge tone="indigo">
+              오늘 전체 등록 {(teamToday ?? todayCount).toLocaleString('ko-KR')}개
+              {teamToday !== null && todayCount > 0 ? ` (내가 ${todayCount.toLocaleString('ko-KR')}개)` : ''}
+            </Badge>
+          ) : (
+            <div className="v5-goal" role="group" aria-label="오늘 등록 진행">
+              <div className="v5-goal-top">
+                <strong>오늘 {todayCount.toLocaleString('ko-KR')}개 등록</strong>
+                <span>{todayCount >= DAILY_GOAL ? `목표 ${DAILY_GOAL}개 달성` : `오늘 목표 ${DAILY_GOAL}개 · ${DAILY_GOAL - todayCount}개 남음`}</span>
+              </div>
+              <div className="v5-goal-track" aria-hidden="true">
+                <div className={`v5-goal-bar ${todayCount >= DAILY_GOAL ? 'full' : ''}`} style={{ width: `${goalPct}%` }} />
+              </div>
+            </div>
+          )
         }
       />
 
-      <form
-        className="panel v5-quick"
-        onSubmit={(e) => {
-          e.preventDefault()
-          void onSubmit()
-        }}
-      >
-        <div className="field">
-          <label className="label" htmlFor="v5-reg-url">
-            유튜브 주소
-          </label>
-          <input
-            id="v5-reg-url"
-            ref={urlRef}
-            className="input"
-            inputMode="url"
-            autoComplete="off"
-            spellCheck={false}
-            placeholder="여기에 유튜브 영상 주소를 붙여 넣으세요"
-            value={youtubeUrl}
-            onChange={(e) => setYoutubeUrl(e.target.value)}
-            onPaste={(e) => {
-              // 붙여넣기: 앞뒤 공백을 지우고, 종목이 비어 있으면 곧바로 종목 칸으로 넘어간다.
-              const text = e.clipboardData.getData('text')
-              const cleaned = normalizeUrl(text)
-              if (!cleaned) return
-              e.preventDefault()
-              setYoutubeUrl(cleaned)
-              if (!stockName.trim() && isYoutubeUrl(cleaned)) window.setTimeout(() => stockRef.current?.focus(), 0)
+      <div className="panel v5-quick">
+        <div className="v5-mode-row">
+          <div className="v5-segment" role="group" aria-label="등록 방식">
+            <button type="button" className={mode === 'single' ? 'active' : ''} aria-pressed={mode === 'single'} disabled={bulkBusy} onClick={() => setMode('single')}>
+              한 개씩 등록
+            </button>
+            <button type="button" className={mode === 'bulk' ? 'active' : ''} aria-pressed={mode === 'bulk'} disabled={bulkBusy || saving} onClick={() => setMode('bulk')}>
+              여러 개 붙여넣기
+            </button>
+          </div>
+        </div>
+
+        {mode === 'bulk' ? (
+          <BulkRegister
+            recentStocks={recentStocks}
+            registeredIds={registeredIds}
+            onBusyChange={setBulkBusy}
+            onStocksUsed={rememberStocks}
+            onRegistered={(id) => {
+              highlight(id)
+              scheduleRefresh()
             }}
-            onBlur={() => {
-              if (youtubeUrl && youtubeUrl !== cleanUrl) setYoutubeUrl(cleanUrl)
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
-                e.preventDefault()
-                if (!stockName.trim() && cleanUrl && !urlProblem) stockRef.current?.focus()
-                else void onSubmit()
-              }
-            }}
-            aria-invalid={Boolean(urlProblem)}
           />
-          <div className={`v5-hint ${urlProblem || alreadyRegistered ? 'warn' : ''}`}>
-            {urlProblem || (alreadyRegistered ? '이미 등록된 영상입니다. 다시 등록하면 정보가 새로 갱신됩니다.' : '')}
-          </div>
-        </div>
-
-        <div className="v5-quick-row">
-          <div className="field">
-            <label className="label" htmlFor="v5-reg-stock">
-              종목
-            </label>
-            <input
-              id="v5-reg-stock"
-              ref={stockRef}
-              className="input"
-              list="v5-recent-stocks"
-              autoComplete="off"
-              placeholder="예: 삼성전자"
-              value={stockName}
-              onChange={(e) => setStockName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
-                  e.preventDefault()
-                  void onSubmit()
-                }
-              }}
-              aria-invalid={Boolean(stockProblem)}
-            />
-            <datalist id="v5-recent-stocks">
-              {recentStocks.map((s) => (
-                <option key={s} value={s} />
-              ))}
-            </datalist>
-          </div>
-          <div className="field">
-            <span className="label">형식</span>
-            <div className="v5-type-toggle" role="group" aria-label="영상 형식">
-              {(['longform', 'shortform'] as const).map((t) => (
-                <button key={t} type="button" className={contentType === t ? 'active' : ''} aria-pressed={contentType === t} onClick={() => chooseType(t)}>
-                  {CONTENT_TYPE_LABEL[t]}
-                </button>
-              ))}
-            </div>
-          </div>
-          <button ref={submitRef} className="button" type="submit" disabled={saving}>
-            {saving ? '등록 중...' : '등록'}
-          </button>
-        </div>
-        <div className={`v5-hint ${stockProblem ? 'warn' : ''}`}>{stockProblem}</div>
-
-        {recentStocks.length > 0 ? (
-          <div className="v5-chip-row" aria-label="최근 종목">
-            <span className="v5-chip-label">최근 종목</span>
-            {recentStocks.map((s) => (
-              <button key={s} type="button" className={`v5-chip ${stockName.trim() === s ? 'on' : ''}`} onClick={() => pickChip(s)}>
-                {s}
-              </button>
-            ))}
-          </div>
-        ) : null}
-
-        <details className="v5-more">
-          <summary>추가 정보 입력 (선택)</summary>
-          <div className="v5-more-body">
+        ) : (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              void onSubmit()
+            }}
+          >
             <div className="field">
-              <label className="label" htmlFor="v5-reg-category">
-                영상 분류
+              <label className="label" htmlFor="v5-reg-url">
+                유튜브 주소
               </label>
               <input
-                id="v5-reg-category"
+                id="v5-reg-url"
+                ref={urlRef}
                 className="input"
-                value={contentCategory}
-                onChange={(e) => setContentCategory(e.target.value)}
-                placeholder="예: 실적분석, 급등주, 리포트"
+                inputMode="url"
+                autoComplete="off"
+                spellCheck={false}
+                disabled={saving}
+                placeholder="여기에 유튜브 영상 주소를 붙여 넣으세요"
+                value={youtubeUrl}
+                onChange={(e) => setYoutubeUrl(e.target.value)}
+                onPaste={(e) => {
+                  // 붙여넣기: 앞뒤 공백을 지우고, 종목이 비어 있으면 곧바로 종목 칸으로 넘어간다.
+                  const text = e.clipboardData.getData('text')
+                  const cleaned = normalizeUrl(text)
+                  if (!cleaned) return
+                  e.preventDefault()
+                  setYoutubeUrl(cleaned)
+                  if (isShortsUrl(cleaned) && contentType !== 'shortform') {
+                    setContentType('shortform')
+                    setAutoTypeNote(true)
+                  }
+                  if (!stockName.trim() && isYoutubeUrl(cleaned)) window.setTimeout(() => stockRef.current?.focus(), 0)
+                }}
+                onBlur={() => {
+                  if (youtubeUrl && youtubeUrl !== cleanUrl) setYoutubeUrl(cleanUrl)
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                    e.preventDefault()
+                    if (!stockName.trim() && cleanUrl && !urlProblem) stockRef.current?.focus()
+                    else void onSubmit()
+                  }
+                }}
+                aria-invalid={Boolean(urlProblem)}
               />
+              <div className={`v5-hint ${urlProblem || alreadyRegistered ? 'warn' : ''}`}>
+                {urlProblem ||
+                  (alreadyRegistered
+                    ? '이미 등록된 영상입니다. 다시 등록하면 정보가 새로 갱신됩니다.'
+                    : autoTypeNote
+                      ? '숏폼 주소라서 형식을 숏폼으로 맞췄습니다.'
+                      : '')}
+              </div>
             </div>
-            {playbookOptions.length > 0 ? (
+
+            <div className="v5-quick-row">
               <div className="field">
-                <label className="label" htmlFor="v5-reg-playbook">
-                  적용한 성공 공식
+                <label className="label" htmlFor="v5-reg-stock">
+                  종목
                 </label>
-                <select id="v5-reg-playbook" className="select" value={usedPlaybookId} onChange={(e) => setUsedPlaybookId(e.target.value)}>
-                  <option value="">선택 안 함</option>
-                  {playbookOptions.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.title} (사용 {p.usage_count}회)
-                    </option>
+                <input
+                  id="v5-reg-stock"
+                  ref={stockRef}
+                  className="input"
+                  list="v5-recent-stocks"
+                  autoComplete="off"
+                  disabled={saving}
+                  placeholder="예: 삼성전자"
+                  value={stockName}
+                  onChange={(e) => setStockName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                      e.preventDefault()
+                      void onSubmit()
+                    }
+                  }}
+                  aria-invalid={Boolean(stockProblem)}
+                />
+                <datalist id="v5-recent-stocks">
+                  {recentStocks.map((s) => (
+                    <option key={s} value={s} />
                   ))}
-                </select>
+                </datalist>
+              </div>
+              <div className="field">
+                <span className="label">형식</span>
+                <div className="v5-type-toggle" role="group" aria-label="영상 형식">
+                  {(['longform', 'shortform'] as const).map((t) => (
+                    <button key={t} type="button" className={contentType === t ? 'active' : ''} aria-pressed={contentType === t} disabled={saving} onClick={() => chooseType(t)}>
+                      {CONTENT_TYPE_LABEL[t]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <button ref={submitRef} className="button" type="submit" disabled={saving}>
+                {saving ? '등록 중...' : '등록'}
+              </button>
+            </div>
+            <div className={`v5-hint ${stockProblem ? 'warn' : ''}`}>{stockProblem}</div>
+
+            {recentStocks.length > 0 ? (
+              <div className="v5-chip-row" aria-label="최근 종목">
+                <span className="v5-chip-label">최근 종목</span>
+                {recentStocks.map((s) => (
+                  <button key={s} type="button" className={`v5-chip ${stockName.trim() === s ? 'on' : ''}`} disabled={saving} onClick={() => pickChip(s)}>
+                    {s}
+                  </button>
+                ))}
               </div>
             ) : null}
-          </div>
-        </details>
 
-        {confirmation ? (
-          confirmation.kind === 'ok' ? (
-            <div className="v5-confirm" role="status">
-              <span>✓ 등록됨 · 오늘 {todayCount.toLocaleString('ko-KR')}번째</span>
-              <span className="v5-confirm-detail">
-                {confirmation.stock} · {CONTENT_TYPE_LABEL[confirmation.type]}
-                {confirmation.title ? ` · ${confirmation.title}` : ''}
-              </span>
-            </div>
-          ) : (
-            <div className="v5-confirm error" role="alert">
-              <span>등록하지 못했습니다</span>
-              <span className="v5-confirm-detail" style={{ whiteSpace: 'normal' }}>
-                {confirmation.message}
-              </span>
-            </div>
-          )
-        ) : null}
-      </form>
+            <details className="v5-more">
+              <summary>추가 정보 입력 (선택)</summary>
+              <div className="v5-more-body">
+                <div className="field">
+                  <label className="label" htmlFor="v5-reg-category">
+                    영상 분류
+                  </label>
+                  <input
+                    id="v5-reg-category"
+                    className="input"
+                    value={contentCategory}
+                    disabled={saving}
+                    onChange={(e) => setContentCategory(e.target.value)}
+                    placeholder="예: 실적분석, 급등주, 리포트"
+                  />
+                </div>
+                {playbookOptions.length > 0 ? (
+                  <div className="field">
+                    <label className="label" htmlFor="v5-reg-playbook">
+                      적용한 성공 공식
+                    </label>
+                    <select id="v5-reg-playbook" className="select" value={usedPlaybookId} disabled={saving} onChange={(e) => setUsedPlaybookId(e.target.value)}>
+                      <option value="">선택 안 함</option>
+                      {playbookOptions.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.title} (사용 {p.usage_count}회)
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : null}
+              </div>
+            </details>
+
+            {confirmation ? (
+              confirmation.kind === 'ok' ? (
+                <div className="v5-confirm" role="status">
+                  <span>
+                    {confirmation.refreshed
+                      ? '✓ 다시 등록됨 · 정보를 새로 갱신했습니다'
+                      : `✓ 등록됨 · 오늘 ${(confirmation.nth ?? todayCount + 1).toLocaleString('ko-KR')}번째`}
+                  </span>
+                  <span className="v5-confirm-detail">
+                    {confirmation.stock} · {CONTENT_TYPE_LABEL[confirmation.type]}
+                    {confirmation.title ? ` · ${confirmation.title}` : ''}
+                  </span>
+                </div>
+              ) : (
+                <div className="v5-confirm error" role="alert">
+                  <span>등록하지 못했습니다</span>
+                  <span className="v5-confirm-detail" style={{ whiteSpace: 'normal' }}>
+                    {confirmation.message}
+                  </span>
+                </div>
+              )
+            ) : null}
+          </form>
+        )}
+      </div>
 
       <div>
         <div className="row-between" style={{ marginBottom: 10 }}>
@@ -456,13 +525,22 @@ export default function RegisterPage() {
               </button>
             }
           >
-            네트워크 상태를 확인한 뒤 다시 시도해 주세요. 위 입력칸으로 등록은 계속할 수 있습니다.
+            인터넷 연결을 확인한 뒤 다시 시도해 주세요.
+            <br />
+            위 입력칸으로 등록은 계속할 수 있습니다.
           </EmptyState>
         ) : items.length === 0 ? (
           <EmptyState
             title="아직 등록한 영상이 없습니다"
             action={
-              <button className="button sm" type="button" onClick={() => urlRef.current?.focus()}>
+              <button
+                className="button sm"
+                type="button"
+                onClick={() => {
+                  setMode('single')
+                  window.setTimeout(() => urlRef.current?.focus(), 0)
+                }}
+              >
                 첫 영상 등록하기
               </button>
             }
@@ -472,46 +550,24 @@ export default function RegisterPage() {
             등록한 영상은 여기에 쌓이고, 조회수 같은 숫자는 자동으로 채워집니다.
           </EmptyState>
         ) : (
-          <div className="panel v5-table-wrap" style={{ padding: 0 }}>
-            <table className="v5-table">
-              <thead>
-                <tr>
-                  <th>등록 시각</th>
-                  <th>종목</th>
-                  <th>제목</th>
-                  <th>형식</th>
-                  <th className="num">조회수</th>
-                  <th className="num">좋아요</th>
-                  <th className="num">댓글</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((v) => (
-                  <tr key={v.id} className={v.id === justJoinedId ? 'is-new' : ''}>
-                    <td className="small muted" style={{ whiteSpace: 'nowrap' }}>
-                      {formatWhen(v.created_at)}
-                    </td>
-                    <td style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>{v.stock_name}</td>
-                    <td className="v5-title-cell" title={v.title || undefined}>
-                      {v.title || <span className="muted">제목 수집 전</span>}
-                    </td>
-                    <td>
-                      <Badge tone="plain">{CONTENT_TYPE_LABEL[v.content_type] || v.content_type}</Badge>
-                    </td>
-                    <td className="num">{num(v.view_count)}</td>
-                    <td className="num">{num(v.like_count)}</td>
-                    <td className="num">{num(v.comment_count)}</td>
-                    <td>
-                      <a className="v5-link-cell" href={v.youtube_url} target="_blank" rel="noreferrer">
-                        열기
-                      </a>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <MyVideosTable
+            items={items}
+            isAdmin={isAdmin}
+            highlightIds={highlightIds}
+            onUpdated={(id, patch) => {
+              setItems((prev) => prev.map((v) => (v.id === id ? { ...v, ...patch } : v)))
+              highlight(id)
+            }}
+            onDeleted={(id) => {
+              setItems((prev) => prev.filter((v) => v.id !== id))
+              setTotalCount((n) => Math.max(n - 1, 0))
+              void (async () => {
+                const rows = await loadMine(pageRef.current)
+                if (rows && rows.length === 0 && pageRef.current > 1) setPage(pageRef.current - 1)
+                void refreshToday()
+              })()
+            }}
+          />
         )}
       </div>
     </>

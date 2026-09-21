@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server'
-import { errorResponse } from '@/lib/api/error-response'
 import { isoDaysAgo, median, viewVelocity } from '@/lib/v3/engagement'
-import { authenticate, isMissingTableError, loadTeamVideos } from '@/lib/v3/server'
+import { apiError, authenticate, isMissingTableError, loadTeamVideos, loadUserNames } from '@/lib/v3/server'
 import { V3_TABLES } from '@/lib/v3/tables'
 
 const THRESHOLD_MULTIPLIER = 2
 const MIN_TEAM_SAMPLE = 5
+const MAX_ITEMS = 30
 
 // 바이럴 신호 레이더
 //   조회 속도 = 조회수 ÷ max(게시 후 경과일, 1)
@@ -32,26 +32,32 @@ export async function GET(request: Request) {
       candidates = candidates.filter((row) => row.video.primary_owner_user_id === profile.id)
     }
 
-    // 확인(ack) 여부 조회 — 테이블이 없으면 전부 "미확인"으로 취급한다.
-    let ackByVideo = new Map<string, { note: string | null; at: string }>()
+    // 화면에 보여줄 상위 30개만 확인(ack) 여부를 조회한다. (후보 전체를 .in()에 넣으면 요청 주소가 너무 길어짐)
+    const shown = candidates.slice(0, MAX_ITEMS)
+    const ackByVideo = new Map<string, { note: string | null; at: string; by: string }>()
     let acksAvailable = true
-    if (candidates.length > 0) {
+    if (shown.length > 0) {
       const ackRes = await supabaseAdmin
         .from(V3_TABLES.viralSignalAcks)
-        .select('video_id, action_note, created_at')
-        .in('video_id', candidates.map((c) => c.video.id))
+        .select('video_id, action_note, created_at, acknowledged_by')
+        .in(
+          'video_id',
+          shown.map((c) => c.video.id)
+        )
         .order('created_at', { ascending: false })
       if (ackRes.error) {
-        if (!isMissingTableError(ackRes.error)) throw new Error(ackRes.error.message)
+        if (!isMissingTableError(ackRes.error)) throw ackRes.error
         acksAvailable = false
       } else {
-        for (const row of (ackRes.data || []) as { video_id: string; action_note: string | null; created_at: string }[]) {
-          if (!ackByVideo.has(row.video_id)) ackByVideo.set(row.video_id, { note: row.action_note, at: row.created_at })
+        for (const row of (ackRes.data || []) as { video_id: string; action_note: string | null; created_at: string; acknowledged_by: string }[]) {
+          // 영상 1개에는 가장 최근 확인 기록 1개만 쓴다.
+          if (!ackByVideo.has(row.video_id)) ackByVideo.set(row.video_id, { note: row.action_note, at: row.created_at, by: row.acknowledged_by })
         }
       }
     }
+    const names = ackByVideo.size > 0 ? await loadUserNames(supabaseAdmin) : new Map<string, string>()
 
-    const items = candidates.slice(0, 30).map((row) => {
+    const items = shown.map((row) => {
       const ack = ackByVideo.get(row.video.id)
       return {
         id: row.video.id,
@@ -64,7 +70,9 @@ export async function GET(request: Request) {
         ratio: row.ratio,
         note: `${row.video.stock_name || '이'} 영상이 팀 중앙값 대비 ${row.ratio.toFixed(1)}배 빠르게 조회수가 오르고 있습니다.`,
         acknowledged: !!ack,
-        actionNote: ack?.note || null
+        actionNote: ack?.note || null,
+        ackedAt: ack?.at || null,
+        ackedByName: ack ? names.get(ack.by) || null : null
       }
     })
 
@@ -83,6 +91,6 @@ export async function GET(request: Request) {
       items
     })
   } catch (e) {
-    return errorResponse(e, '바이럴 신호 레이더 조회에 실패했습니다.')
+    return apiError(e, '급상승 영상을 불러오지 못했어요.')
   }
 }

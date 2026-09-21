@@ -1,13 +1,15 @@
 'use client'
 
 import '../analysis.css'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { PageHeader } from '@/components/v3/app-shell'
 import { Toast, useToast } from '@/components/toast'
 import { Section, Tag } from '@/components/v3/ui'
 import { HistogramBars, ScatterGrid, type ScatterPoint } from '@/components/v3/charts'
 import { useV3Me } from '@/components/v3/auth-guard'
-import { authedFetchJson } from '@/lib/session/authed-fetch'
+import { v3Request } from '@/lib/v3/api-client'
+import { useLatest } from '@/lib/v3/interact'
+import { usePref } from '@/lib/v3/prefs'
 import { formatNumber, formatPct } from '@/lib/v3/format'
 import { pctChange } from '@/lib/v3/engagement'
 import { AnswerCard, EmptyBlock, ErrorBlock, HowTo, LoadingBlock, StatCard, StatGrid, describeChange } from '../analysis-parts'
@@ -40,35 +42,41 @@ const BUCKET_LABELS: Record<string, string> = {
 export default function EngagementPage() {
   const me = useV3Me()
   const { toast, showError } = useToast()
+  const showErrorRef = useLatest(showError)
   const [data, setData] = useState<EngagementResponse | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [staffId, setStaffId] = useState('')
+  // 마지막에 고른 직원 필터를 기억한다(관리자). 저장된 값을 읽은 뒤(ready)에 첫 요청을 보낸다.
+  const [staffId, setStaffId, prefReady] = usePref('engagement:staff')
+  const loadSeq = useRef(0)
 
   const load = useCallback(
     async (filter: string) => {
+      const seq = ++loadSeq.current
       setLoading(true)
-      try {
-        const qs = filter ? `?staffId=${filter}` : ''
-        const { ok, data } = await authedFetchJson<EngagementResponse>(`/api/v3/engagement${qs}`)
-        if (!ok) {
-          const message = (data as any)?.error || '참여 현황을 불러오지 못했습니다.'
-          setLoadError(message)
-          showError(message)
-          return
-        }
-        setLoadError(null)
-        setData(data)
-      } finally {
-        setLoading(false)
+      const qs = filter ? `?staffId=${encodeURIComponent(filter)}` : ''
+      const res = await v3Request<EngagementResponse>(`/api/v3/engagement${qs}`, {}, '참여 현황을 불러오지 못했어요.')
+      if (seq !== loadSeq.current) return
+      setLoading(false)
+      if (!res.ok) {
+        setLoadError(res.error)
+        showErrorRef.current(res.error || '참여 현황을 불러오지 못했어요.')
+        return
       }
+      // 저장해 둔 직원이 더는 목록에 없으면 전체 팀으로 되돌린다.
+      if (filter && !res.data.staffOptions.some((s) => s.id === filter)) {
+        setStaffId('')
+        return
+      }
+      setLoadError(null)
+      setData(res.data)
     },
-    [showError]
+    [showErrorRef, setStaffId]
   )
 
   useEffect(() => {
-    void load(staffId)
-  }, [staffId, load])
+    if (prefReady) void load(staffId)
+  }, [staffId, prefReady, load])
 
   const isAdmin = !!me?.isAdmin
   const staffName = data?.staffOptions.find((s) => s.id === staffId)?.name

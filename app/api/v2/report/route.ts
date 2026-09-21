@@ -4,12 +4,14 @@ import { checklistFor, computeDiscoverability, handleRouteError, isMissingTableE
 import { sampleReportPayload } from '@/lib/v2/sample-data'
 import type { DiscoverabilityRow, ReportPayload } from '@/lib/v2/types'
 
+const REPORT_LIMIT = 1000
+
 // 검색 성과 리포트: 영상별 발견성 점수(조회 속도 40% + 좋아요율 30% + SEO 체크리스트 완료율 30%) 리더보드
 export async function GET(request: Request) {
   try {
     const { profile, supabaseAdmin } = await requireV2Admin(request)
 
-    const videos = await loadVideos(supabaseAdmin, { userId: profile.id, isAdmin: true }, 500)
+    const videos = await loadVideos(supabaseAdmin, { userId: profile.id, isAdmin: true }, REPORT_LIMIT)
     const videoIds = videos.map((v) => v.id)
 
     let checklistMap
@@ -38,9 +40,9 @@ export async function GET(request: Request) {
       ? `이번 주 반응이 가장 좋은 영상은 ${top.ownerName}님의 「${top.video.title || '(제목 없음)'}」 — 하루 평균 ${Math.round(top.viewsPerDay).toLocaleString('ko-KR')}회 조회, 반응 점수 ${top.score}점입니다.`
       : '표시할 영상이 없습니다. 영상을 등록하면 반응 점수가 계산됩니다.'
 
-    const payload: ReportPayload = { items, insight }
+    const payload: ReportPayload = { items, insight, capped: videos.length >= REPORT_LIMIT }
     return NextResponse.json(payload)
   } catch (e) {
-    return handleRouteError(e, '검색 성과 리포트 조회 실패')
+    return handleRouteError(e, '성과 요약을 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.')
   }
 }

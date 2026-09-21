@@ -1,8 +1,21 @@
 import { NextResponse } from 'next/server'
-import { EXPERIMENT_SELECT, experimentInputSchema, loadVideoOptions, mapExperiments, type ExperimentRow } from '@/lib/v4/experiments'
+import { getKstYmd } from '@/lib/attendance/time'
+import { firstIssueMessage } from '@/lib/v4/errors'
+import {
+  DEFAULT_METRIC,
+  EXPERIMENT_SELECT,
+  assertLinkableVideo,
+  experimentCreateSchema,
+  loadVideoOptions,
+  mapExperiments,
+  type ExperimentRow
+} from '@/lib/v4/experiments'
 import { getSampleExperiments } from '@/lib/v4/sample-data'
-import { readJson, requireV4User, v4ErrorResponse } from '@/lib/v4/server'
+import { dbError, readJson, requireV4User, v4ErrorResponse } from '@/lib/v4/server'
 import { MISSING_TABLE_MESSAGE, V4_TABLES, isMissingTableError } from '@/lib/v4/tables'
+
+// 한 번에 내려주는 최대 실험 수 (Supabase 기본 1000행 제한을 코드에서 명시). 넘으면 truncated: true.
+const LIST_LIMIT = 1000
 
 export async function GET(request: Request) {
   try {
@@ -12,19 +25,22 @@ export async function GET(request: Request) {
       .select(EXPERIMENT_SELECT)
       .order('started_on', { ascending: false })
       .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .limit(LIST_LIMIT)
     if (!ctx.isAdmin) q = q.eq('created_by', ctx.profile.id)
 
     const [{ data, error }, videoOptions] = await Promise.all([q, loadVideoOptions(ctx)])
 
     if (error) {
       if (isMissingTableError(error)) {
-        return NextResponse.json({ sample: true, items: getSampleExperiments(), videoOptions, scope: ctx.isAdmin ? 'admin' : 'staff' })
+        return NextResponse.json({ sample: true, items: getSampleExperiments(), videoOptions, scope: ctx.isAdmin ? 'admin' : 'staff', truncated: false })
       }
-      throw new Error(error.message)
+      throw dbError(error)
     }
 
-    const items = await mapExperiments(ctx, (data || []) as ExperimentRow[])
-    return NextResponse.json({ sample: false, items, videoOptions, scope: ctx.isAdmin ? 'admin' : 'staff' })
+    const rows = (data || []) as ExperimentRow[]
+    const items = await mapExperiments(ctx, rows)
+    return NextResponse.json({ sample: false, items, videoOptions, scope: ctx.isAdmin ? 'admin' : 'staff', truncated: rows.length >= LIST_LIMIT })
   } catch (e) {
     return v4ErrorResponse(e, '실험 목록 조회 실패')
   }
@@ -33,14 +49,22 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const ctx = await requireV4User(request)
-    const parsed = experimentInputSchema.safeParse(await readJson(request))
+    const parsed = experimentCreateSchema.safeParse(await readJson(request))
     if (!parsed.success) {
-      return NextResponse.json({ error: parsed.error.issues[0]?.message || '입력값을 확인해 주세요.' }, { status: 400 })
+      return NextResponse.json({ error: firstIssueMessage(parsed.error) }, { status: 400 })
     }
     const input = parsed.data
-    if (input.endedOn && input.endedOn < input.startedOn) {
-      return NextResponse.json({ error: '종료일은 시작일보다 빠를 수 없습니다.' }, { status: 400 })
+
+    // 결과(승자)를 함께 적었는데 종료일이 없으면 오늘(시작일이 더 늦으면 시작일)로 채운다.
+    let endedOn = input.endedOn || null
+    if (!endedOn && input.winner) {
+      const today = getKstYmd()
+      endedOn = today < input.startedOn ? input.startedOn : today
     }
+    if (endedOn && endedOn < input.startedOn) {
+      return NextResponse.json({ error: '종료일은 시작일보다 빠를 수 없어요.' }, { status: 400 })
+    }
+    await assertLinkableVideo(ctx, input.videoId)
 
     const { data, error } = await ctx.supabaseAdmin
       .from(V4_TABLES.contentExperiments)
@@ -49,9 +73,9 @@ export async function POST(request: Request) {
         hypothesis: input.hypothesis,
         variant_a: input.variantA,
         variant_b: input.variantB,
-        metric: input.metric,
+        metric: input.metric || DEFAULT_METRIC,
         started_on: input.startedOn,
-        ended_on: input.endedOn || null,
+        ended_on: endedOn,
         winner: input.winner || null,
         learning: input.learning || null,
         created_by: ctx.profile.id
@@ -63,7 +87,7 @@ export async function POST(request: Request) {
       if (isMissingTableError(error)) {
         return NextResponse.json({ error: MISSING_TABLE_MESSAGE }, { status: 409 })
       }
-      throw new Error(error.message)
+      throw dbError(error)
     }
 
     const [item] = await mapExperiments(ctx, [data as ExperimentRow])

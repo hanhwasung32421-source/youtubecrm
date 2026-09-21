@@ -4,7 +4,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { PageHeader } from '@/components/v4/app-shell'
 import { PeriodToggle } from '@/components/v4/ui'
 import { Toast, useToast } from '@/components/toast'
-import { authedFetchJson } from '@/lib/session/authed-fetch'
+import { v4Fetch } from '@/lib/v4/client'
+import { isPeriodValue, useStoredState } from '@/lib/v4/use-stored-state'
 import type { HeatCell, PeriodDays } from '@/lib/v4/analytics'
 import { BarRow, Card, EmptyPanel, ErrorPanel, Formula, Hero, Kpi, KpiRow, Seg, SkelRows } from '@/lib/v4/analysis-ui'
 import { WEEKDAY_LABELS, fmtHourKo, fmtHourRangeKo, fmtNumber, fmtShort } from '@/lib/v4/format'
@@ -30,35 +31,35 @@ const slotLabel = (c: { weekday: number; hour: number }) => `${WEEKDAY_LABELS[c.
 
 export default function UploadTimingPage() {
   const { toast, showError } = useToast()
-  const [period, setPeriod] = useState<PeriodDays>(30)
+  const [period, setPeriod, ready] = useStoredState<PeriodDays>('v4:timing:period', 30, isPeriodValue)
   const [data, setData] = useState<TimingResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [reloadKey, setReloadKey] = useState(0)
-  const [mode, setMode] = useState<HeatMode>('avg')
+  const [mode, setMode] = useStoredState<HeatMode>('v4:timing:mode', 'avg', (v): v is HeatMode => v === 'avg' || v === 'count')
 
   useEffect(() => {
+    if (!ready) return
     let cancelled = false
     const run = async () => {
       setLoading(true)
       setError('')
-      const { ok, data: res } = await authedFetchJson<TimingResponse>(`/api/v4/timing?period=${period}`)
+      const result = await v4Fetch<TimingResponse>(`/api/v4/timing?period=${period}`, {}, '업로드 시간대 분석을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.')
       if (cancelled) return
       setLoading(false)
-      if (!ok || res?.error) {
-        const message = res?.error || '업로드 시간대 분석을 불러오지 못했습니다.'
-        setError(message)
-        showError(message)
+      if (!result.ok) {
+        setError(result.message)
+        showError(result.message)
         return
       }
-      setData(res)
+      setData(result.data)
     }
     void run()
     return () => {
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [period, reloadKey])
+  }, [period, reloadKey, ready])
 
   // 추천: API의 추천(같은 칸에 영상 2개 이상)을 우선, 없으면 1개짜리라도 참고용으로 상위 3개
   const { picks, isReference } = useMemo(() => {

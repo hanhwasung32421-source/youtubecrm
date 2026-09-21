@@ -5,14 +5,18 @@ import { AdminOnly } from '@/components/v2/auth-guard'
 import { PageHeader } from '@/components/v2/app-shell'
 import { ContentTypeTag } from '@/components/v2/tags'
 import { Toast, useToast } from '@/components/toast'
-import { authedFetchJson } from '@/lib/session/authed-fetch'
-import { Answer, EmptyGuide, HowTo, Kpi, KpiRow, LoadingLine, MoreButton, SampleNote } from '@/lib/v2/analysis-ui'
+import { Answer, EmptyGuide, HowTo, Kpi, KpiRow, LoadError, LoadingLine, MoreButton, SampleNote } from '@/lib/v2/analysis-ui'
+import { v2Get } from '@/lib/v2/client'
+import { readRemembered, useRememberedState } from '@/lib/v2/use-remembered'
 import { formatKstDate } from '@/lib/v2/dates'
 import { formatCount, shortText } from '@/lib/v2/format'
 import { LIKE_RATE_TARGET, VIEW_VELOCITY_TARGET_PER_DAY, type DiscoverabilityRow, type ReportPayload } from '@/lib/v2/types'
 
 const EMPTY: ReportPayload = { items: [], insight: '' }
 const PAGE_STEP = 20
+const PERIODS = ['week', 'all'] as const
+const ORDERS = ['best', 'worst'] as const
+const LOAD_ERROR = '성과 요약을 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.'
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000
 
 function scoreTone(score: number) {
@@ -33,29 +37,34 @@ function likePercent(row: DiscoverabilityRow) {
 }
 
 function ReportBody() {
-  const { toast, showError } = useToast()
+  const { toast } = useToast()
   const [payload, setPayload] = useState<ReportPayload>(EMPTY)
   const [loaded, setLoaded] = useState(false)
-  const [period, setPeriod] = useState<'week' | 'all'>('week')
-  const [order, setOrder] = useState<'best' | 'worst'>('best')
-  const [owner, setOwner] = useState('')
+  const [loadError, setLoadError] = useState('')
+  const [period, setPeriod] = useRememberedState<'week' | 'all'>('rep.period', 'week', PERIODS)
+  const [order, setOrder] = useRememberedState<'best' | 'worst'>('rep.order', 'best', ORDERS)
+  const [owner, setOwner] = useRememberedState<string>('rep.owner', '')
   const [visible, setVisible] = useState(PAGE_STEP)
 
-  useEffect(() => {
-    const run = async () => {
-      const { ok, data } = await authedFetchJson<ReportPayload>('/api/v2/report')
-      setLoaded(true)
-      if (!ok) {
-        showError(data?.error || '성과 요약을 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.')
-        return
-      }
-      setPayload(data)
-      // 최근 7일에 등록·발행된 영상이 하나도 없으면 처음부터 전체를 보여준다.
+  const load = async () => {
+    const res = await v2Get<ReportPayload>('/api/v2/report', LOAD_ERROR)
+    setLoaded(true)
+    if (!res.ok) {
+      setLoadError(res.error)
+      return
+    }
+    setLoadError('')
+    setPayload(res.data)
+    // 저장해 둔 기간이 없고 최근 7일에 등록·발행된 영상도 없으면 처음부터 전체를 보여준다.
+    if (readRemembered('rep.period') === null) {
       const since = Date.now() - WEEK_MS
-      const hasRecent = data.items.some((row) => new Date(row.video.published_at || row.video.created_at).getTime() >= since)
+      const hasRecent = res.data.items.some((row) => new Date(row.video.published_at || row.video.created_at).getTime() >= since)
       if (!hasRecent) setPeriod('all')
     }
-    void run()
+  }
+
+  useEffect(() => {
+    void load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -68,7 +77,9 @@ function ReportBody() {
   const owners = useMemo(() => [...new Set(all.map((row) => row.ownerName).filter((name) => name && name !== '-'))].sort((a, b) => a.localeCompare(b, 'ko')), [all])
 
   const pool = period === 'week' ? recent : all
-  const scoped = owner ? pool.filter((row) => row.ownerName === owner) : pool
+  // 저장해 둔 담당자가 지금 목록에 없으면 전체로 본다.
+  const ownerNow = owners.includes(owner) ? owner : ''
+  const scoped = ownerNow ? pool.filter((row) => row.ownerName === ownerNow) : pool
   const list = order === 'best' ? scoped : [...scoped].reverse()
   const shown = list.slice(0, visible)
 
@@ -90,11 +101,12 @@ function ReportBody() {
       <PageHeader title="성과 요약" subtitle="어떤 영상과 담당자가 검색·조회에서 잘 되고 있는지 순위로 보여줍니다." />
       <Toast toast={toast} />
       <SampleNote show={payload.sample} />
+      {loaded && loadError ? <LoadError message={loadError} onRetry={() => void load()} /> : null}
 
       {!loaded ? (
         <LoadingLine />
       ) : all.length === 0 ? (
-        <EmptyGuide title="아직 성과를 볼 영상이 없어요" href="/v2/register" action="영상 등록하러 가기">
+        loadError ? null : <EmptyGuide title="아직 성과를 볼 영상이 없어요" href="/v2/register" action="영상 등록하러 가기">
           직원이 영상을 등록하면 조회수·좋아요가 자동으로 모이고, 이 화면에서 어떤 영상이 잘 되는지 순위로 볼 수 있어요.
         </EmptyGuide>
       ) : (
@@ -142,7 +154,7 @@ function ReportBody() {
                   <label className="small muted" htmlFor="rep-owner">
                     담당자
                   </label>
-                  <select id="rep-owner" className="select compact" value={owner} onChange={(e) => pick(setOwner, e.target.value)}>
+                  <select id="rep-owner" className="select compact" value={ownerNow} onChange={(e) => pick(setOwner, e.target.value)}>
                     <option value="">전체</option>
                     {owners.map((name) => (
                       <option key={name} value={name}>
@@ -153,6 +165,8 @@ function ReportBody() {
                 </div>
               ) : null}
             </div>
+
+            {payload.capped ? <p className="v2a-note">가장 최근에 등록한 영상 위주로 계산해요. 더 오래된 영상은 순위에 나오지 않을 수 있어요.</p> : null}
 
             {list.length === 0 ? (
               <EmptyGuide title="이 조건에 맞는 영상이 없어요">

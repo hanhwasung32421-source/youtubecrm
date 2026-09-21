@@ -16,4 +16,4 @@ export const V5_TABLES = {
 } as const
 
 export const V5_SQL_FILE = 'supabase/sql/v5/100_v5_growth_lab.sql'
-export const V5_MISSING_TABLE_MESSAGE = `V5 테이블이 아직 생성되지 않았습니다. ${V5_SQL_FILE} 을 실행해 주세요.`
+export const V5_MISSING_TABLE_MESSAGE = '성장 관리 저장소가 아직 준비되지 않았어요. 관리자에게 알려 주세요.'

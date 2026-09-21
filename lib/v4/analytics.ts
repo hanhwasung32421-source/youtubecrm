@@ -45,6 +45,14 @@ export function getPeriodRange(days: PeriodDays, now = new Date()): PeriodRange 
 export const VIDEO_COLUMNS =
   'id, youtube_video_id, title, title_override, stock_name, content_type, published_at, created_at, view_count, like_count, comment_count, youtube_url, thumbnail_url, primary_owner_user_id, last_synced_at'
 
+// 화면별로 꼭 필요한 컬럼만 읽어 6,000행 이상도 가볍게 가져온다. (id, created_at 은 페이지 병합/기간 분할에 항상 필요)
+export const KPI_COLUMNS = 'id, content_type, created_at, view_count, like_count, comment_count'
+export const STOCK_COLUMNS = 'id, stock_name, published_at, created_at, view_count, primary_owner_user_id'
+export const TIMING_COLUMNS = 'id, published_at, created_at, view_count'
+export const STAFF_COLUMNS = 'id, primary_owner_user_id, content_type, created_at, view_count, like_count'
+export const RANKING_COLUMNS =
+  'id, youtube_video_id, title, title_override, stock_name, content_type, published_at, created_at, view_count, like_count, comment_count, youtube_url, primary_owner_user_id'
+
 export type VideoRow = {
   id: string
   youtube_video_id: string | null

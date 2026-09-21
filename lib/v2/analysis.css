@@ -313,3 +313,87 @@
   .v2-theme .v2a-rank { grid-template-columns: 26px minmax(0, 1fr) 100px; }
   .v2-theme .v2a-rank .hide-sm { display: none; }
 }
+
+/* ---- 필수 표시 / 불러오기 실패 / 2단계 삭제 ---- */
+.v2-theme .v2a-req { color: #f87171; font-weight: 700; }
+
+.v2-theme .v2a-loaderror {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid rgba(248, 113, 113, 0.55);
+  border-radius: 6px;
+  background: rgba(240, 68, 82, 0.08);
+  font-size: 13px;
+  color: #f87171;
+}
+
+.v2-theme .v2a-danger-text { color: #f87171; }
+.v2-theme .v2a-danger-solid { background: #dc2626; border-color: #dc2626; color: #fff; }
+.v2-theme .v2a-danger-solid:hover { background: #ef4444; }
+
+.v2-theme .v2a-confirm {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border: 1px solid rgba(248, 113, 113, 0.55);
+  border-radius: 4px;
+  background: rgba(240, 68, 82, 0.08);
+}
+
+.v2-theme .v2a-confirm-text { font-size: 12px; font-weight: 600; color: #f87171; }
+
+/* 인라인 수정 칸 */
+.v2-theme .v2a-inline-edit {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  align-items: start;
+  padding: 10px;
+  border: 1px solid var(--primary);
+  border-radius: 6px;
+  background: var(--primary-soft);
+}
+
+.v2-theme .v2a-inline-edit .field { gap: 4px; }
+.v2-theme .v2a-inline-edit .wide { grid-column: 1 / -1; }
+.v2-theme .v2a-inline-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; grid-column: 1 / -1; }
+
+.v2-theme .v2a-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.v2-theme .v2a-check input { width: 16px; height: 16px; accent-color: var(--primary); cursor: pointer; }
+.v2-theme .v2a-check.on { color: #4ade80; }
+.v2-theme .v2a-check.pending { opacity: 0.6; cursor: progress; }
+.v2-theme .v2a-checks { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+
+.v2-theme .v2a-fading { opacity: 0.55; transition: opacity 0.15s; }
+.v2-theme .v2a-note { margin: 0 0 10px; font-size: 12px; color: var(--muted); }
+
+/* 업로드 계획 칸: 시간 칩을 누르면 수정 */
+.v2-theme .v2a-plan-slot .v2a-plan-slot-main {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 0;
+  text-align: left;
+  color: var(--text);
+  font-family: inherit;
+  font-size: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.v2-theme .v2a-plan-slot .v2a-plan-slot-main:hover { color: var(--primary); }
+.v2-theme .v2a-plan-slot.editing { border-left-color: #fbbf24; background: var(--primary-soft); }
+.v2-theme .v2a-plan-slot .dot { color: var(--primary); margin-left: 3px; }

@@ -21,15 +21,36 @@ export type SnapshotRow = {
 const EARLY_WINDOW_HOURS = 48
 
 // value가 배열 내에서 차지하는 백분위(0~1). 동률은 평균 순위 처리.
-function percentileRank(values: number[], value: number) {
-  if (values.length <= 1) return 0.5
-  let below = 0
-  let equal = 0
-  for (const v of values) {
-    if (v < value) below += 1
-    else if (v === value) equal += 1
+// 정렬해 두고 이분 탐색으로 계산한다(영상 수천 개에서도 빠르도록). 결과는 전수 비교와 같다.
+function makeRanker(values: number[]) {
+  const sorted = values.slice().sort((a, b) => a - b)
+  const n = sorted.length
+  const lowerBound = (x: number) => {
+    let lo = 0
+    let hi = n
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1
+      if (sorted[mid] < x) lo = mid + 1
+      else hi = mid
+    }
+    return lo
   }
-  return (below + equal / 2) / values.length
+  const upperBound = (x: number) => {
+    let lo = 0
+    let hi = n
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1
+      if (sorted[mid] <= x) lo = mid + 1
+      else hi = mid
+    }
+    return lo
+  }
+  return (value: number) => {
+    if (n <= 1) return 0.5
+    const below = lowerBound(value)
+    const equal = upperBound(value) - below
+    return (below + equal / 2) / n
+  }
 }
 
 export function scoreTierOf(totalScore: number): ScoreTier {
@@ -73,13 +94,17 @@ export function computeScoreboard(videos: VideoRef[], snapshotsByVideoId: Map<st
   const earlyGrowthRates = videos.map((v) => earlyGrowthRate(v, snapshotsByVideoId.get(v.id) || []))
   const knownGrowthRates = earlyGrowthRates.filter((r): r is number => r !== null)
 
+  const rankVelocity = makeRanker(viewsPerDay)
+  const rankEngagement = makeRanker(engagementRates)
+  const rankGrowth = makeRanker(knownGrowthRates)
+
   return videos.map((video, i) => {
-    const viewVelocityScore = Math.round(percentileRank(viewsPerDay, viewsPerDay[i]) * 45)
-    const engagementScore = Math.round(percentileRank(engagementRates, engagementRates[i]) * 35)
+    const viewVelocityScore = Math.round(rankVelocity(viewsPerDay[i]) * 45)
+    const engagementScore = Math.round(rankEngagement(engagementRates[i]) * 35)
     const growth = earlyGrowthRates[i]
     const hasSnapshotData = growth !== null
     const earlyGrowthScore = hasSnapshotData
-      ? Math.round(percentileRank(knownGrowthRates, growth as number) * 20)
+      ? Math.round(rankGrowth(growth as number) * 20)
       : 10
     const totalScore = Math.min(viewVelocityScore + engagementScore + earlyGrowthScore, 100)
     return {

@@ -1,11 +1,12 @@
 'use client'
 
 import '../analysis.css'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { PageHeader } from '@/components/v3/app-shell'
 import { Toast, useToast } from '@/components/toast'
 import { SampleBanner, Section, Tag } from '@/components/v3/ui'
-import { authedFetchJson, authedPostJson } from '@/lib/session/authed-fetch'
+import { v3Request } from '@/lib/v3/api-client'
+import { ConfirmButton, FieldError, InlineEditor, Req, useLatest } from '@/lib/v3/interact'
 import { formatCompactNumber, formatNumber, formatPct } from '@/lib/v3/format'
 import { pctChange } from '@/lib/v3/engagement'
 import { SAMPLE_STOCK_NAMES } from '@/lib/v3/sample-data'
@@ -22,15 +23,20 @@ type SeriesRow = {
   avgVelocity: number
   baselineEngagementPct: number
   baselineVelocity: number
+  members: { id: string; title: string }[]
+  createdByName: string | null
+  canEdit: boolean
 }
 
 type EligibleVideo = { id: string; title: string; stockName: string | null; contentType: string }
+type MovableVideo = EligibleVideo & { seriesId: string; seriesName: string }
 
 type FormatSeriesResponse = {
   sample: boolean
   formatStats: { longform: FormatStat; shortform: FormatStat }
   series: SeriesRow[]
   eligibleVideos: EligibleVideo[]
+  movableVideos?: MovableVideo[]
 }
 
 // 형식(롱폼/숏폼) 비교 결과를 한 문장으로
@@ -78,31 +84,55 @@ export default function SeriesPage() {
   const { toast, showSuccess, showError } = useToast()
   const [data, setData] = useState<FormatSeriesResponse | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [creating, setCreating] = useState(false)
+
+  // 새 시리즈 폼
   const [showForm, setShowForm] = useState(false)
+  const [creating, setCreating] = useState(false)
   const [attempted, setAttempted] = useState(false)
   const [name, setName] = useState('')
   const [stockName, setStockName] = useState('')
   const [videoQuery, setVideoQuery] = useState('')
   const [selectedIds, setSelectedIds] = useState<string[]>([])
-  const [addPickers, setAddPickers] = useState<Record<string, string>>({})
-  const [addingSeriesId, setAddingSeriesId] = useState<string | null>(null)
+  const [formError, setFormError] = useState<string | null>(null)
+  const nameRef = useRef<HTMLInputElement>(null)
 
+  // 카드별 작업
+  const [addPickers, setAddPickers] = useState<Record<string, string>>({})
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameSaving, setRenameSaving] = useState(false)
+  const [renameError, setRenameError] = useState<string | null>(null)
+  const [busyKey, setBusyKey] = useState<string | null>(null)
+  const [cardErrors, setCardErrors] = useState<Record<string, string>>({})
+  const [openMembers, setOpenMembers] = useState<Record<string, boolean>>({})
+
+  const setCardError = (id: string, message: string | null) =>
+    setCardErrors((prev) => {
+      const next = { ...prev }
+      if (message) next[id] = message
+      else delete next[id]
+      return next
+    })
+
+  const showErrorRef = useLatest(showError)
   const load = useCallback(async () => {
-    const { ok, data } = await authedFetchJson<FormatSeriesResponse>('/api/v3/format-series')
-    if (!ok) {
-      const message = (data as any)?.error || '형식 · 시리즈 비교를 불러오지 못했습니다.'
-      setLoadError(message)
-      showError(message)
+    const res = await v3Request<FormatSeriesResponse>('/api/v3/format-series', {}, '비교 결과를 불러오지 못했어요.')
+    if (!res.ok) {
+      // 이미 화면이 떠 있으면 그대로 두고 알림만 띄운다(화면이 사라졌다 나타나며 튀지 않게).
+      setLoadError(res.error)
+      showErrorRef.current(res.error || '비교 결과를 불러오지 못했어요.')
       return
     }
     setLoadError(null)
-    setData(data)
-  }, [showError])
+    setData(res.data)
+  }, [showErrorRef])
 
   useEffect(() => {
     void load()
   }, [load])
+
+  useEffect(() => {
+    if (showForm) nameRef.current?.focus()
+  }, [showForm])
 
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
@@ -110,52 +140,116 @@ export default function SeriesPage() {
 
   const nameError = attempted && !name.trim() ? '시리즈 이름을 입력해 주세요. 예: 삼성전자 실적 브리핑 시리즈' : null
 
-  const createSeries = async () => {
-    setAttempted(true)
-    if (!name.trim()) return
-    setCreating(true)
-    try {
-      const { ok, data } = await authedPostJson<{ error?: string }>('/api/v3/series', {
-        name: name.trim(),
-        stockName: stockName.trim() || undefined,
-        videoIds: selectedIds
-      })
-      if (!ok) {
-        showError(data?.error || '시리즈 생성에 실패했습니다.')
-        return
-      }
-      showSuccess('시리즈를 만들었어요.')
-      setName('')
-      setStockName('')
-      setSelectedIds([])
-      setVideoQuery('')
-      setAttempted(false)
-      setShowForm(false)
-      await load()
-    } finally {
-      setCreating(false)
-    }
+  const closeForm = () => {
+    setShowForm(false)
+    setAttempted(false)
+    setFormError(null)
   }
 
-  const addToSeries = async (seriesId: string) => {
-    const videoId = addPickers[seriesId]
-    if (!videoId) {
-      showError('추가할 영상을 먼저 골라 주세요.')
+  const createSeries = async (e?: FormEvent) => {
+    e?.preventDefault()
+    if (creating) return
+    setAttempted(true)
+    setFormError(null)
+    if (!name.trim()) {
+      nameRef.current?.focus()
       return
     }
-    setAddingSeriesId(seriesId)
-    try {
-      const { ok, data } = await authedPostJson<{ error?: string }>(`/api/v3/series/${seriesId}/members`, { videoId })
-      if (!ok) {
-        showError(data?.error || '영상 추가에 실패했습니다.')
-        return
-      }
-      showSuccess('시리즈에 영상을 추가했어요.')
-      setAddPickers((prev) => ({ ...prev, [seriesId]: '' }))
-      await load()
-    } finally {
-      setAddingSeriesId(null)
+    setCreating(true)
+    const res = await v3Request<{ moved?: number }>(
+      '/api/v3/series',
+      { method: 'POST', body: { name: name.trim(), stockName: stockName.trim() || undefined, videoIds: selectedIds } },
+      '시리즈를 만들지 못했어요.'
+    )
+    setCreating(false)
+    if (!res.ok) {
+      setFormError(res.error)
+      nameRef.current?.focus()
+      return
     }
+    // 새 카드가 목록에 바로 나타나므로 "만들었어요" 알림은 생략. 다른 시리즈에서 옮겨온 경우만 알려 준다.
+    if (res.data?.moved) showSuccess(`영상 ${res.data.moved}개를 다른 시리즈에서 옮겨 왔어요.`)
+    setName('')
+    setStockName('')
+    setSelectedIds([])
+    setVideoQuery('')
+    setAttempted(false)
+    await load()
+    nameRef.current?.focus()
+  }
+
+  const addToSeries = async (s: SeriesRow) => {
+    const videoId = addPickers[s.id]
+    if (!videoId || busyKey) return
+    setBusyKey(`add:${s.id}`)
+    setCardError(s.id, null)
+    const res = await v3Request<{ moved?: boolean; already?: boolean; fromSeriesName?: string }>(
+      `/api/v3/series/${s.id}/members`,
+      { method: 'POST', body: { videoId } },
+      '영상을 추가하지 못했어요.'
+    )
+    setBusyKey(null)
+    if (!res.ok) {
+      setCardError(s.id, res.error)
+      return
+    }
+    if (res.data?.moved) showSuccess(`“${res.data.fromSeriesName || '다른 시리즈'}”에서 이 시리즈로 옮겼어요.`)
+    setAddPickers((prev) => ({ ...prev, [s.id]: '' }))
+    setOpenMembers((prev) => ({ ...prev, [s.id]: true }))
+    await load()
+    document.getElementById(`v3-series-add-${s.id}`)?.focus()
+  }
+
+  const removeMember = async (s: SeriesRow, member: { id: string; title: string }) => {
+    if (busyKey) return
+    setBusyKey(`rm:${s.id}:${member.id}`)
+    setCardError(s.id, null)
+    // 먼저 화면에서 빼고, 실패하면 되돌린다.
+    setData((prev) =>
+      prev ? { ...prev, series: prev.series.map((x) => (x.id === s.id ? { ...x, members: x.members.filter((m) => m.id !== member.id), videoCount: Math.max(x.videoCount - 1, 0) } : x)) } : prev
+    )
+    const res = await v3Request(`/api/v3/series/${s.id}/members`, { method: 'DELETE', body: { videoId: member.id } }, '영상을 빼지 못했어요.')
+    setBusyKey(null)
+    if (!res.ok) {
+      setData((prev) =>
+        prev ? { ...prev, series: prev.series.map((x) => (x.id === s.id && !x.members.some((m) => m.id === member.id) ? { ...x, members: [...x.members, member], videoCount: x.videoCount + 1 } : x)) } : prev
+      )
+      setCardError(s.id, res.error)
+      return
+    }
+    await load()
+  }
+
+  const renameSeries = async (s: SeriesRow, value: string) => {
+    if (value === s.name) {
+      setRenamingId(null)
+      return
+    }
+    setRenameSaving(true)
+    setRenameError(null)
+    const res = await v3Request(`/api/v3/series/${s.id}`, { method: 'PATCH', body: { name: value } }, '이름을 바꾸지 못했어요.')
+    setRenameSaving(false)
+    if (!res.ok) {
+      setRenameError(res.error)
+      return
+    }
+    setData((prev) => (prev ? { ...prev, series: prev.series.map((x) => (x.id === s.id ? { ...x, name: value } : x)) } : prev))
+    setRenamingId(null)
+    await load()
+  }
+
+  const deleteSeries = async (s: SeriesRow) => {
+    setBusyKey(`del:${s.id}`)
+    setCardError(s.id, null)
+    const res = await v3Request(`/api/v3/series/${s.id}`, { method: 'DELETE' }, '시리즈를 삭제하지 못했어요.')
+    setBusyKey(null)
+    // 이미 지워진 시리즈(404)도 목록에서는 사라져야 하므로 새로 불러온다.
+    if (!res.ok && res.status !== 404) {
+      setCardError(s.id, res.error)
+      return
+    }
+    showSuccess(`“${s.name}” 시리즈를 삭제했어요. 영상은 그대로 남아 있어요.`)
+    await load()
   }
 
   // 종목을 입력했다면 그 종목 영상이 위로 오도록, 검색어가 있으면 걸러서 보여준다.
@@ -187,6 +281,7 @@ export default function SeriesPage() {
   const noVideos = lf.count === 0 && sf.count === 0
   const engWinner = lf.count > 0 && sf.count > 0 && lf.avgEngagementPct !== sf.avgEngagementPct ? (lf.avgEngagementPct > sf.avgEngagementPct ? 'longform' : 'shortform') : null
   const velWinner = lf.count > 0 && sf.count > 0 && lf.avgVelocity !== sf.avgVelocity ? (lf.avgVelocity > sf.avgVelocity ? 'longform' : 'shortform') : null
+  const movable = data.movableVideos || []
 
   return (
     <>
@@ -257,12 +352,10 @@ export default function SeriesPage() {
             <>
               {data.sample ? <span className="small muted">SQL 실행 후 만들 수 있어요</span> : null}
               <button
+                type="button"
                 className={showForm ? 'button secondary' : 'button'}
                 disabled={data.sample && !showForm}
-                onClick={() => {
-                  setShowForm((v) => !v)
-                  setAttempted(false)
-                }}
+                onClick={() => (showForm ? closeForm() : setShowForm(true))}
               >
                 {showForm ? '닫기' : '새 시리즈 만들기'}
               </button>
@@ -270,23 +363,36 @@ export default function SeriesPage() {
           }
         >
           {showForm ? (
-            <div className="v3-inline-form">
+            <form
+              className="v3-inline-form"
+              noValidate
+              onSubmit={(e) => void createSeries(e)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape' && !creating) closeForm()
+              }}
+            >
               <div className="v3-form-grid">
                 <div className="field">
                   <label className="label" htmlFor="v3-series-name">
                     시리즈 이름
+                    <Req />
                   </label>
                   <input
                     id="v3-series-name"
+                    ref={nameRef}
                     className="input"
                     value={name}
                     maxLength={200}
                     disabled={creating}
-                    aria-invalid={!!nameError}
-                    onChange={(e) => setName(e.target.value)}
+                    aria-invalid={!!(nameError || formError)}
+                    aria-describedby="v3-series-name-err"
+                    onChange={(e) => {
+                      setName(e.target.value)
+                      if (formError) setFormError(null)
+                    }}
                     placeholder="예: 삼성전자 실적 브리핑 시리즈"
                   />
-                  {nameError ? <p className="v3a-field-error">{nameError}</p> : null}
+                  <FieldError id="v3-series-name-err">{nameError || formError}</FieldError>
                 </div>
                 <div className="field">
                   <label className="label" htmlFor="v3-series-stock">
@@ -322,6 +428,10 @@ export default function SeriesPage() {
                   value={videoQuery}
                   disabled={creating}
                   onChange={(e) => setVideoQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    // 검색칸에서 Enter 를 눌러도 시리즈가 만들어지지 않게 한다.
+                    if (e.key === 'Enter') e.preventDefault()
+                  }}
                 />
                 <div className="v3a-picker scroll">
                   {pickable.length === 0 ? (
@@ -343,17 +453,17 @@ export default function SeriesPage() {
                     </>
                   )}
                 </div>
-                <p className="v3a-field-help">영상은 나중에 시리즈 카드에서 더 추가할 수 있어요. 이미 다른 시리즈에 들어간 영상은 보이지 않아요.</p>
+                <p className="v3a-field-help">영상은 나중에 시리즈 카드에서 더 추가할 수 있어요. 이미 다른 시리즈에 들어간 영상은 여기서 보이지 않아요.</p>
               </div>
               <div className="v3a-lead-actions">
-                <button className="button" disabled={creating} onClick={() => void createSeries()}>
-                  {creating ? '만드는 중…' : '시리즈 만들기'}
+                <button type="submit" className="button" disabled={creating}>
+                  {creating ? '저장 중…' : '시리즈 만들기'}
                 </button>
-                <button className="button secondary" disabled={creating} onClick={() => setShowForm(false)}>
+                <button type="button" className="button secondary" disabled={creating} onClick={closeForm}>
                   취소
                 </button>
               </div>
-            </div>
+            </form>
           ) : null}
 
           {data.series.length === 0 ? (
@@ -368,15 +478,35 @@ export default function SeriesPage() {
                 const engText = describeChange(engChange, '시리즈 밖 영상')
                 const velText = describeChange(velChange, '시리즈 밖 영상')
                 const verdict = seriesVerdict(s, engChange, velChange)
+                const otherMovable = movable.filter((v) => v.seriesId !== s.id)
+                const canAdd = !data.sample && s.canEdit && (data.eligibleVideos.length > 0 || otherMovable.length > 0)
+                const cardBusy = !!busyKey && busyKey.includes(s.id)
+                const isRenaming = renamingId === s.id
                 return (
                   <div className="v3a-card" key={s.id}>
                     <div className="v3a-card-head">
-                      <div>
-                        <div className="v3a-card-title">
-                          {s.name} {data.sample ? <Tag tone="amber">예시</Tag> : null}
-                        </div>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        {isRenaming ? (
+                          <InlineEditor
+                            label="시리즈 이름"
+                            initial={s.name}
+                            maxLength={200}
+                            required
+                            saving={renameSaving}
+                            error={renameError}
+                            onSave={(value) => renameSeries(s, value)}
+                            onCancel={() => {
+                              setRenamingId(null)
+                              setRenameError(null)
+                            }}
+                          />
+                        ) : (
+                          <div className="v3a-card-title">
+                            {s.name} {data.sample ? <Tag tone="amber">예시</Tag> : null}
+                          </div>
+                        )}
                         <div className="v3-cell-sub">
-                          {s.stockName || '종목 무관'} · 영상 {formatNumber(s.videoCount)}개
+                          {s.stockName || '종목 무관'} · 영상 {formatNumber(s.videoCount)}개{s.createdByName ? ` · 만든 사람 ${s.createdByName}` : ''}
                         </div>
                       </div>
                       <Tag tone={verdict.tone}>{verdict.label}</Tag>
@@ -401,13 +531,39 @@ export default function SeriesPage() {
                         </div>
                       </div>
                     )}
-                    {!data.sample && data.eligibleVideos.length > 0 ? (
+
+                    {s.members.length > 0 ? (
+                      <div>
+                        <button type="button" className="v3i-linkbtn" aria-expanded={!!openMembers[s.id]} onClick={() => setOpenMembers((prev) => ({ ...prev, [s.id]: !prev[s.id] }))}>
+                          {openMembers[s.id] ? '묶인 영상 접기' : `묶인 영상 ${formatNumber(s.members.length)}개 보기`}
+                        </button>
+                        {openMembers[s.id] ? (
+                          <ul className="v3i-members">
+                            {s.members.map((m) => (
+                              <li key={m.id} className="v3i-member">
+                                <span className="v3i-member-title" title={m.title}>
+                                  {m.title}
+                                </span>
+                                {s.canEdit ? (
+                                  <button type="button" className="v3i-linkbtn" disabled={!!busyKey} onClick={() => void removeMember(s, m)} aria-label={`${m.title} 시리즈에서 빼기`}>
+                                    {busyKey === `rm:${s.id}:${m.id}` ? '빼는 중…' : '시리즈에서 빼기'}
+                                  </button>
+                                ) : null}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </div>
+                    ) : null}
+
+                    {canAdd ? (
                       <div className="v3a-series-add">
                         <select
+                          id={`v3-series-add-${s.id}`}
                           className="select"
                           aria-label={`${s.name}에 추가할 영상`}
                           value={addPickers[s.id] || ''}
-                          disabled={addingSeriesId === s.id}
+                          disabled={busyKey === `add:${s.id}`}
                           onChange={(e) => setAddPickers((prev) => ({ ...prev, [s.id]: e.target.value }))}
                         >
                           <option value="">추가할 영상 고르기…</option>
@@ -416,12 +572,44 @@ export default function SeriesPage() {
                               {v.title}
                             </option>
                           ))}
+                          {otherMovable.length > 0 ? (
+                            <optgroup label="다른 시리즈에서 옮기기">
+                              {otherMovable.map((v) => (
+                                <option key={v.id} value={v.id}>
+                                  {v.title} (지금: {v.seriesName})
+                                </option>
+                              ))}
+                            </optgroup>
+                          ) : null}
                         </select>
-                        <button className="button secondary xs" disabled={addingSeriesId === s.id || !addPickers[s.id]} onClick={() => void addToSeries(s.id)}>
-                          {addingSeriesId === s.id ? '추가 중…' : '이 시리즈에 추가'}
+                        <button type="button" className="button secondary xs" disabled={busyKey === `add:${s.id}` || !addPickers[s.id]} onClick={() => void addToSeries(s)}>
+                          {busyKey === `add:${s.id}` ? '저장 중…' : '이 시리즈에 추가'}
                         </button>
                       </div>
                     ) : null}
+
+                    {s.canEdit && !data.sample ? (
+                      <div className="v3i-tools">
+                        {!isRenaming ? (
+                          <button type="button" className="button secondary xs" disabled={cardBusy} onClick={() => { setRenamingId(s.id); setRenameError(null) }}>
+                            이름 바꾸기
+                          </button>
+                        ) : null}
+                        <ConfirmButton
+                          label="시리즈 삭제"
+                          question="정말 삭제할까요? 영상은 남고 묶음만 사라져요."
+                          confirmLabel="삭제"
+                          busyLabel="삭제 중…"
+                          danger
+                          busy={busyKey === `del:${s.id}`}
+                          disabled={cardBusy && busyKey !== `del:${s.id}`}
+                          onConfirm={() => deleteSeries(s)}
+                        />
+                      </div>
+                    ) : !s.canEdit && !data.sample ? (
+                      <p className="v3i-inline-note">{s.createdByName ? `${s.createdByName}님이 만든 시리즈라서 볼 수만 있어요.` : '만든 사람이 없는 시리즈라서 관리자만 고칠 수 있어요.'}</p>
+                    ) : null}
+                    <FieldError>{cardErrors[s.id]}</FieldError>
                   </div>
                 )
               })}
@@ -434,6 +622,7 @@ export default function SeriesPage() {
           <p>시청자 반응률 = (좋아요 + 댓글) ÷ 조회수 × 100</p>
           <p>하루 평균 조회수 = 조회수 ÷ 올린 지 지난 날짜 (최소 1일)</p>
           <p>시리즈 효과: 시리즈에 묶인 영상들의 평균을, 같은 종목이면서 시리즈에 속하지 않은 영상들의 평균(괄호 안 숫자)과 비교해요. 두 지표가 모두 5% 이상 높으면 ‘시리즈 효과 있음’이에요.</p>
+          <p>영상은 한 시리즈에만 들어갈 수 있어요. 다른 시리즈에 있는 영상을 추가하면 그쪽에서 옮겨 와요.</p>
         </HowTo>
       </div>
     </>

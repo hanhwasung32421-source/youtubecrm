@@ -1,23 +1,41 @@
 // 실험(A/B 로그) 라우트가 공유하는 스키마/매퍼. route.ts는 HTTP 핸들러만 export할 수 있어 여기로 분리.
 
 import { z } from 'zod'
+import { DEFAULT_METRIC } from '@/lib/v4/experiment-consts'
 import { stockKey, videoTitle, type VideoRow } from '@/lib/v4/analytics'
 import type { ExperimentItem } from '@/lib/v4/sample-data'
-import { loadUsers, type V4Context } from '@/lib/v4/server'
+import { V4HttpError, dbError, loadUsers, type V4Context } from '@/lib/v4/server'
 import { V4_TABLES } from '@/lib/v4/tables'
 
-const ymd = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, '날짜는 YYYY-MM-DD 형식이어야 합니다.')
+// 실제로 있는 날짜인지까지 확인한다 (2026-02-31 같은 값은 DB 가 형식 오류로 거절한다).
+const ymd = z
+  .string({ error: '날짜를 선택해 주세요.' })
+  .regex(/^\d{4}-\d{2}-\d{2}$/, '날짜는 YYYY-MM-DD 형식이어야 합니다.')
+  .refine((v) => {
+    const d = new Date(`${v}T00:00:00Z`)
+    return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === v
+  }, '존재하지 않는 날짜예요. 날짜를 다시 확인해 주세요.')
+
+export { DEFAULT_METRIC }
+
+const text = (required: string, max: number) =>
+  z.string({ error: required }).trim().min(1, required).max(max, `${max}자 이하로 적어 주세요.`)
 
 export const experimentInputSchema = z.object({
-  videoId: z.uuid().nullable().optional(),
-  hypothesis: z.string().trim().min(1, '가설을 입력해 주세요.').max(2000),
-  variantA: z.string().trim().min(1, '변형 A 설명을 입력해 주세요.').max(2000),
-  variantB: z.string().trim().min(1, '변형 B 설명을 입력해 주세요.').max(2000),
-  metric: z.string().trim().min(1, '지표를 입력해 주세요.').max(500),
+  videoId: z.uuid({ error: '영상을 다시 선택해 주세요.' }).nullable().optional(),
+  hypothesis: text('무엇을 확인하고 싶은지 적어 주세요.', 2000),
+  variantA: text('지금 하던 방식(A)을 적어 주세요.', 2000),
+  variantB: text('새로 해볼 방식(B)을 적어 주세요.', 2000),
+  metric: text('비교 기준을 적어 주세요.', 500),
   startedOn: ymd,
   endedOn: ymd.nullable().optional(),
-  winner: z.enum(['a', 'b', 'tie']).nullable().optional(),
-  learning: z.string().trim().max(4000).nullable().optional()
+  winner: z.enum(['a', 'b', 'tie'], { error: '결과는 A, B, 무승부 중에서 골라 주세요.' }).nullable().optional(),
+  learning: z.string().trim().max(4000, '배운 점은 4000자 이하로 적어 주세요.').nullable().optional()
+})
+
+// 등록(POST)에서는 비교 기준을 비워도 되고, 비우면 기본값('조회수')으로 저장한다.
+export const experimentCreateSchema = experimentInputSchema.extend({
+  metric: z.string().trim().max(500, '비교 기준은 500자 이하로 적어 주세요.').nullable().optional()
 })
 
 export type ExperimentInput = z.infer<typeof experimentInputSchema>
@@ -52,8 +70,8 @@ export async function loadVideoOptions(ctx: V4Context): Promise<VideoOption[]> {
     .limit(300)
   if (!ctx.isAdmin) q = q.eq('primary_owner_user_id', ctx.profile.id)
   const { data, error } = await q
-  if (error) throw new Error(error.message)
-  return ((data || []) as Array<Partial<VideoRow> & { id: string; created_at: string }>).map((v) => ({
+  if (error) throw dbError(error)
+  return ((data || []) as unknown as Array<Partial<VideoRow> & { id: string; created_at: string }>).map((v) => ({
     id: v.id,
     title: videoTitle(v as VideoRow),
     stockName: stockKey(v as VideoRow),
@@ -72,7 +90,7 @@ export async function mapExperiments(ctx: V4Context, rows: ExperimentRow[]): Pro
         .from(V4_TABLES.videos)
         .select('id, title, title_override, youtube_video_id, stock_name')
         .in('id', videoIds)
-      if (error) throw new Error(error.message)
+      if (error) throw dbError(error)
       return new Map(((data || []) as VideoRow[]).map((v) => [v.id, v]))
     })()
   ])
@@ -97,4 +115,15 @@ export async function mapExperiments(ctx: V4Context, rows: ExperimentRow[]): Pro
       updatedAt: r.updated_at
     }
   })
+}
+
+// 연결하려는 영상이 있는지, 직원이면 본인이 등록한 영상인지 확인한다. (FK 위반 원문 오류 대신 쉬운 문장으로)
+export async function assertLinkableVideo(ctx: V4Context, videoId: string | null | undefined) {
+  if (!videoId) return
+  const { data, error } = await ctx.supabaseAdmin.from(V4_TABLES.videos).select('id, primary_owner_user_id').eq('id', videoId).maybeSingle()
+  if (error) throw dbError(error)
+  if (!data) throw new V4HttpError('선택한 영상을 찾을 수 없어요. 목록에서 다시 골라 주세요.', 400)
+  if (!ctx.isAdmin && (data as { primary_owner_user_id: string | null }).primary_owner_user_id !== ctx.profile.id) {
+    throw new V4HttpError('본인이 등록한 영상만 연결할 수 있어요.', 403)
+  }
 }

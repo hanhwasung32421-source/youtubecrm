@@ -1,4 +1,7 @@
 // 표시용 포맷 도우미(클라이언트/서버 공용).
+// 날짜 계산은 서버(UTC)와 브라우저(KST)가 달라지지 않도록 모두 한국 시간(KST) 기준이다.
+
+import { getKstYmd } from '@/lib/attendance/time'
 
 const krw = new Intl.NumberFormat('ko-KR')
 
@@ -28,8 +31,9 @@ export function toYmd(date: Date) {
   return `${y}-${m}-${d}`
 }
 
+// 오늘 날짜(KST, YYYY-MM-DD). 서버가 UTC로 돌아도 같은 값이 나온다.
 export function todayYmd() {
-  return toYmd(new Date())
+  return getKstYmd(new Date())
 }
 
 export function addDays(ymd: string, days: number) {
@@ -49,11 +53,11 @@ export function diffDays(a: string, b: string) {
 
 export function formatDate(value: string | null | undefined) {
   if (!value) return '-'
-  // 날짜만(YYYY-MM-DD)인 경우 그대로, timestamptz면 로컬 날짜로
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value
+  // 날짜만(YYYY-MM-DD)인 경우 그대로, timestamptz면 한국 날짜로
+  if (/^d{4}-d{2}-d{2}$/.test(value)) return value
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
-  return toYmd(date)
+  return getKstYmd(date)
 }
 
 export function formatDateTime(value: string | null | undefined) {
@@ -70,14 +74,35 @@ export function formatShortDate(ymd: string) {
   return `${m}/${d}`
 }
 
-// ISO-8601 주차 라벨("2026-W38"). 주간 회고의 주차 자동 계산에 쓴다.
-export function isoWeekLabel(date: Date = new Date()) {
-  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
+// 날짜(YYYY-MM-DD)가 속한 ISO-8601 주차 라벨("2026-W38").
+export function isoWeekLabelFromYmd(ymd: string) {
+  const [y, m, day] = ymd.split('-').map(Number)
+  const d = new Date(Date.UTC(y, m - 1, day))
   const dayNum = d.getUTCDay() || 7
   d.setUTCDate(d.getUTCDate() + 4 - dayNum)
   const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
   const weekNo = Math.ceil(((d.getTime() - yearStart.getTime()) / 86_400_000 + 1) / 7)
   return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`
+}
+
+// 주간 회고의 주차 라벨. 한국 시간 기준이라 월요일 새벽에도 서버/브라우저가 같은 주를 가리킨다.
+export function isoWeekLabel(date: Date = new Date()) {
+  return isoWeekLabelFromYmd(getKstYmd(date))
+}
+
+// "2026-W38" → { start: '2026-09-14', end: '2026-09-20' } (월~일). 형식이 다르면 null.
+export function isoWeekRangeYmd(label: string): { start: string; end: string } | null {
+  const match = /^(\d{4})-W(\d{2})$/.exec(label)
+  if (!match) return null
+  const year = Number(match[1])
+  const week = Number(match[2])
+  if (week < 1 || week > 53) return null
+  const jan4 = new Date(Date.UTC(year, 0, 4))
+  const jan4Day = jan4.getUTCDay() || 7
+  const monday = new Date(jan4.getTime() + (1 - jan4Day) * 86_400_000 + (week - 1) * 7 * 86_400_000)
+  const sunday = new Date(monday.getTime() + 6 * 86_400_000)
+  const iso = (d: Date) => `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`
+  return { start: iso(monday), end: iso(sunday) }
 }
 
 // "2026-W38" → "9월 14일 ~ 9월 20일" (월~일). 형식이 다르면 라벨 그대로 돌려준다.

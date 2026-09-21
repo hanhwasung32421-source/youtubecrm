@@ -1,13 +1,16 @@
 'use client'
 
 import '../analysis.css'
+import '@/lib/v3/interact.css'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { PageHeader } from '@/components/v3/app-shell'
 import { Toast, useToast } from '@/components/toast'
 import { Tag } from '@/components/v3/ui'
 import { LineGrowthChart, type GrowthPoint } from '@/components/v3/charts'
 import { useV3Me } from '@/components/v3/auth-guard'
-import { authedFetchJson, authedPostJson } from '@/lib/session/authed-fetch'
+import { v3Request } from '@/lib/v3/api-client'
+import { useLatest } from '@/lib/v3/interact'
+import { usePref } from '@/lib/v3/prefs'
 import { formatCompactNumber, formatDateTime, formatNumber } from '@/lib/v3/format'
 import { AnswerCard, EmptyBlock, ErrorBlock, HowTo, LoadingBlock, MoreButton, useShowMore, type Tone } from '../analysis-parts'
 
@@ -63,98 +66,125 @@ function summarizeGrowth(snapshots: Snapshot[]): { tone: Tone; headline: string;
   return { tone: 'neutral', headline: `조회수가 거의 멈춘 영상이에요. ${gained}`, detail }
 }
 
+type SyncResponse = {
+  updated: number
+  total: number
+  skipped?: number
+  remaining?: number
+  results: { id: string; title: string; ok: boolean; skipped?: boolean; error?: string }[]
+}
+
+type SyncNotice = { tone: 'good' | 'warn' | 'neutral'; text: string; failures: string[] }
+
 export default function LifecyclePage() {
   const me = useV3Me()
-  const { toast, showSuccess, showError } = useToast()
-  const [staffId, setStaffId] = useState('')
+  const { toast, showError } = useToast()
+  const showErrorRef = useLatest(showError)
+  // 마지막에 고른 직원 필터를 기억한다(관리자). 저장된 값을 읽은 뒤(ready)에 첫 목록을 불러온다.
+  const [staffId, setStaffId, prefReady] = usePref('lifecycle:staff')
   const [list, setList] = useState<ListResponse | null>(null)
   const [listError, setListError] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [detail, setDetail] = useState<DetailResponse | null>(null)
   const [detailError, setDetailError] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
+  const [syncNotice, setSyncNotice] = useState<SyncNotice | null>(null)
   const [query, setQuery] = useState('')
   const detailSeq = useRef(0)
+  const listSeq = useRef(0)
 
   const loadList = useCallback(
     async (filter: string) => {
-      const qs = filter ? `?staffId=${filter}` : ''
-      const { ok, data } = await authedFetchJson<ListResponse>(`/api/v3/lifecycle${qs}`)
-      if (!ok) {
-        const message = (data as any)?.error || '영상 목록을 불러오지 못했습니다.'
-        setListError(message)
-        showError(message)
+      const seq = ++listSeq.current
+      const qs = filter ? `?staffId=${encodeURIComponent(filter)}` : ''
+      const res = await v3Request<ListResponse>(`/api/v3/lifecycle${qs}`, {}, '영상 목록을 불러오지 못했어요.')
+      if (seq !== listSeq.current) return
+      if (!res.ok) {
+        setListError(res.error)
+        showErrorRef.current(res.error || '영상 목록을 불러오지 못했어요.')
+        return
+      }
+      // 저장해 둔 직원이 더는 목록에 없으면(퇴사 등) 전체 팀으로 되돌린다.
+      if (filter && !res.data.staffOptions.some((s) => s.id === filter)) {
+        setStaffId('')
         return
       }
       setListError(null)
-      setList(data)
+      setList(res.data)
       // 현재 고른 영상이 목록에 없으면(직원 필터 변경 등) 가장 최근 영상으로 바꾼다.
-      setSelectedId((prev) => (prev && data.items.some((i) => i.id === prev) ? prev : data.items[0]?.id ?? null))
+      setSelectedId((prev) => (prev && res.data.items.some((i) => i.id === prev) ? prev : res.data.items[0]?.id ?? null))
     },
-    [showError]
+    [showErrorRef, setStaffId]
   )
 
   const loadDetail = useCallback(
     async (videoId: string) => {
       const seq = ++detailSeq.current
-      const { ok, data } = await authedFetchJson<DetailResponse>(`/api/v3/lifecycle?videoId=${videoId}`)
+      const res = await v3Request<DetailResponse>(`/api/v3/lifecycle?videoId=${encodeURIComponent(videoId)}`, {}, '조회수 기록을 불러오지 못했어요.')
       if (seq !== detailSeq.current) return
-      if (!ok) {
-        const message = (data as any)?.error || '조회수 기록을 불러오지 못했습니다.'
-        setDetailError(message)
-        showError(message)
+      if (!res.ok) {
+        setDetailError(res.error)
+        showErrorRef.current(res.error || '조회수 기록을 불러오지 못했어요.')
         return
       }
       setDetailError(null)
-      setDetail(data)
+      setDetail(res.data)
     },
-    [showError]
+    [showErrorRef]
   )
 
   useEffect(() => {
-    void loadList(staffId)
-  }, [staffId, loadList])
+    if (prefReady) void loadList(staffId)
+  }, [staffId, prefReady, loadList])
 
   useEffect(() => {
     if (selectedId) void loadDetail(selectedId)
     else setDetail(null)
   }, [selectedId, loadDetail])
 
+  // 여러 영상 새로고침: 기록이 가장 오래된 영상부터 10개. 결과는 사라지지 않는 안내 상자로 보여준다.
   const syncAll = async () => {
+    if (syncing) return
     setSyncing(true)
-    try {
-      const { ok, data } = await authedPostJson<{ updated: number; total: number; error?: string }>('/api/v3/lifecycle/sync', {})
-      if (!ok) {
-        showError(data?.error || '통계 새로고침에 실패했습니다.')
-        return
-      }
-      showSuccess(
-        data.total === 0
-          ? '새로고침할 영상이 없어요.'
-          : `최근 영상 ${data.updated}개의 조회수를 새로 기록했어요.${data.updated < data.total ? ` (${data.total - data.updated}개는 실패)` : ''}`
-      )
-      await loadList(staffId)
-      if (selectedId) await loadDetail(selectedId)
-    } finally {
+    setSyncNotice(null)
+    const res = await v3Request<SyncResponse>('/api/v3/lifecycle/sync', { method: 'POST', body: staffId ? { staffId } : {} }, '조회수를 새로고침하지 못했어요.')
+    if (!res.ok) {
+      setSyncNotice({ tone: 'warn', text: res.error || '조회수를 새로고침하지 못했어요.', failures: [] })
       setSyncing(false)
+      return
     }
+    const { updated, total, remaining = 0, results } = res.data
+    const failures = results.filter((r) => !r.ok).map((r) => `${r.title} — ${r.error || '실패'}`)
+    if (total === 0) {
+      setSyncNotice({ tone: 'neutral', text: '지금 새로 기록할 영상이 없어요. 최근 30일 영상은 모두 방금 기록됐어요.', failures: [] })
+    } else {
+      const parts = [`영상 ${formatNumber(updated)}개의 조회수를 새로 기록했어요.`]
+      if (failures.length > 0) parts.push(`${formatNumber(failures.length)}개는 기록하지 못했어요.`)
+      if (remaining > 0) parts.push(`아직 ${formatNumber(remaining)}개가 남았어요. 버튼을 한 번 더 누르면 이어서 기록해요.`)
+      setSyncNotice({ tone: failures.length > 0 ? 'warn' : 'good', text: parts.join(' '), failures })
+    }
+    await loadList(staffId)
+    if (selectedId) await loadDetail(selectedId)
+    setSyncing(false)
   }
 
   const syncOne = async () => {
-    if (!selectedId) return
+    if (!selectedId || syncing) return
     setSyncing(true)
-    try {
-      const { ok, data } = await authedPostJson<{ updated: number; error?: string }>('/api/v3/lifecycle/sync', { videoId: selectedId })
-      if (!ok) {
-        showError(data?.error || '통계 새로고침에 실패했습니다.')
-        return
-      }
-      showSuccess(data.updated > 0 ? '이 영상의 조회수를 새로 기록했어요.' : '이 영상은 유튜브 주소가 없어 새로고침하지 못했어요.')
-      await loadDetail(selectedId)
-      await loadList(staffId)
-    } finally {
+    setSyncNotice(null)
+    const res = await v3Request<SyncResponse>('/api/v3/lifecycle/sync', { method: 'POST', body: { videoId: selectedId } }, '조회수를 새로고침하지 못했어요.')
+    if (!res.ok) {
+      showError(res.error || '조회수를 새로고침하지 못했어요.')
       setSyncing(false)
+      return
     }
+    // 성공하면 아래 표와 그래프가 바로 바뀌므로 알림은 "건너뜀/실패"일 때만 띄운다.
+    const row = res.data.results[0]
+    if (row?.skipped) showError('방금 기록한 영상이에요. 몇 분 뒤에 다시 눌러 주세요.')
+    else if (row && !row.ok) showError(row.error || '이 영상은 새로고침하지 못했어요.')
+    await loadDetail(selectedId)
+    await loadList(staffId)
+    setSyncing(false)
   }
 
   const filtered = useMemo(() => {
@@ -186,19 +216,45 @@ export default function LifecyclePage() {
               ))}
             </select>
           ) : null}
-          <button className="button secondary" disabled={syncing} onClick={syncAll} title="유튜브에서 최신 조회수를 가져와 기록을 하나 남겨요. 최근 등록한 영상 10개까지 한 번에 처리해요.">
-            {syncing ? '새로고침 중…' : '최근 영상 10개 조회수 새로고침'}
+          <button
+            type="button"
+            className="button secondary"
+            disabled={syncing}
+            onClick={() => void syncAll()}
+            title="유튜브에서 최신 조회수를 가져와 기록을 하나 남겨요. 기록이 가장 오래된 영상부터 10개씩 처리해요."
+          >
+            {syncing ? '새로고침 중…' : '조회수 새로고침 (10개씩)'}
           </button>
         </div>
       }
     />
   )
 
+  const noticeEl = syncNotice ? (
+    <div className={`v3i-notice ${syncNotice.tone === 'neutral' ? '' : syncNotice.tone}`} role="status">
+      <div>
+        <div>{syncNotice.text}</div>
+        {syncNotice.failures.length > 0 ? (
+          <ul>
+            {syncNotice.failures.slice(0, 5).map((f) => (
+              <li key={f}>{f}</li>
+            ))}
+            {syncNotice.failures.length > 5 ? <li>그 밖에 {syncNotice.failures.length - 5}개</li> : null}
+          </ul>
+        ) : null}
+      </div>
+      <button type="button" className="v3i-linkbtn" onClick={() => setSyncNotice(null)}>
+        닫기
+      </button>
+    </div>
+  ) : null
+
   if (!list) {
     return (
       <>
         {header}
         <Toast toast={toast} />
+        {noticeEl}
         {listError ? <ErrorBlock message={listError} onRetry={() => void loadList(staffId)} /> : <LoadingBlock>영상 목록을 불러오는 중이에요…</LoadingBlock>}
       </>
     )
@@ -209,6 +265,7 @@ export default function LifecyclePage() {
       <>
         {header}
         <Toast toast={toast} />
+        {noticeEl}
         <EmptyBlock title="아직 등록된 영상이 없어요" actionHref="/v3/register" actionLabel="영상 등록하러 가기">
           영상을 등록한 뒤 ‘조회수 새로고침’을 누르면 기록이 하나씩 쌓이고, 며칠 지나면 조회수가 어떻게 늘어나는지 그래프로 보여드려요.
         </EmptyBlock>
@@ -220,6 +277,7 @@ export default function LifecyclePage() {
     <>
       {header}
       <Toast toast={toast} />
+      {noticeEl ? <div style={{ marginBottom: 16 }}>{noticeEl}</div> : null}
 
       <div className="v3a-split">
         {/* 왼쪽: 영상 고르기 */}

@@ -1,15 +1,15 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { PageHeader } from '@/components/v2/app-shell'
 import { useV2Me } from '@/components/v2/session-context'
 import { KeywordStatusTag, PriorityTag } from '@/components/v2/tags'
 import { Toast, useToast } from '@/components/toast'
-import { authedFetchJson, authedPostJson } from '@/lib/session/authed-fetch'
-import { Answer, EmptyGuide, HowTo, Kpi, KpiRow, LoadingLine, MoreButton, SampleNote } from '@/lib/v2/analysis-ui'
-import { authedDeleteJson, authedPatchJson } from '@/lib/v2/client'
+import { Answer, EmptyGuide, FieldError, HowTo, InlineConfirm, Kpi, KpiRow, LoadError, LoadingLine, MoreButton, Req, SampleNote } from '@/lib/v2/analysis-ui'
+import { v2Delete, v2Get, v2Patch, v2Post } from '@/lib/v2/client'
 import { formatKstDateTime } from '@/lib/v2/dates'
 import { shortText } from '@/lib/v2/format'
+import { useRememberedState } from '@/lib/v2/use-remembered'
 import { V2_MISSING_TABLE_MESSAGE } from '@/lib/v2/tables'
 import {
   KEYWORD_STATUS_LABELS,
@@ -22,11 +22,14 @@ import {
 } from '@/lib/v2/types'
 
 type Form = { stockName: string; keyword: string; sourceUrl: string; priority: Priority }
+type FormErrors = { stockName: string; keyword: string; sourceUrl: string }
 type Filter = 'open' | 'waiting' | 'in_progress' | 'done' | 'all'
 
+const FILTERS = ['open', 'waiting', 'in_progress', 'done', 'all'] as const
 const EMPTY: KeywordsPayload = { items: [], recentStocks: [] }
 const PAGE_STEP = 15
 const PRIORITY_ORDER: Record<Priority, number> = { high: 0, normal: 1, low: 2 }
+const LOAD_ERROR = '키워드 목록을 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.'
 
 function initialForm(): Form {
   return { stockName: '', keyword: '', sourceUrl: '', priority: 'normal' }
@@ -36,32 +39,68 @@ function normalize(value: string) {
   return value.replace(/\s+/g, '').toLowerCase()
 }
 
+function validate(form: Form): FormErrors {
+  return {
+    stockName: form.stockName.trim() ? '' : '종목명을 입력해 주세요.',
+    keyword: form.keyword.trim() ? '' : '어떤 내용으로 만들지 키워드를 적어 주세요.',
+    sourceUrl: form.sourceUrl.trim() && !/^https?:\/\/\S+\.\S+/i.test(form.sourceUrl.trim()) ? '주소가 https:// 로 시작해야 해요.' : ''
+  }
+}
+
+// 상태 → 우선순위 → 최근 순. 끝난 것은 항상 아래.
+function sortItems(items: KeywordRadarItem[]) {
+  return [...items].sort(
+    (a, b) =>
+      Number(a.status === 'done') - Number(b.status === 'done') ||
+      PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority] ||
+      (a.created_at < b.created_at ? 1 : -1)
+  )
+}
+
 export default function KeywordsPage() {
   const me = useV2Me()
-  const { toast, showSuccess, showError } = useToast()
+  const { toast, showError } = useToast()
   const [payload, setPayload] = useState<KeywordsPayload>(EMPTY)
   const [loaded, setLoaded] = useState(false)
+  const [loadError, setLoadError] = useState('')
   const [form, setForm] = useState<Form>(initialForm)
   const [submitted, setSubmitted] = useState(false)
+  const [formError, setFormError] = useState('')
   const [saving, setSaving] = useState(false)
-  const [filter, setFilter] = useState<Filter>('open')
+  const [filter, setFilter] = useRememberedState<Filter>('kw.filter', 'open', FILTERS)
   const [visible, setVisible] = useState(PAGE_STEP)
-  const [busyId, setBusyId] = useState<string | null>(null)
+  const [busyIds, setBusyIds] = useState<Set<string>>(() => new Set())
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [editId, setEditId] = useState<string | null>(null)
+  const [editForm, setEditForm] = useState<Form>(initialForm)
+  const [editSubmitted, setEditSubmitted] = useState(false)
+  const [editError, setEditError] = useState('')
+  const [editSaving, setEditSaving] = useState(false)
+  const stockRef = useRef<HTMLInputElement>(null)
+  const keywordRef = useRef<HTMLInputElement>(null)
+  const urlRef = useRef<HTMLInputElement>(null)
+  const editStockRef = useRef<HTMLInputElement>(null)
 
   const load = async () => {
-    const { ok, data } = await authedFetchJson<KeywordsPayload>('/api/v2/keywords')
+    const res = await v2Get<KeywordsPayload>('/api/v2/keywords', LOAD_ERROR)
     setLoaded(true)
-    if (!ok) {
-      showError(data?.error || '키워드 목록을 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.')
+    if (!res.ok) {
+      setLoadError(res.error)
       return
     }
-    setPayload(data)
+    setLoadError('')
+    setPayload(res.data)
   }
 
   useEffect(() => {
     void load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // 수정 칸이 열리면 첫 입력칸으로 포커스
+  useEffect(() => {
+    if (editId) editStockRef.current?.focus()
+  }, [editId])
 
   const guardSample = () => {
     if (payload.sample) {
@@ -71,77 +110,128 @@ export default function KeywordsPage() {
     return false
   }
 
+  const setItems = (fn: (items: KeywordRadarItem[]) => KeywordRadarItem[], doneDelta = 0) => {
+    setPayload((prev) => ({
+      ...prev,
+      items: fn(prev.items),
+      doneTotal: prev.doneTotal === undefined ? undefined : Math.max(0, prev.doneTotal + doneDelta)
+    }))
+  }
+
   const recentHit = payload.recentStocks.find((r) => form.stockName.trim() && normalize(r.stock_name) === normalize(form.stockName))
   const sameKeyword =
     form.stockName.trim() && form.keyword.trim()
       ? payload.items.find((i) => normalize(i.stock_name) === normalize(form.stockName) && normalize(i.keyword) === normalize(form.keyword))
       : undefined
 
-  // 입력칸 옆에 바로 보여줄 검증 메시지 (제출을 시도한 뒤부터)
-  const errors = {
-    stockName: form.stockName.trim() ? '' : '종목명을 입력해 주세요.',
-    keyword: form.keyword.trim() ? '' : '어떤 내용으로 만들지 키워드를 적어 주세요.',
-    sourceUrl: form.sourceUrl.trim() && !/^https?:\/\/\S+\.\S+/i.test(form.sourceUrl.trim()) ? '주소가 https:// 로 시작해야 해요.' : ''
-  }
+  // 입력칸 바로 아래에 보여줄 검증 메시지 (제출을 시도한 뒤부터)
+  const errors = validate(form)
   const hasError = Boolean(errors.stockName || errors.keyword || errors.sourceUrl)
+  const editErrors = validate(editForm)
+  const editHasError = Boolean(editErrors.stockName || editErrors.keyword || editErrors.sourceUrl)
 
   const create = async () => {
     setSubmitted(true)
-    if (hasError) return
+    setFormError('')
+    if (hasError) {
+      ;(errors.stockName ? stockRef : errors.keyword ? keywordRef : urlRef).current?.focus()
+      return
+    }
     if (guardSample()) return
     setSaving(true)
-    try {
-      const { ok, data } = await authedPostJson<{ ok?: boolean; error?: string }>('/api/v2/keywords', {
-        stockName: form.stockName.trim(),
-        keyword: form.keyword.trim(),
-        sourceUrl: form.sourceUrl.trim() || null,
-        priority: form.priority
-      })
-      if (!ok) {
-        showError(data?.error || '키워드를 등록하지 못했어요. 다시 시도해 주세요.')
-        return
-      }
-      setForm(initialForm())
-      setSubmitted(false)
-      setFilter('open')
-      showSuccess('키워드를 추가했어요.')
-      await load()
-    } finally {
-      setSaving(false)
+    const res = await v2Post<{ ok?: boolean; item?: KeywordRadarItem }>(
+      '/api/v2/keywords',
+      { stockName: form.stockName.trim(), keyword: form.keyword.trim(), sourceUrl: form.sourceUrl.trim() || null, priority: form.priority },
+      '키워드를 저장하지 못했어요. 다시 시도해 주세요.'
+    )
+    setSaving(false)
+    if (!res.ok || !res.data.item) {
+      setFormError(res.error || '키워드를 저장하지 못했어요. 다시 시도해 주세요.')
+      return
+    }
+    const item = res.data.item
+    setItems((items) => [item, ...items.filter((i) => i.id !== item.id)])
+    setForm(initialForm())
+    setSubmitted(false)
+    // 새 키워드는 '대기'로 들어가므로, 안 보이는 탭이면 '할 일'로 옮겨 바로 보이게 한다.
+    if (filter === 'in_progress' || filter === 'done') setFilter('open')
+    stockRef.current?.focus()
+  }
+
+  // 상태 변경: 누르면 바로 바뀌고, 저장에 실패하면 원래대로 되돌린다.
+  const setStatus = async (item: KeywordRadarItem, status: KeywordStatus) => {
+    if (guardSample() || busyIds.has(item.id)) return
+    const before = item.status
+    const delta = (status === 'done' ? 1 : 0) - (before === 'done' ? 1 : 0)
+    setBusyIds((prev) => new Set(prev).add(item.id))
+    setItems((items) => items.map((i) => (i.id === item.id ? { ...i, status } : i)), delta)
+    const res = await v2Patch('/api/v2/keywords', { id: item.id, status }, '상태를 바꾸지 못했어요. 다시 시도해 주세요.')
+    setBusyIds((prev) => {
+      const copy = new Set(prev)
+      copy.delete(item.id)
+      return copy
+    })
+    if (!res.ok) {
+      setItems((items) => items.map((i) => (i.id === item.id ? { ...i, status: before } : i)), -delta)
+      showError(res.error)
+      if (res.status === 404) void load()
     }
   }
 
-  const setStatus = async (item: KeywordRadarItem, status: KeywordStatus) => {
+  const openEdit = (item: KeywordRadarItem) => {
+    setEditId(item.id)
+    setEditForm({ stockName: item.stock_name, keyword: item.keyword, sourceUrl: item.source_url || '', priority: item.priority })
+    setEditSubmitted(false)
+    setEditError('')
+  }
+
+  const closeEdit = () => {
+    setEditId(null)
+    setEditError('')
+  }
+
+  const saveEdit = async (item: KeywordRadarItem) => {
+    if (editSaving) return
+    setEditSubmitted(true)
+    setEditError('')
+    if (editHasError) return
     if (guardSample()) return
-    setBusyId(item.id)
-    try {
-      const { ok, data } = await authedPatchJson<{ ok?: boolean; error?: string }>('/api/v2/keywords', { id: item.id, status })
-      if (!ok) {
-        showError(data?.error || '상태를 바꾸지 못했어요. 다시 시도해 주세요.')
-        return
+    setEditSaving(true)
+    const res = await v2Patch<{ ok?: boolean; item?: KeywordRadarItem }>(
+      '/api/v2/keywords',
+      {
+        id: item.id,
+        stockName: editForm.stockName.trim(),
+        keyword: editForm.keyword.trim(),
+        sourceUrl: editForm.sourceUrl.trim() || null,
+        priority: editForm.priority
+      },
+      '키워드를 저장하지 못했어요. 다시 시도해 주세요.'
+    )
+    setEditSaving(false)
+    if (!res.ok || !res.data.item) {
+      setEditError(res.error || '키워드를 저장하지 못했어요. 다시 시도해 주세요.')
+      if (res.status === 404) {
+        closeEdit()
+        void load()
       }
-      showSuccess(`${item.stock_name} → ${KEYWORD_STATUS_LABELS[status]}`)
-      await load()
-    } finally {
-      setBusyId(null)
+      return
     }
+    const saved = res.data.item
+    setItems((items) => items.map((i) => (i.id === saved.id ? { ...i, ...saved } : i)))
+    closeEdit()
   }
 
   const remove = async (item: KeywordRadarItem) => {
     if (guardSample()) return
-    if (!window.confirm(`"${item.keyword}" 키워드를 삭제할까요?`)) return
-    setBusyId(item.id)
-    try {
-      const { ok, data } = await authedDeleteJson<{ ok?: boolean; error?: string }>(`/api/v2/keywords?id=${item.id}`)
-      if (!ok) {
-        showError(data?.error || '삭제하지 못했어요. 다시 시도해 주세요.')
-        return
-      }
-      showSuccess('삭제했어요.')
-      await load()
-    } finally {
-      setBusyId(null)
+    setDeletingId(item.id)
+    const res = await v2Delete(`/api/v2/keywords?id=${encodeURIComponent(item.id)}`, '삭제하지 못했어요. 다시 시도해 주세요.')
+    setDeletingId(null)
+    if (!res.ok) {
+      showError(res.error)
+      return
     }
+    setItems((items) => items.filter((i) => i.id !== item.id), item.status === 'done' ? -1 : 0)
   }
 
   const counts = useMemo(() => {
@@ -149,12 +239,9 @@ export default function KeywordsPage() {
     for (const item of payload.items) c[item.status] += 1
     return c
   }, [payload.items])
+  const doneCount = Math.max(counts.done, payload.doneTotal ?? 0)
 
-  // 급한(우선순위 높은) 것부터, 같으면 최근에 올라온 것부터
-  const sorted = useMemo(
-    () => [...payload.items].sort((a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority] || (a.created_at < b.created_at ? 1 : -1)),
-    [payload.items]
-  )
+  const sorted = useMemo(() => sortItems(payload.items), [payload.items])
   const openItems = sorted.filter((i) => i.status !== 'done')
   const items = sorted.filter((i) => (filter === 'all' ? true : filter === 'open' ? i.status !== 'done' : i.status === filter))
   const shown = items.slice(0, visible)
@@ -169,8 +256,8 @@ export default function KeywordsPage() {
     { key: 'open', label: '할 일', count: counts.waiting + counts.in_progress },
     { key: 'waiting', label: '대기', count: counts.waiting },
     { key: 'in_progress', label: '작업중', count: counts.in_progress },
-    { key: 'done', label: '완료', count: counts.done },
-    { key: 'all', label: '전체', count: payload.items.length }
+    { key: 'done', label: '완료', count: doneCount },
+    { key: 'all', label: '전체', count: counts.waiting + counts.in_progress + doneCount }
   ]
 
   return (
@@ -178,10 +265,11 @@ export default function KeywordsPage() {
       <PageHeader title="키워드 모음" subtitle="지금 다루면 좋은 검색어를 팀이 함께 모아 두고, 누가 작업 중인지 확인하는 곳이에요." />
       <Toast toast={toast} />
       <SampleNote show={payload.sample} />
+      {loaded && loadError ? <LoadError message={loadError} onRetry={() => void load()} /> : null}
 
       {!loaded ? (
         <LoadingLine />
-      ) : (
+      ) : loadError && payload.items.length === 0 ? null : (
         <Answer>
           {openItems.length === 0 ? (
             <>지금 기다리는 키워드가 없어요. 아래에서 다음에 다룰 키워드를 추가해 보세요.</>
@@ -201,11 +289,11 @@ export default function KeywordsPage() {
       )}
 
       {loaded ? (
-      <KpiRow>
-        <Kpi label="대기 중" value={counts.waiting.toLocaleString('ko-KR')} unit="개" tone={counts.waiting > 0 ? 'warn' : 'neutral'} hint="아직 아무도 시작하지 않은 키워드예요." />
-        <Kpi label="작업중" value={counts.in_progress.toLocaleString('ko-KR')} unit="개" hint="누군가 영상을 만들고 있는 키워드예요." />
-        <Kpi label="최근 7일 다룬 종목" value={payload.recentStocks.length.toLocaleString('ko-KR')} unit="종목" hint="같은 종목이 겹치지 않게 아래에서 확인해요." />
-      </KpiRow>
+        <KpiRow>
+          <Kpi label="대기 중" value={counts.waiting.toLocaleString('ko-KR')} unit="개" tone={counts.waiting > 0 ? 'warn' : 'neutral'} hint="아직 아무도 시작하지 않은 키워드예요." />
+          <Kpi label="작업중" value={counts.in_progress.toLocaleString('ko-KR')} unit="개" hint="누군가 영상을 만들고 있는 키워드예요." />
+          <Kpi label="최근 7일 다룬 종목" value={payload.recentStocks.length.toLocaleString('ko-KR')} unit="종목" hint="같은 종목이 겹치지 않게 아래에서 확인해요." />
+        </KpiRow>
       ) : null}
 
       <form
@@ -219,35 +307,49 @@ export default function KeywordsPage() {
         <div className="panel-header">
           <div>
             <div className="panel-title">새 키워드 추가</div>
-            <p className="panel-subtitle">누구나 추가할 수 있어요. 최근에 다룬 종목이면 아래에 알려 드려요.</p>
+            <p className="panel-subtitle">
+              누구나 추가할 수 있어요. 최근에 다룬 종목이면 아래에 알려 드려요. <Req /> 표시는 꼭 적어야 해요.
+            </p>
           </div>
         </div>
-        <div className="v2-form-grid">
+        <div className="v2-form-grid" style={{ alignItems: 'start' }}>
           <div className="field">
             <label className="label" htmlFor="kw-stock">
               종목명
+              <Req />
             </label>
             <input
               id="kw-stock"
+              ref={stockRef}
               className={`input compact ${submitted && errors.stockName ? 'invalid' : ''}`}
               value={form.stockName}
+              maxLength={80}
               placeholder="예: SK하이닉스"
+              aria-invalid={submitted && Boolean(errors.stockName)}
+              aria-describedby={submitted && errors.stockName ? 'kw-stock-err' : undefined}
+              autoComplete="off"
               onChange={(e) => setForm({ ...form, stockName: e.target.value })}
             />
-            {submitted && errors.stockName ? <span className="v2a-field-error">{errors.stockName}</span> : null}
+            <FieldError id="kw-stock-err">{submitted ? errors.stockName : ''}</FieldError>
           </div>
           <div className="field" style={{ gridColumn: 'span 2' }}>
             <label className="label" htmlFor="kw-keyword">
               어떤 내용으로 만들까요?
+              <Req />
             </label>
             <input
               id="kw-keyword"
+              ref={keywordRef}
               className={`input compact ${submitted && errors.keyword ? 'invalid' : ''}`}
               value={form.keyword}
+              maxLength={120}
               placeholder="예: 엔비디아 실적 발표 후 시간외 급등"
+              aria-invalid={submitted && Boolean(errors.keyword)}
+              aria-describedby={submitted && errors.keyword ? 'kw-keyword-err' : undefined}
+              autoComplete="off"
               onChange={(e) => setForm({ ...form, keyword: e.target.value })}
             />
-            {submitted && errors.keyword ? <span className="v2a-field-error">{errors.keyword}</span> : null}
+            <FieldError id="kw-keyword-err">{submitted ? errors.keyword : ''}</FieldError>
           </div>
           <div className="field">
             <label className="label" htmlFor="kw-priority">
@@ -267,19 +369,29 @@ export default function KeywordsPage() {
             </label>
             <input
               id="kw-url"
+              ref={urlRef}
               className={`input compact ${submitted && errors.sourceUrl ? 'invalid' : ''}`}
               value={form.sourceUrl}
+              maxLength={500}
+              inputMode="url"
               placeholder="예: https://news.example.com/article/123"
+              aria-invalid={submitted && Boolean(errors.sourceUrl)}
+              aria-describedby={submitted && errors.sourceUrl ? 'kw-url-err' : undefined}
+              autoComplete="off"
               onChange={(e) => setForm({ ...form, sourceUrl: e.target.value })}
             />
-            {submitted && errors.sourceUrl ? <span className="v2a-field-error">{errors.sourceUrl}</span> : null}
+            <FieldError id="kw-url-err">{submitted ? errors.sourceUrl : ''}</FieldError>
           </div>
-          <div className="field" style={{ justifyContent: 'flex-end' }}>
+          <div className="field">
+            <span className="label" aria-hidden="true">
+              &nbsp;
+            </span>
             <button className="button" type="submit" disabled={saving}>
-              {saving ? '추가하는 중…' : '키워드 추가'}
+              {saving ? '저장 중…' : '키워드 추가'}
             </button>
           </div>
         </div>
+        <FieldError>{formError}</FieldError>
         {sameKeyword ? (
           <div className="v2a-field-warn" style={{ marginTop: 10 }}>
             이미 같은 키워드가 있어요 ({KEYWORD_STATUS_LABELS[sameKeyword.status]}). 그래도 필요하면 그대로 추가하세요.
@@ -296,7 +408,7 @@ export default function KeywordsPage() {
           <div>
             <div className="panel-title">키워드 목록</div>
             <p className="panel-subtitle" style={{ marginTop: 4 }}>
-              급한 것부터 보여줘요. 대기 → 작업중 → 완료 순서로 진행해요.
+              급한 것부터 보여줘요. 대기 → 작업중 → 완료 순서로 진행하고, 수정·삭제는 추가한 사람과 관리자만 할 수 있어요.
             </p>
           </div>
           <div className="v2-seg" role="tablist" aria-label="키워드 보기">
@@ -310,7 +422,9 @@ export default function KeywordsPage() {
 
         {!loaded ? null : items.length === 0 ? (
           payload.items.length === 0 ? (
-            <EmptyGuide title="아직 모아 둔 키워드가 없어요">위 입력칸에 종목과 내용을 적고 ‘키워드 추가’를 누르면 팀 모두가 볼 수 있는 목록이 만들어져요.</EmptyGuide>
+            loadError ? null : (
+              <EmptyGuide title="아직 모아 둔 키워드가 없어요">위 입력칸에 종목과 내용을 적고 ‘키워드 추가’를 누르면 팀 모두가 볼 수 있는 목록이 만들어져요.</EmptyGuide>
+            )
           ) : (
             <EmptyGuide title="이 목록은 비어 있어요">
               {filter === 'open' ? '할 일이 모두 끝났어요. ‘완료’ 탭에서 지난 키워드를 볼 수 있어요.' : '다른 탭을 눌러 보세요.'}
@@ -319,62 +433,151 @@ export default function KeywordsPage() {
         ) : (
           <div className="list">
             {shown.map((item) => {
-              const busy = busyId === item.id
+              const busy = busyIds.has(item.id)
               const canEdit = me.isAdmin || item.created_by === me.crmUserId
+              const editing = editId === item.id
               return (
                 <div className="list-item" key={item.id}>
-                  <div className="row-between" style={{ alignItems: 'flex-start', gap: 12 }}>
-                    <div style={{ minWidth: 0 }}>
-                      <div className="v2-card-title">
-                        <span>{item.stock_name}</span>
-                        <PriorityTag priority={item.priority} />
-                        <KeywordStatusTag status={item.status} />
+                  {editing ? (
+                    <form
+                      className="v2a-inline-edit"
+                      noValidate
+                      onSubmit={(e) => {
+                        e.preventDefault()
+                        void saveEdit(item)
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Escape') {
+                          e.preventDefault()
+                          closeEdit()
+                        }
+                      }}
+                    >
+                      <div className="field">
+                        <label className="label" htmlFor={`ed-stock-${item.id}`}>
+                          종목명
+                          <Req />
+                        </label>
+                        <input
+                          id={`ed-stock-${item.id}`}
+                          ref={editStockRef}
+                          className={`input compact ${editSubmitted && editErrors.stockName ? 'invalid' : ''}`}
+                          value={editForm.stockName}
+                          maxLength={80}
+                          autoComplete="off"
+                          onChange={(e) => setEditForm({ ...editForm, stockName: e.target.value })}
+                        />
+                        <FieldError>{editSubmitted ? editErrors.stockName : ''}</FieldError>
                       </div>
-                      <div className="v2-card-issue" style={{ marginTop: 4 }}>
-                        {item.keyword}
+                      <div className="field">
+                        <label className="label" htmlFor={`ed-prio-${item.id}`}>
+                          얼마나 급한가요?
+                        </label>
+                        <select id={`ed-prio-${item.id}`} className="select compact" value={editForm.priority} onChange={(e) => setEditForm({ ...editForm, priority: e.target.value as Priority })}>
+                          {PRIORITIES.map((p) => (
+                            <option key={p} value={p}>
+                              {PRIORITY_LABELS[p]}
+                            </option>
+                          ))}
+                        </select>
                       </div>
-                      <div className="v2-card-meta" style={{ marginTop: 6 }}>
-                        <span>추가한 사람 {item.created_by_name || '-'}</span>
-                        <span>{formatKstDateTime(item.created_at)}</span>
-                        {item.source_url ? (
-                          <a className="link" href={item.source_url} target="_blank" rel="noreferrer">
-                            참고 기사 ↗
-                          </a>
-                        ) : null}
+                      <div className="field wide">
+                        <label className="label" htmlFor={`ed-kw-${item.id}`}>
+                          어떤 내용으로 만들까요?
+                          <Req />
+                        </label>
+                        <input
+                          id={`ed-kw-${item.id}`}
+                          className={`input compact ${editSubmitted && editErrors.keyword ? 'invalid' : ''}`}
+                          value={editForm.keyword}
+                          maxLength={120}
+                          autoComplete="off"
+                          onChange={(e) => setEditForm({ ...editForm, keyword: e.target.value })}
+                        />
+                        <FieldError>{editSubmitted ? editErrors.keyword : ''}</FieldError>
                       </div>
-                    </div>
-                    {canEdit ? (
-                      <div className="v2-card-actions" style={{ justifyContent: 'flex-end' }}>
-                        {item.status === 'waiting' ? (
-                          <button className="button secondary xs" disabled={busy} onClick={() => void setStatus(item, 'in_progress')}>
-                            작업 시작
-                          </button>
-                        ) : null}
-                        {item.status === 'in_progress' ? (
-                          <button className="button secondary xs" disabled={busy} onClick={() => void setStatus(item, 'waiting')}>
-                            대기로 돌리기
-                          </button>
-                        ) : null}
-                        {item.status !== 'done' ? (
-                          <button className="button success xs" disabled={busy} onClick={() => void setStatus(item, 'done')}>
-                            완료
-                          </button>
-                        ) : (
-                          <button className="button secondary xs" disabled={busy} onClick={() => void setStatus(item, 'waiting')}>
-                            다시 열기
-                          </button>
-                        )}
-                        <button className="button secondary xs" disabled={busy} style={{ color: '#f87171' }} onClick={() => void remove(item)}>
-                          삭제
+                      <div className="field wide">
+                        <label className="label" htmlFor={`ed-url-${item.id}`}>
+                          참고 기사 주소 (선택)
+                        </label>
+                        <input
+                          id={`ed-url-${item.id}`}
+                          className={`input compact ${editSubmitted && editErrors.sourceUrl ? 'invalid' : ''}`}
+                          value={editForm.sourceUrl}
+                          maxLength={500}
+                          inputMode="url"
+                          autoComplete="off"
+                          onChange={(e) => setEditForm({ ...editForm, sourceUrl: e.target.value })}
+                        />
+                        <FieldError>{editSubmitted ? editErrors.sourceUrl : ''}</FieldError>
+                      </div>
+                      <div className="v2a-inline-actions">
+                        <button className="button success xs" type="submit" disabled={editSaving}>
+                          {editSaving ? '저장 중…' : '저장'}
                         </button>
+                        <button className="button secondary xs" type="button" disabled={editSaving} onClick={closeEdit}>
+                          취소
+                        </button>
+                        <FieldError>{editError}</FieldError>
                       </div>
-                    ) : null}
-                  </div>
+                    </form>
+                  ) : (
+                    <div className="row-between" style={{ alignItems: 'flex-start', gap: 12 }}>
+                      <div style={{ minWidth: 0 }}>
+                        <div className="v2-card-title">
+                          <span>{item.stock_name}</span>
+                          <PriorityTag priority={item.priority} />
+                          <KeywordStatusTag status={item.status} />
+                        </div>
+                        <div className="v2-card-issue" style={{ marginTop: 4 }}>
+                          {item.keyword}
+                        </div>
+                        <div className="v2-card-meta" style={{ marginTop: 6 }}>
+                          <span>추가한 사람 {item.created_by_name || '-'}</span>
+                          <span>{formatKstDateTime(item.created_at)}</span>
+                          {item.source_url ? (
+                            <a className="link" href={item.source_url} target="_blank" rel="noreferrer noopener">
+                              참고 기사 ↗
+                            </a>
+                          ) : null}
+                        </div>
+                      </div>
+                      {canEdit ? (
+                        <div className="v2-card-actions" style={{ justifyContent: 'flex-end' }}>
+                          {item.status === 'waiting' ? (
+                            <button className="button secondary xs" disabled={busy} onClick={() => void setStatus(item, 'in_progress')}>
+                              작업 시작
+                            </button>
+                          ) : null}
+                          {item.status === 'in_progress' ? (
+                            <button className="button secondary xs" disabled={busy} onClick={() => void setStatus(item, 'waiting')}>
+                              대기로 돌리기
+                            </button>
+                          ) : null}
+                          {item.status !== 'done' ? (
+                            <button className="button success xs" disabled={busy} onClick={() => void setStatus(item, 'done')}>
+                              완료
+                            </button>
+                          ) : (
+                            <button className="button secondary xs" disabled={busy} onClick={() => void setStatus(item, 'waiting')}>
+                              다시 열기
+                            </button>
+                          )}
+                          <button className="button secondary xs" disabled={busy} onClick={() => openEdit(item)}>
+                            수정
+                          </button>
+                          <InlineConfirm prompt="이 키워드를 삭제할까요?" busy={deletingId === item.id} disabled={busy} onConfirm={() => void remove(item)} />
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
                 </div>
               )
             })}
           </div>
         )}
+
+        {filter === 'done' && doneCount > counts.done ? <p className="v2a-note" style={{ marginTop: 10 }}>완료한 키워드는 최근 것부터 {counts.done}개만 보여드려요.</p> : null}
 
         <MoreButton shown={shown.length} total={items.length} step={PAGE_STEP} onMore={() => setVisible((v) => v + PAGE_STEP)} />
       </div>

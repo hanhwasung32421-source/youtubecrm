@@ -1,20 +1,32 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { PageHeader } from '@/components/v2/app-shell'
 import { ContentTypeTag } from '@/components/v2/tags'
 import { Toast, useToast } from '@/components/toast'
 import { useV2Me } from '@/components/v2/session-context'
-import { authedFetchJson, authedPostJson } from '@/lib/session/authed-fetch'
-import { Answer, EmptyGuide, HowTo, Kpi, KpiRow, LoadingLine, MoreButton, SampleNote } from '@/lib/v2/analysis-ui'
+import { Answer, EmptyGuide, FieldError, HowTo, InlineConfirm, Kpi, KpiRow, LoadError, LoadingLine, MoreButton, SampleNote } from '@/lib/v2/analysis-ui'
+import { v2Delete, v2Get, v2Patch, v2Post } from '@/lib/v2/client'
 import { formatCount, shortText } from '@/lib/v2/format'
 import { formatKstDate } from '@/lib/v2/dates'
+import { useRememberedState } from '@/lib/v2/use-remembered'
 import { V2_MISSING_TABLE_MESSAGE } from '@/lib/v2/tables'
-import { SEO_CHECKLIST_LABELS, checklistDoneCount, type OptimizationPayload, type OptimizationRow } from '@/lib/v2/types'
+import {
+  SEO_CHECKLIST_FIELDS,
+  SEO_CHECKLIST_LABELS,
+  checklistDoneCount,
+  improvementScoreOf,
+  type OptimizationPayload,
+  type OptimizationRow,
+  type SeoChecklistField,
+  type ThumbnailReview
+} from '@/lib/v2/types'
 
 const EMPTY: OptimizationPayload = { items: [] }
 const PAGE_STEP = 15
+const VIEWS = ['todo', 'all'] as const
 const RATING_HINT: Record<number, string> = { 1: '눈에 안 띄어요', 2: '아쉬워요', 3: '보통이에요', 4: '눈에 띄어요', 5: '클릭하고 싶어요' }
+const LOAD_ERROR = '영상 점검 목록을 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.'
 
 // 고칠 점을 쉬운 말로 풀어 쓴다. 심각한 것(빨강)과 주의(노랑)를 구분.
 function problemsOf(row: OptimizationRow): { text: string; bad?: boolean }[] {
@@ -30,14 +42,17 @@ function problemsOf(row: OptimizationRow): { text: string; bad?: boolean }[] {
 
 function StarPicker({ value, onPick, disabled }: { value: number; onPick?: (rating: number) => void; disabled?: boolean }) {
   return (
-    <span className="v2-stars">
+    <span className="v2-stars" role={onPick ? 'radiogroup' : undefined} aria-label="썸네일 별점">
       {[1, 2, 3, 4, 5].map((n) => (
         <button
           key={n}
           type="button"
           className={`v2-star ${n <= value ? 'filled' : ''}`}
+          data-active={n === value ? 'true' : undefined}
           disabled={disabled || !onPick}
           onClick={() => onPick?.(n)}
+          role={onPick ? 'radio' : undefined}
+          aria-checked={onPick ? n === value : undefined}
           aria-label={`${n}점`}
           title={RATING_HINT[n]}
         >
@@ -50,25 +65,31 @@ function StarPicker({ value, onPick, disabled }: { value: number; onPick?: (rati
 
 export default function OptimizationPage() {
   const me = useV2Me()
-  const { toast, showSuccess, showError } = useToast()
+  const { toast, showError } = useToast()
   const [payload, setPayload] = useState<OptimizationPayload>(EMPTY)
   const [loaded, setLoaded] = useState(false)
+  const [loadError, setLoadError] = useState('')
   const [openId, setOpenId] = useState<string | null>(null)
   const [draftRating, setDraftRating] = useState(3)
   const [draftNote, setDraftNote] = useState('')
+  const [formError, setFormError] = useState('')
   const [saving, setSaving] = useState(false)
-  const [view, setView] = useState<'todo' | 'all'>('todo')
-  const [owner, setOwner] = useState('')
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [pendingChecks, setPendingChecks] = useState<Set<string>>(() => new Set())
+  const [view, setView] = useRememberedState<'todo' | 'all'>('opt.view', 'todo', VIEWS)
+  const [owner, setOwner] = useRememberedState<string>('opt.owner', '')
   const [visible, setVisible] = useState(PAGE_STEP)
+  const formRef = useRef<HTMLFormElement>(null)
 
   const load = async () => {
-    const { ok, data } = await authedFetchJson<OptimizationPayload>('/api/v2/optimization')
+    const res = await v2Get<OptimizationPayload>('/api/v2/optimization', LOAD_ERROR)
     setLoaded(true)
-    if (!ok) {
-      showError(data?.error || '영상 점검 목록을 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.')
+    if (!res.ok) {
+      setLoadError(res.error)
       return
     }
-    setPayload(data)
+    setLoadError('')
+    setPayload(res.data)
   }
 
   useEffect(() => {
@@ -76,13 +97,21 @@ export default function OptimizationPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // 별점 입력이 열리면 현재 별점 버튼으로 바로 포커스를 옮긴다.
+  useEffect(() => {
+    if (!openId) return
+    formRef.current?.querySelector<HTMLButtonElement>('.v2-star[data-active="true"]')?.focus()
+  }, [openId])
+
   const owners = useMemo(() => {
     const set = new Set<string>()
     for (const row of payload.items) if (row.video.owner_name) set.add(row.video.owner_name)
     return [...set].sort((a, b) => a.localeCompare(b, 'ko'))
   }, [payload.items])
 
-  const scoped = useMemo(() => (owner ? payload.items.filter((row) => row.video.owner_name === owner) : payload.items), [payload.items, owner])
+  // 저장해 둔 담당자가 지금 목록에 없으면 전체로 본다.
+  const ownerNow = owners.includes(owner) ? owner : ''
+  const scoped = useMemo(() => (ownerNow ? payload.items.filter((row) => row.video.owner_name === ownerNow) : payload.items), [payload.items, ownerNow])
   const todo = useMemo(() => scoped.filter((row) => row.improvementScore > 0), [scoped])
   const urgent = scoped.filter((row) => row.improvementScore >= 3).length
   const noStock = scoped.filter((row) => !row.titleHasStock).length
@@ -91,33 +120,80 @@ export default function OptimizationPage() {
   const shown = list.slice(0, visible)
   const top = todo[0]
 
+  const patchRow = (videoId: string, fn: (row: OptimizationRow) => OptimizationRow) => {
+    setPayload((prev) => ({ ...prev, items: prev.items.map((row) => (row.video.id === videoId ? fn(row) : row)) }))
+  }
+
   const openReview = (row: OptimizationRow) => {
     setOpenId(row.video.id)
     setDraftRating(row.latestReview?.rating || 3)
     setDraftNote('')
+    setFormError('')
+  }
+
+  const closeReview = () => {
+    setOpenId(null)
+    setFormError('')
   }
 
   const submitReview = async (row: OptimizationRow) => {
+    if (saving) return
+    if (payload.sample) {
+      setFormError(V2_MISSING_TABLE_MESSAGE)
+      return
+    }
+    setSaving(true)
+    setFormError('')
+    const res = await v2Post<{ ok?: boolean; item?: ThumbnailReview }>(
+      '/api/v2/thumbnail-reviews',
+      { videoId: row.video.id, rating: draftRating, note: draftNote.trim() || null },
+      '썸네일 평가를 저장하지 못했어요. 다시 시도해 주세요.'
+    )
+    setSaving(false)
+    if (!res.ok || !res.data.item) {
+      setFormError(res.error || '썸네일 평가를 저장하지 못했어요. 다시 시도해 주세요.')
+      return
+    }
+    const item = res.data.item
+    // 목록을 다시 불러오지 않고 그 자리에서 바로 바꾼다 (화면이 움직이지 않도록).
+    patchRow(row.video.id, (r) => ({ ...r, latestReview: item, improvementScore: improvementScoreOf({ ...r, latestReview: item }) }))
+    closeReview()
+  }
+
+  const deleteReview = async (row: OptimizationRow) => {
+    const review = row.latestReview
+    if (!review) return
+    setDeletingId(review.id)
+    const res = await v2Delete(`/api/v2/thumbnail-reviews?id=${encodeURIComponent(review.id)}`, '평가를 지우지 못했어요. 다시 시도해 주세요.')
+    setDeletingId(null)
+    if (!res.ok) {
+      showError(res.error)
+      return
+    }
+    // 이전에 남긴 평가가 있으면 그것이 다시 최신이 되므로 서버 값으로 맞춘다.
+    await load()
+  }
+
+  // 체크리스트 칸: 누르면 바로 바뀌고, 저장에 실패하면 원래대로 되돌린다.
+  const toggleCheck = async (row: OptimizationRow, field: SeoChecklistField) => {
+    const key = `${row.video.id}:${field}`
+    if (pendingChecks.has(key)) return
     if (payload.sample) {
       showError(V2_MISSING_TABLE_MESSAGE)
       return
     }
-    setSaving(true)
-    try {
-      const { ok, data } = await authedPostJson<{ ok?: boolean; error?: string }>('/api/v2/thumbnail-reviews', {
-        videoId: row.video.id,
-        rating: draftRating,
-        note: draftNote.trim() || null
-      })
-      if (!ok) {
-        showError(data?.error || '썸네일 평가를 저장하지 못했어요. 다시 시도해 주세요.')
-        return
-      }
-      setOpenId(null)
-      showSuccess('썸네일 평가를 저장했어요.')
-      await load()
-    } finally {
-      setSaving(false)
+    const next = !row.checklist[field]
+    patchRow(row.video.id, (r) => ({ ...r, checklist: { ...r.checklist, [field]: next } }))
+    setPendingChecks((prev) => new Set(prev).add(key))
+    const res = await v2Patch('/api/v2/seo-checklists', { videoId: row.video.id, patch: { [field]: next } }, '체크리스트를 저장하지 못했어요. 다시 시도해 주세요.')
+    setPendingChecks((prev) => {
+      const copy = new Set(prev)
+      copy.delete(key)
+      return copy
+    })
+    if (!res.ok) {
+      patchRow(row.video.id, (r) => ({ ...r, checklist: { ...r.checklist, [field]: !next } }))
+      showError(res.error)
     }
   }
 
@@ -128,13 +204,16 @@ export default function OptimizationPage() {
       <PageHeader title="영상 점검" subtitle="제목·설명·썸네일이 검색에 잘 걸리는지 확인하고, 고칠 곳이 많은 영상부터 보여줍니다." />
       <Toast toast={toast} />
       <SampleNote show={payload.sample} />
+      {loaded && loadError ? <LoadError message={loadError} onRetry={() => void load()} /> : null}
 
       {!loaded ? (
         <LoadingLine />
       ) : payload.items.length === 0 ? (
-        <EmptyGuide title={me.isAdmin ? '점검할 영상이 아직 없어요' : '아직 등록한 영상이 없어요'} href="/v2/register" action="영상 등록하러 가기">
-          유튜브 주소와 종목을 등록하면 이 화면에서 제목·설명·썸네일을 자동으로 점검해 드려요.
-        </EmptyGuide>
+        loadError ? null : (
+          <EmptyGuide title={me.isAdmin ? '점검할 영상이 아직 없어요' : '아직 등록한 영상이 없어요'} href="/v2/register" action="영상 등록하러 가기">
+            유튜브 주소와 종목을 등록하면 이 화면에서 제목·설명·썸네일을 자동으로 점검해 드려요.
+          </EmptyGuide>
+        )
       ) : (
         <>
           <Answer tone={todo.length === 0 ? 'good' : urgent > 0 ? 'bad' : 'neutral'}>
@@ -156,11 +235,11 @@ export default function OptimizationPage() {
 
           <div className="panel">
             <div className="v2a-toolbar">
-              <div className="v2-seg">
-                <button className={view === 'todo' ? 'active' : ''} onClick={() => { setView('todo'); setVisible(PAGE_STEP) }}>
+              <div className="v2-seg" role="tablist" aria-label="보기">
+                <button role="tab" aria-selected={view === 'todo'} className={view === 'todo' ? 'active' : ''} onClick={() => { setView('todo'); setVisible(PAGE_STEP) }}>
                   고칠 영상 {todo.length}
                 </button>
-                <button className={view === 'all' ? 'active' : ''} onClick={() => { setView('all'); setVisible(PAGE_STEP) }}>
+                <button role="tab" aria-selected={view === 'all'} className={view === 'all' ? 'active' : ''} onClick={() => { setView('all'); setVisible(PAGE_STEP) }}>
                   전체 {scoped.length}
                 </button>
               </div>
@@ -169,7 +248,7 @@ export default function OptimizationPage() {
                   <label className="small muted" htmlFor="opt-owner">
                     담당자
                   </label>
-                  <select id="opt-owner" className="select compact" value={owner} onChange={(e) => { setOwner(e.target.value); setVisible(PAGE_STEP) }}>
+                  <select id="opt-owner" className="select compact" value={ownerNow} onChange={(e) => { setOwner(e.target.value); setVisible(PAGE_STEP) }}>
                     <option value="">전체</option>
                     {owners.map((name) => (
                       <option key={name} value={name}>
@@ -181,6 +260,8 @@ export default function OptimizationPage() {
               ) : null}
             </div>
 
+            {payload.capped ? <p className="v2a-note">가장 최근에 등록한 영상 위주로 보여드려요. 더 오래된 영상은 이 목록에 나오지 않을 수 있어요.</p> : null}
+
             {list.length === 0 ? (
               <EmptyGuide title="이 조건에 맞는 영상이 없어요">위의 탭에서 ‘전체’를 눌러 모든 영상을 볼 수 있어요.</EmptyGuide>
             ) : (
@@ -189,6 +270,8 @@ export default function OptimizationPage() {
                   const done = checklistDoneCount(row.checklist)
                   const problems = problemsOf(row)
                   const isOpen = openId === row.video.id
+                  const review = row.latestReview
+                  const canDeleteReview = Boolean(review && (me.isAdmin || review.reviewed_by === me.crmUserId))
                   return (
                     <div className="list-item" key={row.video.id}>
                       <div className="row-between" style={{ alignItems: 'flex-start', gap: 12 }}>
@@ -226,24 +309,47 @@ export default function OptimizationPage() {
                           <span className="small muted" title="썸네일만 보고 클릭하고 싶은지 별점으로 남기는 자가 평가예요.">
                             썸네일 평가
                           </span>
-                          {row.latestReview ? (
+                          {review ? (
                             <>
-                              <StarPicker value={row.latestReview.rating} disabled />
-                              {row.latestReview.note ? <span className="small muted">“{row.latestReview.note}”</span> : null}
+                              <StarPicker value={review.rating} disabled />
+                              {review.note ? <span className="small muted">“{review.note}”</span> : null}
                             </>
                           ) : (
                             <span className="small muted">아직 없어요</span>
                           )}
                         </div>
-                        <button className="button secondary xs" onClick={() => (isOpen ? setOpenId(null) : openReview(row))}>
-                          {isOpen ? '닫기' : row.latestReview ? '다시 평가하기' : '썸네일 평가하기'}
-                        </button>
+                        <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+                          {canDeleteReview && !isOpen ? (
+                            <InlineConfirm label="평가 지우기" prompt="이 평가를 지울까요?" confirmLabel="지우기" busyLabel="지우는 중…" busy={deletingId === review?.id} onConfirm={() => void deleteReview(row)} />
+                          ) : null}
+                          <button className="button secondary xs" onClick={() => (isOpen ? closeReview() : openReview(row))}>
+                            {isOpen ? '닫기' : review ? '다시 평가하기' : '썸네일 평가하기'}
+                          </button>
+                        </div>
                       </div>
 
                       {isOpen ? (
-                        <div className="v2-card-form" style={{ marginTop: 10 }}>
+                        <form
+                          ref={formRef}
+                          className="v2-card-form"
+                          style={{ marginTop: 10 }}
+                          noValidate
+                          onSubmit={(e) => {
+                            e.preventDefault()
+                            void submitReview(row)
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Escape') {
+                              e.preventDefault()
+                              closeReview()
+                              return
+                            }
+                            // 숫자 1~5 를 누르면 별점 선택 (입력칸에서 글을 쓰는 중에는 제외)
+                            if (/^[1-5]$/.test(e.key) && (e.target as HTMLElement).tagName !== 'INPUT') setDraftRating(Number(e.key))
+                          }}
+                        >
                           <div className="field" style={{ gap: 6 }}>
-                            <label className="label">이 썸네일, 눈에 띄나요?</label>
+                            <span className="label">이 썸네일, 눈에 띄나요?</span>
                             <div className="row" style={{ gap: 10 }}>
                               <StarPicker value={draftRating} onPick={setDraftRating} />
                               <span className="small muted">
@@ -264,28 +370,31 @@ export default function OptimizationPage() {
                                 placeholder="예: 글자가 작아서 잘 안 보여요"
                                 value={draftNote}
                                 onChange={(e) => setDraftNote(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter' && !saving) void submitReview(row)
-                                }}
                               />
-                              <button className="button success xs" disabled={saving} onClick={() => void submitReview(row)}>
+                              <button className="button success xs" type="submit" disabled={saving}>
                                 {saving ? '저장 중…' : '저장'}
                               </button>
+                              <button className="button secondary xs" type="button" disabled={saving} onClick={closeReview}>
+                                취소
+                              </button>
                             </div>
+                            <FieldError>{formError}</FieldError>
                           </div>
-                        </div>
+                        </form>
                       ) : null}
 
                       <details className="v2a-howto" style={{ marginTop: 8 }}>
                         <summary>SEO 체크리스트 {done}/4</summary>
                         <div className="v2a-howto-body">
-                          <div className="v2-card-meta">
-                            {Object.entries(SEO_CHECKLIST_LABELS).map(([field, label]) => {
-                              const checked = Boolean(row.checklist[field as keyof typeof row.checklist])
+                          <div className="v2a-checks">
+                            {SEO_CHECKLIST_FIELDS.map((field) => {
+                              const checked = Boolean(row.checklist[field])
+                              const pending = pendingChecks.has(`${row.video.id}:${field}`)
                               return (
-                                <span key={field} style={{ color: checked ? '#4ade80' : undefined }}>
-                                  {checked ? '✓' : '○'} {label}
-                                </span>
+                                <label key={field} className={`v2a-check ${checked ? 'on' : ''} ${pending ? 'pending' : ''}`}>
+                                  <input type="checkbox" checked={checked} disabled={pending} onChange={() => void toggleCheck(row, field)} />
+                                  {SEO_CHECKLIST_LABELS[field]}
+                                </label>
                               )
                             })}
                           </div>
@@ -302,7 +411,7 @@ export default function OptimizationPage() {
             <HowTo title="‘고칠 곳’은 어떻게 세나요? (계산 방법 보기)">
               <p>아래 4가지를 하나씩 확인해서, 해당하는 것만큼 ‘고칠 곳’이 늘어나요. 많을수록 위에 보여요.</p>
               <p>1) 제목이 60자를 넘거나 비어 있음 · 2) 제목에 종목명이 없음 · 3) 설명란이 비어 있음 · 4) 썸네일 평가가 없거나 3점 미만</p>
-              <p>SEO 체크리스트(4칸)는 영상 등록 화면에서 채우며, 여기서는 진행 상황만 보여줘요.</p>
+              <p>SEO 체크리스트(4칸)는 영상 등록 화면에서도 채울 수 있고, 여기서 칸을 눌러 바로 체크하거나 풀 수도 있어요. 점수 계산에는 반영되지 않고 성과 요약의 반응 점수에 쓰여요.</p>
             </HowTo>
           </div>
         </>

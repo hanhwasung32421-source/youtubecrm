@@ -74,6 +74,7 @@ export function FormField({
   hint,
   error,
   optional,
+  required,
   htmlFor,
   children
 }: {
@@ -81,6 +82,7 @@ export function FormField({
   hint?: string
   error?: string
   optional?: boolean
+  required?: boolean
   htmlFor?: string
   children: ReactNode
 }) {
@@ -88,6 +90,11 @@ export function FormField({
     <div className={`field v5p-field ${error ? 'has-error' : ''}`}>
       <label className="label" htmlFor={htmlFor}>
         {label}
+        {required ? (
+          <span className="v5p-req" aria-hidden>
+            {" *"}
+          </span>
+        ) : null}
         {optional ? <span className="v5p-optional"> (선택)</span> : null}
       </label>
       {hint ? <div className="v5p-hint">{hint}</div> : null}

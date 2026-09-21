@@ -5,7 +5,8 @@ import type { CSSProperties } from 'react'
 import { PageHeader } from '@/components/v4/app-shell'
 import { PeriodToggle } from '@/components/v4/ui'
 import { Toast, useToast } from '@/components/toast'
-import { authedFetchJson } from '@/lib/session/authed-fetch'
+import { v4Fetch } from '@/lib/v4/client'
+import { isPeriodValue, useStoredState } from '@/lib/v4/use-stored-state'
 import type { Kpis, PeriodDays, StaffStat } from '@/lib/v4/analytics'
 import { Badge, BarRow, Card, EmptyPanel, ErrorPanel, Formula, Hero, Kpi, KpiRow, MiniBars, Seg, SkelRows } from '@/lib/v4/analysis-ui'
 import { fmtNumber, fmtPercent, fmtShort, shortYmd } from '@/lib/v4/format'
@@ -29,40 +30,40 @@ const unit = (metric: Metric, value: number) => (metric === 'videoCount' ? `${fm
 
 export default function StaffComparisonPage() {
   const { toast, showError } = useToast()
-  const [period, setPeriod] = useState<PeriodDays>(30)
+  const [period, setPeriod, ready] = useStoredState<PeriodDays>('v4:staff:period', 30, isPeriodValue)
   const [data, setData] = useState<StaffResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [forbidden, setForbidden] = useState(false)
   const [reloadKey, setReloadKey] = useState(0)
-  const [metric, setMetric] = useState<Metric>('totalViews')
+  const [metric, setMetric] = useStoredState<Metric>('v4:staff:metric', 'totalViews', (v): v is Metric => v === 'totalViews' || v === 'videoCount' || v === 'avgViews')
 
   useEffect(() => {
+    if (!ready) return
     let cancelled = false
     const run = async () => {
       setLoading(true)
       setError('')
-      const { ok, status, data: res } = await authedFetchJson<StaffResponse>(`/api/v4/staff?period=${period}`)
+      const result = await v4Fetch<StaffResponse>(`/api/v4/staff?period=${period}`, {}, '담당자별 성과를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.')
       if (cancelled) return
       setLoading(false)
-      if (!ok || res?.error) {
-        if (status === 403) {
+      if (!result.ok) {
+        if (result.status === 403) {
           setForbidden(true)
           return
         }
-        const message = res?.error || '담당자별 성과를 불러오지 못했습니다.'
-        setError(message)
-        showError(message)
+        setError(result.message)
+        showError(result.message)
         return
       }
-      setData(res)
+      setData(result.data)
     }
     void run()
     return () => {
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [period, reloadKey])
+  }, [period, reloadKey, ready])
 
   const rows = useMemo(() => data?.rows ?? [], [data])
   const active = useMemo(() => rows.filter((r) => r.videoCount > 0), [rows])

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { computeKpis, computeStaffStats, getPeriodRange, parsePeriod } from '@/lib/v4/analytics'
+import { STAFF_COLUMNS, computeKpis, computeStaffStats, getPeriodRange, parsePeriod } from '@/lib/v4/analytics'
 import { loadUsers, loadVideos, requireV4Admin, v4ErrorResponse } from '@/lib/v4/server'
 
 export async function GET(request: Request) {
@@ -9,7 +9,7 @@ export async function GET(request: Request) {
     const range = getPeriodRange(parsePeriod(url.searchParams.get('period')))
 
     const [videos, { staff, map: userMap }] = await Promise.all([
-      loadVideos(supabaseAdmin, { startIso: range.startIso, endIso: range.endIso }),
+      loadVideos(supabaseAdmin, { startIso: range.startIso, endIso: range.endIso, columns: STAFF_COLUMNS }),
       loadUsers(supabaseAdmin)
     ])
 

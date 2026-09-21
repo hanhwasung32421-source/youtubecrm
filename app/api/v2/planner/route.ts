@@ -1,19 +1,25 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
-import { errorResponse } from '@/lib/api/error-response'
 import { TABLES } from '@/lib/supabase/tables'
 import { V2_TABLES } from '@/lib/v2/tables'
 import { addDays, kstDayStart, kstDayEnd, kstYmd, weekStartMonday } from '@/lib/v2/dates'
-import { computeTimingHint, handleDbError, handleRouteError, isMissingTableError, loadStaff, requireV2Admin } from '@/lib/v2/server'
+import { computeTimingHint, handleDbError, handleRouteError, isMissingTableError, isUuid, loadStaff, requireV2Admin, selectAllPages } from '@/lib/v2/server'
 import { samplePlannerPayload } from '@/lib/v2/sample-data'
 import type { PlannedSlot, PlannerPayload } from '@/lib/v2/types'
+
+const READ_ERROR = '업로드 계획을 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.'
+const SAVE_ERROR = '계획을 저장하지 못했어요. 잠시 뒤 다시 시도해 주세요.'
+const DELETE_ERROR = '계획을 지우지 못했어요. 잠시 뒤 다시 시도해 주세요.'
+const DUP_ERROR = '이 담당자는 그 시간에 이미 계획이 있어요. 다른 시간을 골라 주세요.'
+const SLOT_SELECT = 'id, staff_user_id, planned_date, planned_hour, note, created_at'
 
 // 발행 모멘텀 플래너: 요일 × 담당자 업로드 계획(planned_slots) vs 실제 등록 수, 최적 발행 시간 힌트
 export async function GET(request: Request) {
   try {
     const { supabaseAdmin } = await requireV2Admin(request)
     const url = new URL(request.url)
-    const weekStart = weekStartMonday(url.searchParams.get('weekStart') || kstYmd())
+    const requested = url.searchParams.get('weekStart') || ''
+    const weekStart = weekStartMonday(isRealYmd(requested) ? requested : kstYmd())
     const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
     const weekEnd = days[days.length - 1]
 
@@ -22,13 +28,14 @@ export async function GET(request: Request) {
 
     const { data: slotRows, error: slotError } = await supabaseAdmin
       .from(V2_TABLES.plannedSlots)
-      .select('id, staff_user_id, planned_date, planned_hour, note, created_at')
+      .select(SLOT_SELECT)
       .in('staff_user_id', staffIds.length > 0 ? staffIds : ['00000000-0000-0000-0000-000000000000'])
       .gte('planned_date', weekStart)
       .lte('planned_date', weekEnd)
+      .order('planned_hour', { ascending: true })
     if (slotError) {
       if (isMissingTableError(slotError)) return NextResponse.json(samplePlannerPayload(weekStart))
-      return errorResponse(slotError, '플래너 조회 실패')
+      return handleDbError(slotError, READ_ERROR)
     }
 
     const planned: PlannerPayload['planned'] = {}
@@ -48,13 +55,20 @@ export async function GET(request: Request) {
     }
 
     if (staffIds.length > 0) {
-      const { data: videoRows } = await supabaseAdmin
-        .from(TABLES.videos)
-        .select('primary_owner_user_id, created_at')
-        .in('primary_owner_user_id', staffIds)
-        .gte('created_at', kstDayStart(weekStart).toISOString())
-        .lt('created_at', kstDayEnd(weekEnd).toISOString())
-      for (const row of (videoRows || []) as { primary_owner_user_id: string; created_at: string }[]) {
+      // 한 주에 등록되는 영상이 1000개를 넘을 수 있어 나눠서 모두 읽는다.
+      const videoRows = await selectAllPages<{ primary_owner_user_id: string; created_at: string }>(
+        (from, to) =>
+          supabaseAdmin
+            .from(TABLES.videos)
+            .select('primary_owner_user_id, created_at')
+            .in('primary_owner_user_id', staffIds)
+            .gte('created_at', kstDayStart(weekStart).toISOString())
+            .lt('created_at', kstDayEnd(weekEnd).toISOString())
+            .order('created_at', { ascending: true })
+            .range(from, to),
+        6000
+      )
+      for (const row of videoRows as { primary_owner_user_id: string; created_at: string }[]) {
         const day = kstYmd(new Date(row.created_at))
         if (actual[row.primary_owner_user_id] && day in actual[row.primary_owner_user_id]) {
           actual[row.primary_owner_user_id][day] += 1
@@ -68,15 +82,29 @@ export async function GET(request: Request) {
     const payload: PlannerPayload = { weekStart, days, staff, planned, actual, timingHint }
     return NextResponse.json(payload)
   } catch (e) {
-    return handleRouteError(e, '플래너 조회 실패')
+    return handleRouteError(e, READ_ERROR)
   }
 }
 
+
+// '2026-02-30' 같은 존재하지 않는 날짜를 걸러낸다.
+function isRealYmd(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const d = new Date(`${value}T00:00:00Z`)
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === value
+}
+
 const createSchema = z.object({
-  staffUserId: z.string().uuid(),
-  plannedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, '날짜 형식이 올바르지 않습니다.'),
-  plannedHour: z.number().int().min(0).max(23),
-  note: z.string().trim().max(200).optional().nullable()
+  staffUserId: z.string().uuid('담당자를 골라 주세요.'),
+  plannedDate: z.string().refine(isRealYmd, '날짜가 올바르지 않아요.'),
+  plannedHour: z.number('시간을 골라 주세요.').int('시간을 골라 주세요.').min(0, '시간은 0~23시 중에서 골라 주세요.').max(23, '시간은 0~23시 중에서 골라 주세요.'),
+  note: z.string().trim().max(200, '메모는 200자까지 적을 수 있어요.').optional().nullable()
+})
+
+const patchSchema = z.object({
+  id: z.string().uuid('계획 정보가 올바르지 않아요. 화면을 새로고침해 주세요.'),
+  plannedHour: z.number('시간을 골라 주세요.').int('시간을 골라 주세요.').min(0, '시간은 0~23시 중에서 골라 주세요.').max(23, '시간은 0~23시 중에서 골라 주세요.').optional(),
+  note: z.string().trim().max(200, '메모는 200자까지 적을 수 있어요.').optional().nullable()
 })
 
 export async function POST(request: Request) {
@@ -87,17 +115,32 @@ export async function POST(request: Request) {
     const { data, error } = await supabaseAdmin
       .from(V2_TABLES.plannedSlots)
       .insert({ staff_user_id: body.staffUserId, planned_date: body.plannedDate, planned_hour: body.plannedHour, note: body.note || null })
-      .select('id, staff_user_id, planned_date, planned_hour, note, created_at')
+      .select(SLOT_SELECT)
       .single()
-    if (error) {
-      if ((error as { code?: string }).code === '23505') {
-        return NextResponse.json({ error: '해당 담당자·시간에 이미 계획된 슬롯이 있습니다.' }, { status: 409 })
-      }
-      return handleDbError(error, '슬롯 등록 실패')
-    }
+    if (error || !data) return handleDbError(error, SAVE_ERROR, DUP_ERROR)
     return NextResponse.json({ ok: true, item: data })
   } catch (e) {
-    return handleRouteError(e, '슬롯 등록 실패')
+    return handleRouteError(e, SAVE_ERROR)
+  }
+}
+
+// 시간·메모 수정 (담당자와 날짜를 바꾸려면 지우고 새로 추가한다)
+export async function PATCH(request: Request) {
+  try {
+    const body = patchSchema.parse(await request.json())
+    const { supabaseAdmin } = await requireV2Admin(request)
+
+    const patch: Record<string, unknown> = {}
+    if (body.plannedHour !== undefined) patch.planned_hour = body.plannedHour
+    if (body.note !== undefined) patch.note = body.note || null
+    if (Object.keys(patch).length === 0) return NextResponse.json({ error: '바꿀 내용이 없어요.' }, { status: 400 })
+
+    const { data, error } = await supabaseAdmin.from(V2_TABLES.plannedSlots).update(patch).eq('id', body.id).select(SLOT_SELECT).maybeSingle()
+    if (error) return handleDbError(error, SAVE_ERROR, DUP_ERROR)
+    if (!data) return NextResponse.json({ error: '이미 지워진 계획이에요. 목록을 새로고침합니다.' }, { status: 404 })
+    return NextResponse.json({ ok: true, item: data })
+  } catch (e) {
+    return handleRouteError(e, SAVE_ERROR)
   }
 }
 
@@ -105,13 +148,13 @@ export async function DELETE(request: Request) {
   try {
     const { supabaseAdmin } = await requireV2Admin(request)
     const id = new URL(request.url).searchParams.get('id') || ''
-    if (!z.string().uuid().safeParse(id).success) {
-      return NextResponse.json({ error: '삭제할 슬롯 ID가 올바르지 않습니다.' }, { status: 400 })
+    if (!isUuid(id)) {
+      return NextResponse.json({ error: '지울 계획을 찾지 못했어요. 화면을 새로고침해 주세요.' }, { status: 400 })
     }
     const { error } = await supabaseAdmin.from(V2_TABLES.plannedSlots).delete().eq('id', id)
-    if (error) return handleDbError(error, '슬롯 삭제 실패')
+    if (error) return handleDbError(error, DELETE_ERROR)
     return NextResponse.json({ ok: true })
   } catch (e) {
-    return handleRouteError(e, '슬롯 삭제 실패')
+    return handleRouteError(e, DELETE_ERROR)
   }
 }

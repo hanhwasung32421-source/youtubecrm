@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
-import { aggregateStocks, getPeriodRange, parsePeriod } from '@/lib/v4/analytics'
-import { loadVideos, requireV4User, v4ErrorResponse } from '@/lib/v4/server'
+import { STOCK_COLUMNS, aggregateStocks, getPeriodRange, parsePeriod } from '@/lib/v4/analytics'
+import { loadVideos, requireV4User, splitByIso, v4ErrorResponse } from '@/lib/v4/server'
 
 export async function GET(request: Request) {
   try {
@@ -10,13 +10,12 @@ export async function GET(request: Request) {
     const recent30 = getPeriodRange(30)
     const ownerId = isAdmin ? null : profile.id
 
-    // 현재 기간 + 직전 기간을 한 번에 가져와 JS에서 나눈다 (전기 대비 추세 계산용).
-    const [windowVideos, recentVideos] = await Promise.all([
-      loadVideos(supabaseAdmin, { startIso: range.prevStartIso, endIso: range.endIso, ownerId }),
-      loadVideos(supabaseAdmin, { startIso: recent30.startIso, endIso: recent30.endIso, ownerId })
-    ])
-    const current = windowVideos.filter((v) => v.created_at >= range.startIso)
-    const previous = windowVideos.filter((v) => v.created_at < range.startIso)
+    // 현재 기간 + 직전 기간(전기 대비 추세) + 최근 30일(Top5)을 한 번에 읽고(1000행씩 끝까지) JS에서 나눈다.
+    const windowStartIso = new Date(range.prevStartIso) < new Date(recent30.startIso) ? range.prevStartIso : recent30.startIso
+    const windowVideos = await loadVideos(supabaseAdmin, { startIso: windowStartIso, endIso: range.endIso, ownerId, columns: STOCK_COLUMNS })
+    const { current, before } = splitByIso(windowVideos, range.startIso)
+    const previous = before.filter((v) => new Date(v.created_at).getTime() >= new Date(range.prevStartIso).getTime())
+    const recentVideos = splitByIso(windowVideos, recent30.startIso).current
 
     const items = aggregateStocks(current, previous)
     const top5Recent = aggregateStocks(recentVideos, [])

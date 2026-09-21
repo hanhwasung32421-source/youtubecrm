@@ -884,3 +884,256 @@
     width: 100%;
   }
 }
+
+/* ==========================================================================
+   2차 개선: 공통 상호작용(필수 표시, 새로고침 중 표시, 두 번 눌러 삭제, 폼 서랍)
+   ========================================================================== */
+.v5-theme .v5p-req {
+  color: var(--danger, #dc2626);
+  font-weight: 800;
+}
+
+/* 다시 불러오는 동안에도 내용을 그대로 두고 살짝만 흐리게(레이아웃이 출렁이지 않게) */
+.v5-theme .v5p-refreshing {
+  opacity: 0.65;
+  transition: opacity 0.15s ease;
+}
+
+.v5-theme .v5p-toolbar-right,
+.v5-theme .v5p-filter-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.v5-theme .v5p-filters {
+  min-height: 42px; /* 담당자 선택칸이 나타나거나 사라져도 높이가 같게 */
+}
+
+.v5-theme .v5p-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.v5-theme .v5p-drawer-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.v5-theme .v5p-discard-text {
+  margin-right: auto;
+  align-self: center;
+}
+
+.v5-theme .v5p-inline-action {
+  display: inline-block;
+  margin-left: 8px;
+}
+
+.v5-theme .v5p-prewrap {
+  white-space: pre-wrap;
+}
+
+.v5-theme .v5p-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* ---------- 영상 고르기 ---------- */
+.v5-theme .v5p-vpick {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.v5-theme .v5p-vpick-selected {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 96px;
+  overflow-y: auto;
+}
+
+.v5-theme .v5p-vchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 4px 4px 4px 10px;
+  border-radius: 999px;
+  background: var(--primary-soft, #eef0ff);
+  color: var(--primary, #4f46e5);
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.v5-theme .v5p-vchip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+}
+
+.v5-theme .v5p-vchip-x {
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+}
+
+.v5-theme .v5p-vchip-x:hover {
+  background: rgba(79, 70, 229, 0.16);
+}
+
+.v5-theme .v5p-picker.busy {
+  opacity: 0.6;
+}
+
+.v5-theme .v5p-picker {
+  min-height: 72px;
+}
+
+.v5-theme .v5p-pick-sub {
+  color: var(--muted, #6b7280);
+  font-size: 12px;
+}
+
+.v5-theme .v5p-tag-suggest {
+  margin-top: 6px;
+}
+
+.v5-theme .v5p-chip.sm {
+  padding: 4px 10px;
+  font-size: 12.5px;
+}
+
+/* ---------- 성장 실험: D+N, 결과 기록 ---------- */
+.v5-theme .v5p-card-flags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.v5-theme .v5p-dday {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--bg-soft, #eef0f7);
+  color: var(--muted, #6b7280);
+  font-size: 11.5px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.v5-theme .v5p-dday.inline,
+.v5-theme .v5p-due.inline {
+  margin-left: 6px;
+}
+
+.v5-theme .v5p-due {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.16);
+  color: #b45309;
+  font-size: 11.5px;
+  font-weight: 800;
+}
+
+.v5-theme .v5p-card.due {
+  border-left-color: var(--warning, #f59e0b);
+}
+
+.v5-theme .v5p-quick {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 0 12px 10px;
+}
+
+.v5-theme .v5p-quick.due .small {
+  color: #b45309;
+  font-weight: 700;
+}
+
+.v5-theme .v5p-record {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--bg-soft, #eef0f7);
+}
+
+.v5-theme .v5p-record-title {
+  font-size: 13.5px;
+  font-weight: 800;
+}
+
+.v5-theme .v5p-list-note {
+  padding: 10px 14px;
+  border-top: 1px solid var(--line, #e7e9f2);
+}
+
+/* ---------- 점수판 ---------- */
+.v5-theme .v5p-score-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.v5-theme .v5p-score-link:hover {
+  text-decoration: underline;
+  color: var(--primary, #4f46e5);
+}
+
+.v5-theme .v5p-sync-note {
+  margin-top: 12px;
+  line-height: 1.6;
+}
+
+.v5-theme .v5p-foot-note {
+  margin-top: 10px;
+}
+
+/* ---------- 성공 공식 / 회고 관리 줄 ---------- */
+.v5-theme .v5p-pb-manage,
+.v5-theme .v5p-retro-manage {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.v5-theme .v5p-pb-manage {
+  margin-top: -2px;
+}
+
+.v5-theme .v5p-week-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--primary-soft, #eef0ff);
+  color: var(--primary, #4f46e5);
+  font-size: 11.5px;
+  font-weight: 800;
+  vertical-align: middle;
+}
+
+@media (max-width: 720px) {
+  .v5-theme .v5p-filters {
+    align-items: flex-start;
+  }
+}

@@ -3,18 +3,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { PageHeader } from '@/components/v2/app-shell'
 import { SampleBanner } from '@/components/v2/sample-banner'
-import { ContentTypeTag } from '@/components/v2/tags'
+import { BulkRegister } from '@/components/v2/bulk-register'
+import { MyVideoRow, type RowMode } from '@/components/v2/my-video-row'
+import { friendlyRegisterError, normalizeYoutubeUrl, youtubeVideoId } from '@/components/v2/register-utils'
 import { useV2Me } from '@/components/v2/session-context'
 import { Toast, useToast } from '@/components/toast'
 import { authedFetchJson, authedPostJson } from '@/lib/session/authed-fetch'
 import { authedPatchJson } from '@/lib/v2/client'
-import { formatKstDateTime, kstYmd } from '@/lib/v2/dates'
+import { kstYmd } from '@/lib/v2/dates'
 import {
   CONTENT_TYPES,
   CONTENT_TYPE_LABELS,
-  SEO_CHECKLIST_FIELDS,
-  SEO_CHECKLIST_LABELS,
-  checklistDoneCount,
   emptyChecklist,
   titleKeywordSuggestions,
   type ContentType,
@@ -27,7 +26,8 @@ import {
 const TYPE_KEY = 'v2.register.contentType'
 const STOCKS_KEY = 'v2.register.recentStocks'
 const MAX_RECENT_STOCKS = 8
-const LIST_PREVIEW = 10
+const EARLIER_PREVIEW = 5
+const HIGHLIGHT_MS = 6000
 
 // ---- 브라우저 저장소(없거나 막혀 있어도 화면은 정상 동작) ----
 function readStoredType(): ContentType {
@@ -56,30 +56,6 @@ function writeStored(key: string, value: string) {
   }
 }
 
-// ---- 붙여넣은 주소 정리 ----
-// 앞뒤 공백·줄바꿈 제거, "제목 + 주소"처럼 섞여 있으면 주소 부분만, https:// 가 없으면 붙여 준다.
-function normalizeYoutubeUrl(raw: string): string {
-  const tokens = raw.split(/\s+/).filter(Boolean)
-  if (tokens.length === 0) return ''
-  const token = tokens.find((t) => /youtu\.?be/i.test(t)) || tokens[0]
-  return /^https?:\/\//i.test(token) ? token : `https://${token.replace(/^\/+/, '')}`
-}
-
-function youtubeVideoId(url: string): string | null {
-  try {
-    const u = new URL(url)
-    const host = u.hostname.replace(/^(www|m|music)\./, '')
-    if (host === 'youtu.be') return u.pathname.split('/')[1] || null
-    if (host !== 'youtube.com' && host !== 'youtube-nocookie.com') return null
-    const v = u.searchParams.get('v')
-    if (v) return v
-    const m = u.pathname.match(/^\/(?:shorts|embed|live|v)\/([\w-]{6,})/)
-    return m ? m[1] : null
-  } catch {
-    return null
-  }
-}
-
 type Notice = { field: 'url' | 'stock' | 'server'; text: string } | null
 type Confirmed = { stock: string; type: ContentType; count: number } | null
 
@@ -105,13 +81,27 @@ export default function RegisterPage() {
   const [openId, setOpenId] = useState<string | null>(null)
   const [showAll, setShowAll] = useState(false)
   const [sessionCount, setSessionCount] = useState(0)
+  const [bulkMode, setBulkMode] = useState(false)
+  const [activeRow, setActiveRow] = useState<{ id: string; mode: Exclude<RowMode, null> } | null>(null)
+  const [highlightIds, setHighlightIds] = useState<Set<string>>(new Set())
+  const highlightTimers = useRef<number[]>([])
 
   const urlRef = useRef<HTMLInputElement | null>(null)
   const stockRef = useRef<HTMLInputElement | null>(null)
   const submitRef = useRef<HTMLButtonElement | null>(null)
 
   const today = kstYmd()
-  const todayCount = useMemo(() => videos.filter((v) => kstYmd(new Date(v.created_at)) === today).length, [videos, today])
+  const todayVideos = useMemo(() => videos.filter((v) => kstYmd(new Date(v.created_at)) === today), [videos, today])
+  const earlierVideos = useMemo(() => videos.filter((v) => kstYmd(new Date(v.created_at)) !== today), [videos, today])
+  const todayCount = todayVideos.length
+  const registeredIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const v of videos) {
+      const id = v.youtube_url ? youtubeVideoId(v.youtube_url) : null
+      if (id) ids.add(id)
+    }
+    return ids
+  }, [videos])
   const suggestions = useMemo(() => titleKeywordSuggestions(stock), [stock])
 
   // 이미 등록된 영상인지 미리 알려 준다(같은 영상을 다시 등록하면 종목·형식이 덮어써진다).
@@ -162,8 +152,44 @@ export default function RegisterPage() {
   useEffect(() => {
     urlRef.current?.focus()
     void load()
+    const timers = highlightTimers.current
+    return () => {
+      for (const t of timers) window.clearTimeout(t)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // 최근 종목은 바뀔 때마다 브라우저에 저장
+  useEffect(() => {
+    writeStored(STOCKS_KEY, JSON.stringify(recentStocks))
+  }, [recentStocks])
+
+  // Esc: 열려 있는 수정/삭제 확인 창 닫기
+  useEffect(() => {
+    if (!activeRow) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setActiveRow(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [activeRow])
+
+  // 방금 등록·수정한 줄을 몇 초 동안 강조
+  const flash = (ids: string[]) => {
+    setHighlightIds((prev) => new Set([...prev, ...ids]))
+    const timer = window.setTimeout(() => {
+      setHighlightIds((prev) => {
+        const next = new Set(prev)
+        for (const id of ids) next.delete(id)
+        return next
+      })
+    }, HIGHLIGHT_MS)
+    highlightTimers.current.push(timer)
+  }
+
+  const rememberStock = (name: string) => {
+    setRecentStocks((prev) => [name, ...prev.filter((s) => s !== name)].slice(0, MAX_RECENT_STOCKS))
+  }
 
   const onUrlChange = (value: string) => {
     setUrl(value)
@@ -210,27 +236,26 @@ export default function RegisterPage() {
     setNotice(null)
     setSaving(true)
     try {
-      const { ok, data } = await authedPostJson<{ ok?: boolean; video?: { id: string }; error?: string }>('/api/videos/create', {
-        youtubeUrl: cleanUrl,
+      const { ok, status, data } = await authedPostJson<{ ok?: boolean; video?: { id: string }; error?: string }>('/api/videos/create', {
+        youtubeUrl: youtubeVideoId(cleanUrl) ? `https://www.youtube.com/watch?v=${youtubeVideoId(cleanUrl)}` : cleanUrl,
         contentType,
         stockName: cleanStock,
         contentCategory: note.trim() || null
       })
       if (!ok || !data.video) {
-        setNotice({ field: 'server', text: data?.error || '등록하지 못했어요. 잠시 뒤 다시 시도해 주세요.' })
+        setNotice({ field: 'server', text: friendlyRegisterError(data?.error, status) })
         return
       }
 
       // SEO 점검표 행을 기본값으로 만들어 둔다. 테이블이 없으면 조용히 넘어간다.
-      void authedPatchJson('/api/v2/seo-checklists', { videoId: data.video.id, patch: {} })
+      void authedPatchJson('/api/v2/seo-checklists', { videoId: data.video.id, patch: {} }).catch(() => undefined)
 
       const count = Math.max(todayCount, sessionCount) + 1
       setSessionCount(count)
       setConfirmed({ stock: cleanStock, type: contentType, count })
       writeStored(TYPE_KEY, contentType)
-      const nextStocks = [cleanStock, ...recentStocks.filter((s) => s !== cleanStock)].slice(0, MAX_RECENT_STOCKS)
-      setRecentStocks(nextStocks)
-      writeStored(STOCKS_KEY, JSON.stringify(nextStocks))
+      rememberStock(cleanStock)
+      flash([data.video.id])
 
       // 다음 영상을 바로 붙여 넣을 수 있게 비우고 주소 칸으로 돌아간다.
       setUrl('')
@@ -239,8 +264,8 @@ export default function RegisterPage() {
       setTypeHint('')
       urlRef.current?.focus()
       void load()
-    } catch (err) {
-      setNotice({ field: 'server', text: err instanceof Error ? err.message : '등록하지 못했어요. 잠시 뒤 다시 시도해 주세요.' })
+    } catch {
+      setNotice({ field: 'server', text: '네트워크가 불안정해요. 잠시 후 다시 시도해 주세요.' })
     } finally {
       setSaving(false)
       urlRef.current?.focus()
@@ -273,13 +298,64 @@ export default function RegisterPage() {
     }
   }
 
-  const visibleVideos = showAll ? videos : videos.slice(0, LIST_PREVIEW)
+  const visibleEarlier = showAll ? earlierVideos : earlierVideos.slice(0, EARLIER_PREVIEW)
+
+  const notify = (tone: 'success' | 'error', text: string) => (tone === 'success' ? showSuccess(text) : showError(text))
+
+  const onPatched = (id: string, patch: { stock_name: string; content_type: ContentType }) => {
+    setVideos((prev) => prev.map((v) => (v.id === id ? { ...v, ...patch } : v)))
+    rememberStock(patch.stock_name)
+    flash([id])
+  }
+
+  const onDeleted = (id: string) => {
+    const gone = videos.find((v) => v.id === id)
+    setVideos((prev) => prev.filter((v) => v.id !== id))
+    setActiveRow(null)
+    setOpenId((cur) => (cur === id ? null : cur))
+    if (gone && kstYmd(new Date(gone.created_at)) === today) setSessionCount((c) => Math.max(0, c - 1))
+  }
+
+  const renderRow = (video: MineVideoItem) => (
+    <MyVideoRow
+      key={video.id}
+      video={video}
+      checklist={checklists[video.id] || emptyChecklist(video.id)}
+      isNew={highlightIds.has(video.id)}
+      mode={activeRow?.id === video.id ? activeRow.mode : null}
+      onMode={(mode) => setActiveRow(mode ? { id: video.id, mode } : null)}
+      checklistOpen={openId === video.id}
+      onToggleChecklist={() => setOpenId(openId === video.id ? null : video.id)}
+      checklistBusy={busyId === video.id}
+      onSaveChecklist={(patch) => void saveChecklist(video, patch)}
+      onPatched={onPatched}
+      onDeleted={onDeleted}
+      onNotify={notify}
+    />
+  )
 
   return (
     <>
       <PageHeader title="영상 등록" subtitle="유튜브 주소와 종목만 넣으면 조회수·좋아요는 자동으로 가져옵니다." />
       <Toast toast={toast} />
 
+      {bulkMode ? (
+        <BulkRegister
+          defaultType={contentType}
+          stockChips={stockChips}
+          registeredIds={registeredIds}
+          onRegistered={({ videoId, stock: name }) => {
+            setSessionCount((c) => c + 1)
+            rememberStock(name)
+            flash([videoId])
+          }}
+          onFinished={() => void load()}
+          onClose={() => {
+            setBulkMode(false)
+            window.setTimeout(() => urlRef.current?.focus(), 0)
+          }}
+        />
+      ) : (
       <div className="panel v2-register">
         <form onSubmit={submit} noValidate className="v2-register-form">
           <div className="field">
@@ -328,6 +404,7 @@ export default function RegisterPage() {
                     type="button"
                     className={`v2-seg-btn ${contentType === type ? 'active' : ''}`}
                     aria-pressed={contentType === type}
+                    disabled={saving}
                     onClick={() => {
                       setContentType(type)
                       setTypeHint('')
@@ -370,7 +447,7 @@ export default function RegisterPage() {
               <span className="small muted">최근 종목</span>
               <div className="v2-chips">
                 {stockChips.map((name) => (
-                  <button key={name} type="button" className={`v2-chip v2-chip-btn ${stock.trim() === name ? 'on' : ''}`} onClick={() => pickStock(name)}>
+                  <button key={name} type="button" className={`v2-chip v2-chip-btn ${stock.trim() === name ? 'on' : ''}`} disabled={saving} onClick={() => pickStock(name)}>
                     {name}
                   </button>
                 ))}
@@ -412,7 +489,13 @@ export default function RegisterPage() {
             ) : null}
           </div>
         </form>
+        <div className="v2-mode-switch">
+          <button type="button" className="v2-text-btn" disabled={saving} onClick={() => setBulkMode(true)}>
+            영상이 많나요? 여러 개 한 번에 붙여넣기 →
+          </button>
+        </div>
       </div>
+      )}
 
       <div className="panel">
         <div className="panel-header">
@@ -420,7 +503,7 @@ export default function RegisterPage() {
             <div className="panel-title">{me.isAdmin ? '최근 등록된 영상' : '내가 등록한 영상'}</div>
             <p className="panel-subtitle">
               {loaded && videos.length > 0
-                ? `오늘 ${Math.max(todayCount, sessionCount)}개 등록 · 영상마다 「SEO 점검」을 눌러 제목·썸네일·설명·태그를 챙겼는지 표시하면 점수에 반영돼요.`
+                ? `오늘 ${Math.max(todayCount, sessionCount)}개 등록 · 종목·형식이 틀렸으면 「수정」, 잘못 올린 영상은 「삭제」를 누르세요.`
                 : '등록하면 여기에 쌓여요.'}
             </p>
           </div>
@@ -435,74 +518,26 @@ export default function RegisterPage() {
             <p className="small" style={{ margin: '0 0 14px' }}>
               위 칸에 유튜브 주소와 종목명을 넣고 Enter를 누르면 첫 영상이 등록돼요.
             </p>
-            <button type="button" className="button" onClick={() => urlRef.current?.focus()}>
+            <button
+              type="button"
+              className="button"
+              onClick={() => {
+                setBulkMode(false)
+                window.setTimeout(() => urlRef.current?.focus(), 0)
+              }}
+            >
               주소 입력하러 가기
             </button>
           </div>
         ) : (
-          <div className="list">
-            {visibleVideos.map((video) => {
-              const checklist = checklists[video.id] || emptyChecklist(video.id)
-              const done = checklistDoneCount(checklist)
-              const busy = busyId === video.id
-              const open = openId === video.id
-              return (
-                <div className="list-item" key={video.id}>
-                  <div className="row-between" style={{ alignItems: 'flex-start', gap: 12 }}>
-                    <div style={{ minWidth: 0 }}>
-                      <div className="v2-card-title">
-                        <span>{video.title || '(제목을 불러오는 중이에요)'}</span>
-                        <ContentTypeTag contentType={video.content_type} />
-                      </div>
-                      <div className="v2-card-meta" style={{ marginTop: 6 }}>
-                        <span>{video.stock_name}</span>
-                        <span>등록 {formatKstDateTime(video.created_at)}</span>
-                        <span>조회 {(video.view_count ?? 0).toLocaleString('ko-KR')}</span>
-                        <span>좋아요 {(video.like_count ?? 0).toLocaleString('ko-KR')}</span>
-                        {video.youtube_url ? (
-                          <a className="link" href={video.youtube_url} target="_blank" rel="noreferrer">
-                            영상 열기 ↗
-                          </a>
-                        ) : null}
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      className={`pill v2-check-toggle ${done === 4 ? 'success' : done > 0 ? 'warning' : ''}`}
-                      aria-expanded={open}
-                      onClick={() => setOpenId(open ? null : video.id)}
-                    >
-                      SEO 점검 {done}/4 {open ? '▴' : '▾'}
-                    </button>
-                  </div>
-                  {open ? (
-                    <div className="v2-checklist" style={{ marginTop: 10 }}>
-                      {SEO_CHECKLIST_FIELDS.map((field) => (
-                        <label className={`v2-check ${checklist[field] ? 'done' : ''}`} key={field}>
-                          <input type="checkbox" checked={checklist[field]} disabled={busy} onChange={() => void saveChecklist(video, { [field]: !checklist[field] })} />
-                          <span>{SEO_CHECKLIST_LABELS[field]}</span>
-                        </label>
-                      ))}
-                      {done < 4 ? (
-                        <div>
-                          <button
-                            type="button"
-                            className="button secondary v2-check-all"
-                            disabled={busy}
-                            onClick={() => void saveChecklist(video, { title_has_stock: true, thumbnail_text_checked: true, description_timestamps: true, tags_5plus: true })}
-                          >
-                            모두 확인함
-                          </button>
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </div>
-              )
-            })}
-            {!showAll && videos.length > LIST_PREVIEW ? (
+          <div className="list v2-vlist">
+            {todayVideos.length > 0 ? <div className="v2-group-label">오늘 · {todayVideos.length}개</div> : null}
+            {todayVideos.map(renderRow)}
+            {earlierVideos.length > 0 ? <div className="v2-group-label">이전 등록</div> : null}
+            {visibleEarlier.map(renderRow)}
+            {!showAll && earlierVideos.length > EARLIER_PREVIEW ? (
               <button type="button" className="button secondary" onClick={() => setShowAll(true)}>
-                {videos.length - LIST_PREVIEW}개 더 보기
+                {earlierVideos.length - EARLIER_PREVIEW}개 더 보기
               </button>
             ) : null}
           </div>

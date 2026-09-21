@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server'
-import { errorResponse } from '@/lib/api/error-response'
 import { daysSince } from '@/lib/v3/engagement'
-import { authenticate, loadScopedVideos, loadStaffUsers, loadVideosByIds } from '@/lib/v3/server'
+import { apiError, authenticate, isUuid, loadScopedVideos, loadSnapshotCounts, loadStaffUsers, loadVideosByIds } from '@/lib/v3/server'
 import { SHARED_TABLES } from '@/lib/v3/tables'
 
 // 목록 모드: ?videoId 없이 호출 -> 선택 가능한 영상 목록 + 스냅샷 개수
@@ -17,10 +16,11 @@ export async function GET(request: Request) {
     const staffId = url.searchParams.get('staffId')
 
     if (videoId) {
+      if (!isUuid(videoId)) return NextResponse.json({ error: '영상을 찾을 수 없어요. 목록에서 다시 골라 주세요.' }, { status: 404 })
       const [video] = await loadVideosByIds(supabaseAdmin, [videoId])
-      if (!video) return NextResponse.json({ error: '영상을 찾을 수 없습니다.' }, { status: 404 })
+      if (!video) return NextResponse.json({ error: '영상을 찾을 수 없어요. 삭제되었을 수 있어요.' }, { status: 404 })
       if (!isAdmin && video.primary_owner_user_id !== profile.id) {
-        return NextResponse.json({ error: '본인이 등록한 영상만 볼 수 있습니다.' }, { status: 403 })
+        return NextResponse.json({ error: '내가 등록한 영상만 볼 수 있어요.' }, { status: 403 })
       }
 
       const { data, error } = await supabaseAdmin
@@ -28,7 +28,8 @@ export async function GET(request: Request) {
         .select('snapshot_at, view_count, like_count, comment_count')
         .eq('video_id', videoId)
         .order('snapshot_at', { ascending: true })
-      if (error) throw new Error(error.message)
+        .limit(1000)
+      if (error) throw error
 
       const rows = (data || []) as { snapshot_at: string; view_count: number | null; like_count: number | null; comment_count: number | null }[]
       const publishedRef = video.published_at || video.created_at
@@ -63,15 +64,10 @@ export async function GET(request: Request) {
       limit: 300
     })
 
-    const ids = videos.map((v) => v.id)
-    const countByVideo = new Map<string, number>()
-    if (ids.length > 0) {
-      const { data, error } = await supabaseAdmin.from(SHARED_TABLES.videoSnapshots).select('video_id').in('video_id', ids)
-      if (error) throw new Error(error.message)
-      for (const row of (data || []) as { video_id: string }[]) {
-        countByVideo.set(row.video_id, (countByVideo.get(row.video_id) || 0) + 1)
-      }
-    }
+    const countByVideo = await loadSnapshotCounts(
+      supabaseAdmin,
+      videos.map((v) => v.id)
+    )
 
     const items = videos.map((v) => ({
       id: v.id,
@@ -88,6 +84,6 @@ export async function GET(request: Request) {
 
     return NextResponse.json({ items, staffOptions })
   } catch (e) {
-    return errorResponse(e, '조회 성장 곡선 데이터를 불러오지 못했습니다.')
+    return apiError(e, '조회수 기록을 불러오지 못했어요.')
   }
 }

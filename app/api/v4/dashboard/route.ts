@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server'
 import { getKstDayStartIso } from '@/lib/attendance/time'
-import { computeDailySeries, computeKpis, getPeriodRange, num, parsePeriod, rankVideos } from '@/lib/v4/analytics'
+import { KPI_COLUMNS, computeDailySeries, computeKpis, getPeriodRange, num, parsePeriod, rankVideos } from '@/lib/v4/analytics'
 import { getSampleGoal } from '@/lib/v4/sample-data'
-import { loadUsers, loadVideos, requireV4User, v4ErrorResponse } from '@/lib/v4/server'
+import { dbError, loadUsers, loadVideos, requireV4User, splitByIso, v4ErrorResponse } from '@/lib/v4/server'
 import { V4_TABLES, isMissingTableError } from '@/lib/v4/tables'
 
 const TARGET_PER_STAFF_PER_DAY = 12
@@ -16,17 +16,13 @@ export async function GET(request: Request) {
     const month = range.endYmd.slice(0, 7)
     const monthStartIso = getKstDayStartIso(`${month}-01`)
 
-    const [videos, feedVideos, { map: userMap, staff }, monthVideos, syncRow, goalResult] = await Promise.all([
-      loadVideos(supabaseAdmin, { startIso: range.startIso, endIso: range.endIso, ownerId }),
+    // 선택 기간 + 직전 같은 길이 기간 + 이번 달 을 한 번에(1000행씩 나눠 끝까지) 읽고 JS 에서 나눈다.
+    // 90일 화면이면 약 12,000행이므로, 기본 1000행 제한에 걸려 합계가 줄어드는 일이 없어야 한다.
+    const windowStartIso = new Date(range.prevStartIso) < new Date(monthStartIso) ? range.prevStartIso : monthStartIso
+    const [windowRows, feedVideos, { map: userMap, staff }, syncRow, goalResult] = await Promise.all([
+      loadVideos(supabaseAdmin, { startIso: windowStartIso, endIso: range.endIso, ownerId, columns: KPI_COLUMNS }),
       loadVideos(supabaseAdmin, { ownerId, limit: 20 }),
       loadUsers(supabaseAdmin),
-      (async () => {
-        let q = supabaseAdmin.from(V4_TABLES.videos).select('view_count').gte('created_at', monthStartIso).lte('created_at', range.endIso)
-        if (ownerId) q = q.eq('primary_owner_user_id', ownerId)
-        const { data, error } = await q
-        if (error) throw new Error(error.message)
-        return (data || []) as Array<{ view_count: number | null }>
-      })(),
       (async () => {
         let q = supabaseAdmin
           .from(V4_TABLES.videos)
@@ -35,7 +31,8 @@ export async function GET(request: Request) {
           .order('last_synced_at', { ascending: false })
           .limit(1)
         if (ownerId) q = q.eq('primary_owner_user_id', ownerId)
-        const { data } = await q
+        const { data, error } = await q
+        if (error) throw dbError(error)
         return (data?.[0]?.last_synced_at as string | undefined) || null
       })(),
       supabaseAdmin
@@ -44,8 +41,16 @@ export async function GET(request: Request) {
         .eq('month', month)
     ])
 
+    const videos = splitByIso(windowRows, range.startIso).current
+    const previousVideos = windowRows.filter((v) => {
+      const t = new Date(v.created_at).getTime()
+      return t >= new Date(range.prevStartIso).getTime() && t <= new Date(range.prevEndIso).getTime()
+    })
+    const monthVideos = splitByIso(windowRows, monthStartIso).current
+
     const staffCount = staff.length
     const kpis = computeKpis(videos)
+    const previousKpis = computeKpis(previousVideos)
     const daily = computeDailySeries(videos, range.startYmd, range.endYmd)
     const feed = rankVideos(feedVideos, userMap).map((v) => ({
       id: v.id,
@@ -63,7 +68,7 @@ export async function GET(request: Request) {
     let sample = false
     let goalRows: Array<{ user_id: string | null; target_videos: number; target_views: number }> = []
     if (goalResult.error) {
-      if (!isMissingTableError(goalResult.error)) throw new Error(goalResult.error.message)
+      if (!isMissingTableError(goalResult.error)) throw dbError(goalResult.error)
       sample = true
       const sampleGoal = getSampleGoal(month, staffCount)
       goalRows = [{ user_id: null, target_videos: sampleGoal.targetVideos, target_views: sampleGoal.targetViews }]
@@ -98,9 +103,11 @@ export async function GET(request: Request) {
       scope: isAdmin ? 'admin' : 'staff',
       period: range.days,
       range: { start: range.startYmd, end: range.endYmd },
+      previousRange: { start: range.prevStartYmd, end: range.prevEndYmd },
       staffCount,
       targetPerDay: (isAdmin ? Math.max(staffCount, 1) : 1) * TARGET_PER_STAFF_PER_DAY,
       kpis,
+      previousKpis,
       daily,
       feed,
       lastSyncedAt: syncRow,

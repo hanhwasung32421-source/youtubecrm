@@ -66,6 +66,10 @@ export type GrowthExperiment = {
   // 서버에서 붙이는 값
   author_name?: string | null
   videos?: Array<{ id: string; title: string | null; stock_name: string }>
+  // 지워졌거나 찾을 수 없는 대상 영상 수
+  missing_videos?: number
+  // 지금 로그인한 사람이 고치거나 지울 수 있는지(작성자 본인 또는 관리자)
+  can_edit?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -106,6 +110,7 @@ export type PlaybookEntry = {
   // 서버에서 붙이는 값
   author_name?: string | null
   example_video_title?: string | null
+  can_edit?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -116,6 +121,14 @@ export type RetroKpiSnapshot = {
   totalViews: number
   totalVideos: number
   avgViewsPerVideo: number
+  // 아래는 2차 개선 이후 저장분부터 들어 있다(이전 회고에는 없을 수 있음).
+  totalLikes?: number
+  totalComments?: number
+  weekStart?: string // 그 주 월요일(KST)
+  weekEnd?: string // 그 주 일요일(KST)
+  capturedAt?: string
+  unsyncedVideos?: number // 조회수를 아직 못 가져온 영상 수
+  truncated?: boolean // 영상이 너무 많아 일부만 집계했는지
 }
 
 export type WeeklyRetro = {

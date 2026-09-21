@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server'
-import { errorResponse } from '@/lib/api/error-response'
 import {
   average,
   bucketizeEngagement,
@@ -10,7 +9,7 @@ import {
   pctChange,
   type VideoLite
 } from '@/lib/v3/engagement'
-import { authenticate, loadScopedVideos, loadStaffUsers } from '@/lib/v3/server'
+import { apiError, authenticate, isUuid, loadScopedVideos, loadStaffUsers } from '@/lib/v3/server'
 
 const num = new Intl.NumberFormat('ko-KR')
 
@@ -24,7 +23,8 @@ export async function GET(request: Request) {
   const { supabaseAdmin, profile, isAdmin } = auth
 
   try {
-    const staffId = new URL(request.url).searchParams.get('staffId')
+    const staffParam = new URL(request.url).searchParams.get('staffId')
+    const staffId = isUuid(staffParam) ? staffParam : null
     const videos = await loadScopedVideos(supabaseAdmin, {
       isAdmin,
       selfUserId: profile.id,
@@ -109,6 +109,6 @@ export async function GET(request: Request) {
       staffIdFilter: staffId || null
     })
   } catch (e) {
-    return errorResponse(e, '참여도 대시보드 조회에 실패했습니다.')
+    return apiError(e, '참여 현황을 불러오지 못했어요.')
   }
 }

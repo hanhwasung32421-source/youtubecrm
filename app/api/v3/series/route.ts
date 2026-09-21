@@ -1,14 +1,9 @@
 import { NextResponse } from 'next/server'
-import { z } from 'zod'
-import { errorResponse } from '@/lib/api/error-response'
-import { authenticate, isMissingTableError, missingTableResponse, readJson } from '@/lib/v3/server'
+import { ApiFail, apiError, authenticate, chunk, cleanText, isMissingTableError, isUuid, loadVideosByIds, readJson } from '@/lib/v3/server'
+import { assertCanMove, assertNameFree, assertOwnVideos, loadMemberships } from '@/lib/v3/series-access'
 import { V3_TABLES } from '@/lib/v3/tables'
 
-const createSchema = z.object({
-  name: z.string().min(1).max(200),
-  stockName: z.string().max(100).optional().nullable(),
-  videoIds: z.array(z.string().uuid()).default([])
-})
+const MAX_INITIAL_VIDEOS = 100
 
 // 시리즈/캠페인 목록(간단, 시리즈 선택용). 성과 지표가 포함된 목록은 GET /api/v3/format-series 사용.
 export async function GET(request: Request) {
@@ -21,10 +16,11 @@ export async function GET(request: Request) {
       .from(V3_TABLES.videoSeries)
       .select('id, name, stock_name')
       .order('created_at', { ascending: false })
+      .limit(500)
 
     if (error) {
       if (isMissingTableError(error)) return NextResponse.json({ items: [], sample: true })
-      throw new Error(error.message)
+      throw error
     }
 
     return NextResponse.json({
@@ -32,40 +28,69 @@ export async function GET(request: Request) {
       sample: false
     })
   } catch (e) {
-    return errorResponse(e, '시리즈 목록 조회에 실패했습니다.')
+    return apiError(e, '시리즈 목록을 불러오지 못했어요.')
   }
 }
 
 // 새 시리즈 생성 + 초기 영상 묶기
+//   body: { name (필수), stockName?, videoIds? }
 export async function POST(request: Request) {
   const auth = await authenticate(request)
   if (!auth.ok) return auth.response
-  const { supabaseAdmin, profile } = auth
+  const { supabaseAdmin, profile, isAdmin } = auth
 
   try {
-    const body = createSchema.parse((await readJson(request)) || {})
+    const body = ((await readJson(request)) || {}) as { name?: unknown; stockName?: unknown; videoIds?: unknown }
+    const name = cleanText(body.name, 200, '시리즈 이름')
+    if (!name) throw new ApiFail(400, '시리즈 이름을 입력해 주세요.')
+    const stockName = cleanText(body.stockName, 100, '종목')
+
+    let videoIds: string[] = []
+    if (body.videoIds !== undefined && body.videoIds !== null) {
+      if (!Array.isArray(body.videoIds) || !body.videoIds.every(isUuid)) throw new ApiFail(400, '묶을 영상을 다시 골라 주세요.')
+      videoIds = Array.from(new Set(body.videoIds as string[]))
+      if (videoIds.length > MAX_INITIAL_VIDEOS) throw new ApiFail(400, `한 번에 ${MAX_INITIAL_VIDEOS}개까지만 묶을 수 있어요. 나머지는 만든 뒤에 추가해 주세요.`)
+    }
+
+    await assertNameFree(supabaseAdmin, name)
+
+    // 영상이 실제로 있는지, 내 영상인지, 다른 시리즈에서 옮겨도 되는지 미리 확인한다.
+    let movedCount = 0
+    if (videoIds.length > 0) {
+      const videos = await loadVideosByIds(supabaseAdmin, videoIds)
+      if (videos.length !== videoIds.length) throw new ApiFail(404, '일부 영상을 찾을 수 없어요. 화면을 새로 고친 뒤 다시 골라 주세요.')
+      assertOwnVideos(videos, profile, isAdmin)
+      const memberships = await loadMemberships(supabaseAdmin, videoIds)
+      assertCanMove(memberships, null, profile, isAdmin)
+      movedCount = memberships.length
+    }
 
     const { data: series, error: seriesError } = await supabaseAdmin
       .from(V3_TABLES.videoSeries)
-      .insert({ name: body.name, stock_name: body.stockName || null, created_by: profile.id })
+      .insert({ name, stock_name: stockName, created_by: profile.id })
       .select('id, name, stock_name, created_at')
       .single()
+    if (seriesError) throw seriesError
 
-    if (seriesError) {
-      if (isMissingTableError(seriesError)) return missingTableResponse()
-      throw new Error(seriesError.message)
+    if (videoIds.length > 0) {
+      // video_id 는 unique → 이미 다른 시리즈에 있던 영상은 이쪽으로 옮겨진다(위에서 권한 확인 완료).
+      for (const part of chunk(videoIds, 50)) {
+        const { error: memberError } = await supabaseAdmin
+          .from(V3_TABLES.videoSeriesMembers)
+          .upsert(
+            part.map((videoId) => ({ series_id: series.id, video_id: videoId })),
+            { onConflict: 'video_id' }
+          )
+        if (memberError) {
+          // 반쪽짜리 시리즈가 남지 않도록 방금 만든 시리즈를 되돌린다.
+          await supabaseAdmin.from(V3_TABLES.videoSeries).delete().eq('id', series.id)
+          throw memberError
+        }
+      }
     }
 
-    if (body.videoIds.length > 0) {
-      const rows = body.videoIds.map((videoId) => ({ series_id: series.id, video_id: videoId }))
-      const { error: memberError } = await supabaseAdmin.from(V3_TABLES.videoSeriesMembers).upsert(rows, { onConflict: 'video_id' })
-      if (memberError) throw new Error(memberError.message)
-    }
-
-    return NextResponse.json({ ok: true, series: { id: series.id, name: series.name, stockName: series.stock_name } })
-  } catch (e: any) {
-    const firstIssue = e?.issues?.[0]
-    if (firstIssue?.message) return NextResponse.json({ error: firstIssue.message }, { status: 400 })
-    return errorResponse(e, '시리즈 생성에 실패했습니다.')
+    return NextResponse.json({ ok: true, series: { id: series.id, name: series.name, stockName: series.stock_name }, moved: movedCount })
+  } catch (e) {
+    return apiError(e, '시리즈를 만들지 못했어요.', { duplicate: '같은 이름의 시리즈가 이미 있어요.' })
   }
 }

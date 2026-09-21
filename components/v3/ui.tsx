@@ -1,6 +1,5 @@
 'use client'
 
-import { useState } from 'react'
 import { V3_SQL_FILE } from '@/lib/v3/tables'
 import { formatNumber, formatSignedPct } from '@/lib/v3/format'
 import { pctChange } from '@/lib/v3/engagement'
@@ -162,45 +161,6 @@ export function DocRow({
   )
 }
 
-// ── 종목 태그 pill 입력 ────────────────────────────────────────
-// 자유 입력 + 자주 쓰는 종목 pill을 클릭하면 바로 채워지는 간단한 태그 입력기.
-export function StockTagInput({
-  value,
-  onChange,
-  suggestions,
-  disabled
-}: {
-  value: string
-  onChange: (value: string) => void
-  suggestions: string[]
-  disabled?: boolean
-}) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <input
-        className="input"
-        placeholder="예: 삼성전자"
-        value={value}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.value)}
-      />
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-        {suggestions.map((name) => (
-          <button
-            type="button"
-            key={name}
-            className={`v3-tag blue v3-tag-button ${value === name ? 'active' : ''}`}
-            disabled={disabled}
-            onClick={() => onChange(name)}
-          >
-            {name}
-          </button>
-        ))}
-      </div>
-    </div>
-  )
-}
-
 // ── 빈 상태: 무엇을 보는 곳인지 + 무엇을 하면 되는지 + (선택) 버튼 ─────────
 export function EmptyState({ children, title, action }: { children?: React.ReactNode; title?: string; action?: React.ReactNode }) {
   return (
@@ -210,9 +170,4 @@ export function EmptyState({ children, title, action }: { children?: React.React
       {action ? <div style={{ marginTop: 12 }}>{action}</div> : null}
     </div>
   )
-}
-
-export function useToggle(initial = false): [boolean, () => void] {
-  const [value, setValue] = useState(initial)
-  return [value, () => setValue((v) => !v)]
 }

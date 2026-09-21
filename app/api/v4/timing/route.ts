@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { computeTimingHeatmap, getPeriodRange, parsePeriod } from '@/lib/v4/analytics'
+import { TIMING_COLUMNS, computeTimingHeatmap, getPeriodRange, parsePeriod } from '@/lib/v4/analytics'
 import { loadVideos, requireV4User, v4ErrorResponse } from '@/lib/v4/server'
 
 export async function GET(request: Request) {
@@ -9,7 +9,7 @@ export async function GET(request: Request) {
     const range = getPeriodRange(parsePeriod(url.searchParams.get('period')))
     const ownerId = isAdmin ? null : profile.id
 
-    const videos = await loadVideos(supabaseAdmin, { startIso: range.startIso, endIso: range.endIso, ownerId })
+    const videos = await loadVideos(supabaseAdmin, { startIso: range.startIso, endIso: range.endIso, ownerId, columns: TIMING_COLUMNS })
     const { cells, recommendations, maxCount, maxAvg } = computeTimingHeatmap(videos)
 
     return NextResponse.json({

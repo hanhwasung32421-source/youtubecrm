@@ -5,6 +5,7 @@ export type ContentType = 'longform' | 'shortform'
 
 export type VideoLite = {
   id: string
+  youtube_video_id?: string | null
   title: string | null
   stock_name: string | null
   content_type: ContentType

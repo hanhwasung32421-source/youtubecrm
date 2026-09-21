@@ -5,7 +5,8 @@ import type { CSSProperties } from 'react'
 import { PageHeader } from '@/components/v4/app-shell'
 import { PeriodToggle } from '@/components/v4/ui'
 import { Toast, useToast } from '@/components/toast'
-import { authedFetchJson } from '@/lib/session/authed-fetch'
+import { v4Fetch } from '@/lib/v4/client'
+import { isPeriodValue, useStoredState } from '@/lib/v4/use-stored-state'
 import type { PeriodDays, StockAggregate } from '@/lib/v4/analytics'
 import { Card, EmptyPanel, ErrorPanel, Formula, Hero, Kpi, KpiRow, SkelRows, SortHead, TrendBadge } from '@/lib/v4/analysis-ui'
 import { fmtDateKst, fmtNumber, fmtShort } from '@/lib/v4/format'
@@ -39,7 +40,7 @@ function tileSize(rank: number): 'xl' | 'lg' | 'md' | 'sm' {
 
 export default function StockTrendsPage() {
   const { toast, showError } = useToast()
-  const [period, setPeriod] = useState<PeriodDays>(30)
+  const [period, setPeriod, ready] = useStoredState<PeriodDays>('v4:stocks:period', 30, isPeriodValue)
   const [data, setData] = useState<StocksResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -50,27 +51,27 @@ export default function StockTrendsPage() {
   const [visible, setVisible] = useState(PAGE_SIZE)
 
   useEffect(() => {
+    if (!ready) return
     let cancelled = false
     const run = async () => {
       setLoading(true)
       setError('')
-      const { ok, data: res } = await authedFetchJson<StocksResponse>(`/api/v4/stocks?period=${period}`)
+      const result = await v4Fetch<StocksResponse>(`/api/v4/stocks?period=${period}`, {}, '종목 정보를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.')
       if (cancelled) return
       setLoading(false)
-      if (!ok || res?.error) {
-        const message = res?.error || '종목 정보를 불러오지 못했습니다.'
-        setError(message)
-        showError(message)
+      if (!result.ok) {
+        setError(result.message)
+        showError(result.message)
         return
       }
-      setData(res)
+      setData(result.data)
     }
     void run()
     return () => {
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [period, reloadKey])
+  }, [period, reloadKey, ready])
 
   useEffect(() => {
     setVisible(PAGE_SIZE)

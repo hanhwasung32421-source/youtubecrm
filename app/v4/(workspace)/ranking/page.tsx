@@ -6,7 +6,8 @@ import { PageHeader } from '@/components/v4/app-shell'
 import { useV4Me } from '@/components/v4/me-context'
 import { PeriodToggle } from '@/components/v4/ui'
 import { Toast, useToast } from '@/components/toast'
-import { authedFetchJson } from '@/lib/session/authed-fetch'
+import { v4Fetch } from '@/lib/v4/client'
+import { isPeriodValue, useStoredState } from '@/lib/v4/use-stored-state'
 import type { PeriodDays, RankedVideo } from '@/lib/v4/analytics'
 import { Card, EmptyPanel, ErrorPanel, FormatBadge, Formula, Hero, Kpi, KpiRow, Seg, SkelRows, SortHead } from '@/lib/v4/analysis-ui'
 import { fmtDateKst, fmtNumber, fmtPercent, fmtShort } from '@/lib/v4/format'
@@ -28,41 +29,44 @@ const PAGE_SIZE = 10
 export default function ContentRankingPage() {
   const { isAdmin } = useV4Me()
   const { toast, showError } = useToast()
-  const [period, setPeriod] = useState<PeriodDays>(30)
+  const [period, setPeriod, ready] = useStoredState<PeriodDays>('v4:ranking:period', 30, isPeriodValue)
   const [data, setData] = useState<RankingResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [reloadKey, setReloadKey] = useState(0)
   const [sortKey, setSortKey] = useState<SortKey>('viewCount')
   const [sortDesc, setSortDesc] = useState(true)
-  const [staffId, setStaffId] = useState('')
-  const [format, setFormat] = useState('')
+  // 마지막에 고른 담당자/형식/자세히 보기는 다음에 열 때도 유지한다 (저장된 담당자가 목록에 없으면 무시).
+  const [storedStaffId, setStaffId] = useStoredState<string>('v4:ranking:staff', '')
+  const [format, setFormat] = useStoredState<string>('v4:ranking:format', '', (v): v is string => v === '' || v === 'longform' || v === 'shortform')
   const [query, setQuery] = useState('')
   const [visible, setVisible] = useState(PAGE_SIZE)
-  const [detail, setDetail] = useState(false)
+  const [detail, setDetail] = useStoredState<boolean>('v4:ranking:detail', false)
+  const staffId = storedStaffId && data && !data.staffOptions.some((s) => s.id === storedStaffId) ? '' : storedStaffId
 
   useEffect(() => {
+    if (!ready) return
     let cancelled = false
     const run = async () => {
       setLoading(true)
       setError('')
-      const { ok, data: res } = await authedFetchJson<RankingResponse>(`/api/v4/ranking?period=${period}`)
+      const result = await v4Fetch<RankingResponse>(`/api/v4/ranking?period=${period}`, {}, '영상 순위를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.')
       if (cancelled) return
       setLoading(false)
-      if (!ok || res?.error) {
-        const message = res?.error || '영상 순위를 불러오지 못했습니다.'
-        setError(message)
-        showError(message)
+      if (!result.ok) {
+        // 이미 화면에 값이 있으면 그대로 두고 알림만, 처음부터 실패했으면 다시 불러오기 화면
+        setError(result.message)
+        showError(result.message)
         return
       }
-      setData(res)
+      setData(result.data)
     }
     void run()
     return () => {
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [period, reloadKey])
+  }, [period, reloadKey, ready])
 
   useEffect(() => {
     setVisible(PAGE_SIZE)

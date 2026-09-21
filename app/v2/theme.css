@@ -1172,3 +1172,321 @@ body:has(.v2-theme) {
     flex: 1 1 100%;
   }
 }
+
+/* ---- 라운드 2: 내가 등록한 영상 목록(컴팩트) · 수정/삭제 · 여러 개 붙여넣기 ---- */
+.v2-theme .v2-vlist {
+  gap: 6px;
+}
+
+.v2-theme .v2-vrow {
+  padding: 10px 12px;
+}
+
+.v2-theme .v2-vrow .v2-card-title {
+  font-size: 13px;
+}
+
+.v2-theme .v2-vrow.is-new {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  animation: v2-row-flash 6s ease-out 1;
+}
+
+@keyframes v2-row-flash {
+  0%,
+  70% {
+    box-shadow: 0 0 0 2px var(--primary-soft);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+.v2-theme .v2-group-label {
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.v2-theme .v2-group-label:first-child {
+  margin-top: 0;
+}
+
+.v2-theme .v2-vrow-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px 8px;
+}
+
+.v2-theme .v2-text-btn {
+  min-height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.v2-theme .v2-text-btn:hover:not(:disabled),
+.v2-theme .v2-text-btn[aria-expanded='true'] {
+  background: var(--panel-soft);
+  color: var(--text);
+}
+
+.v2-theme .v2-text-btn.danger:hover:not(:disabled),
+.v2-theme .v2-text-btn.danger[aria-expanded='true'] {
+  color: #f87171;
+}
+
+.v2-theme .v2-text-btn:disabled,
+.v2-theme .v2-icon-btn:disabled,
+.v2-theme .v2-chip-btn:disabled,
+.v2-theme .v2-seg-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.v2-theme .v2-text-btn:focus-visible,
+.v2-theme .v2-icon-btn:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+.v2-theme .v2-inline-edit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--bg-soft);
+}
+
+.v2-theme .v2-inline-edit .field {
+  gap: 4px;
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+.v2-theme .v2-inline-edit .field .v2-seg {
+  align-self: flex-start;
+}
+
+.v2-theme .v2-edit-memo {
+  flex: 2 1 220px;
+}
+
+.v2-theme .v2-inline-buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.v2-theme .v2-inline-msg {
+  flex: 1 1 100%;
+}
+
+.v2-theme .v2-confirm-delete {
+  align-items: center;
+  border-color: rgba(240, 68, 82, 0.5);
+}
+
+.v2-theme .v2-confirm-text {
+  flex: 1 1 260px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.v2-theme .v2-mode-switch {
+  margin-top: 6px;
+}
+
+.v2-theme .v2-mode-switch .v2-text-btn {
+  padding: 0;
+  color: var(--muted);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* 여러 개 붙여넣기 */
+.v2-theme .v2-bulk-text {
+  min-height: 130px;
+  font-family: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.v2-theme .v2-bulk-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.v2-theme .v2-bulk-table {
+  width: 100%;
+  min-width: 640px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.v2-theme .v2-bulk-table th {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line-strong);
+  background: var(--panel-soft);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-align: left;
+}
+
+.v2-theme .v2-bulk-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+
+.v2-theme .v2-bulk-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.v2-theme .v2-bulk-table tr.is-done {
+  opacity: 0.7;
+}
+
+.v2-theme .v2-bulk-table tr.is-failed {
+  background: rgba(240, 68, 82, 0.06);
+}
+
+.v2-theme .v2-bulk-url {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.v2-theme .v2-bulk-stock {
+  min-width: 120px;
+  padding: 5px 8px;
+}
+
+.v2-theme .v2-bulk-stock.need {
+  border-color: rgba(255, 210, 122, 0.7);
+}
+
+.v2-theme .v2-bulk-type {
+  width: auto;
+  padding: 5px 8px;
+}
+
+.v2-theme .v2-bulk-auto {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.v2-theme .v2-bulk-st {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.v2-theme .v2-bulk-st.wait {
+  color: var(--muted);
+}
+
+.v2-theme .v2-bulk-st.run {
+  color: var(--primary);
+}
+
+.v2-theme .v2-bulk-st.ok {
+  color: #4ade80;
+}
+
+.v2-theme .v2-bulk-st.bad {
+  display: inline-block;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  color: #f87171;
+}
+
+.v2-theme .v2-bulk-st.need {
+  color: #ffd27a;
+}
+
+.v2-theme .v2-bulk-st.note {
+  color: #ffd27a;
+}
+
+.v2-theme .v2-icon-btn {
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.v2-theme .v2-icon-btn:hover:not(:disabled) {
+  background: var(--panel-soft);
+  color: #f87171;
+}
+
+.v2-theme .v2-bulk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 가입 화면 */
+.v2-theme .v2-signup-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.v2-theme .v2-field-help {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.v2-theme .v2-field-error {
+  font-size: 13px;
+  line-height: 1.5;
+  color: #f87171;
+}
+
+.v2-theme .input[aria-invalid='true'] {
+  border-color: rgba(240, 68, 82, 0.7);
+}
+
+@media (max-width: 720px) {
+  .v2-theme .v2-vrow-actions {
+    justify-content: flex-start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .v2-theme .v2-vrow.is-new {
+    animation: none;
+  }
+}

@@ -1,55 +1,31 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
-import type { FormEvent, ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { PageHeader } from '@/components/v4/app-shell'
 import { useV4Me } from '@/components/v4/me-context'
 import { Toast, useToast } from '@/components/toast'
-import { authedFetchJson, authedPostJson } from '@/lib/session/authed-fetch'
 import { getKstYmd } from '@/lib/attendance/time'
+import { v4Fetch } from '@/lib/v4/client'
+import { DEFAULT_METRIC } from '@/lib/v4/experiment-consts'
+import { useStoredState } from '@/lib/v4/use-stored-state'
 import type { ExperimentItem } from '@/lib/v4/sample-data'
 import type { VideoOption } from '@/lib/v4/experiments'
 import { Badge, Card, EmptyPanel, ErrorPanel, Hero, Kpi, KpiRow, SampleNote, Seg, SkelRows } from '@/lib/v4/analysis-ui'
 import { fmtDateKst, fmtNumber } from '@/lib/v4/format'
+import { ExperimentForm } from './experiment-form'
+import { ResultRecorder } from './result-recorder'
 import '../pages.css'
+import './experiments.css'
 
 type ExperimentsResponse = {
   sample: boolean
   scope: 'admin' | 'staff'
   items: ExperimentItem[]
   videoOptions: VideoOption[]
-  error?: string
+  truncated?: boolean
 }
 
-type Winner = 'a' | 'b' | 'tie' | ''
 type Filter = 'all' | 'running' | 'done'
-type FieldKey = 'hypothesis' | 'variantA' | 'variantB' | 'startedOn' | 'endedOn'
-
-type FormState = {
-  videoId: string
-  hypothesis: string
-  variantA: string
-  variantB: string
-  metric: string
-  startedOn: string
-  endedOn: string
-  winner: Winner
-  learning: string
-}
-
-const emptyForm = (): FormState => ({
-  videoId: '',
-  hypothesis: '',
-  variantA: '',
-  variantB: '',
-  metric: '',
-  startedOn: getKstYmd(),
-  endedOn: '',
-  winner: '',
-  learning: ''
-})
-
-const DEFAULT_METRIC = '조회수'
 
 const WINNER_BADGE: Record<'a' | 'b' | 'tie', { label: string; tone: 'good' | 'info' | 'neutral' }> = {
   a: { label: '기존(A)이 더 좋았어요', tone: 'info' },
@@ -63,180 +39,71 @@ function StatusBadge({ winner }: { winner: ExperimentItem['winner'] }) {
   return <Badge tone={w.tone}>{w.label}</Badge>
 }
 
-function validate(form: FormState): Partial<Record<FieldKey, string>> {
-  const errors: Partial<Record<FieldKey, string>> = {}
-  if (!form.hypothesis.trim()) errors.hypothesis = '무엇을 확인하고 싶은지 적어 주세요.'
-  if (!form.variantA.trim()) errors.variantA = '지금 하던 방식을 적어 주세요.'
-  if (!form.variantB.trim()) errors.variantB = '새로 해볼 방식을 적어 주세요.'
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(form.startedOn)) errors.startedOn = '시작일을 선택해 주세요.'
-  if (form.endedOn && form.startedOn && form.endedOn < form.startedOn) errors.endedOn = '종료일은 시작일보다 빠를 수 없어요.'
-  return errors
-}
-
 function daysBetween(fromYmd: string, toYmd: string) {
   const diff = (Date.parse(toYmd) - Date.parse(fromYmd)) / 86400000
   return Number.isFinite(diff) ? Math.max(0, Math.round(diff)) : 0
 }
 
-function Field({ id, label, optional, hint, error, children }: { id: string; label: string; optional?: boolean; hint?: string; error?: string; children: ReactNode }) {
-  return (
-    <div className="v4p-field">
-      <label htmlFor={id}>
-        {label}
-        {optional ? <span className="opt">(선택)</span> : null}
-      </label>
-      {children}
-      {error ? (
-        <div className="v4p-field-error" role="alert">
-          {error}
-        </div>
-      ) : hint ? (
-        <div className="v4p-field-hint">{hint}</div>
-      ) : null}
-    </div>
-  )
+// 최근에 시작한 실험이 위로 (서버 정렬과 같은 기준)
+function sortItems(items: ExperimentItem[]) {
+  return [...items].sort((a, b) => (a.startedOn === b.startedOn ? (a.createdAt < b.createdAt ? 1 : -1) : a.startedOn < b.startedOn ? 1 : -1))
 }
 
 export default function ExperimentsPage() {
   const { me, isAdmin } = useV4Me()
   const { toast, showSuccess, showError } = useToast()
   const [data, setData] = useState<ExperimentsResponse | null>(null)
-  const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
-  const [form, setForm] = useState<FormState>(emptyForm)
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [formOpen, setFormOpen] = useState(false)
-  const [moreOpen, setMoreOpen] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [submitted, setSubmitted] = useState(false)
-  const [touched, setTouched] = useState<Partial<Record<FieldKey, boolean>>>({})
+  const [formMode, setFormMode] = useState<'closed' | 'new' | { edit: string }>('closed')
+  const [recordId, setRecordId] = useState<string | null>(null)
   const [confirmId, setConfirmId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
-  const [filter, setFilter] = useState<Filter>('all')
+  const [rowError, setRowError] = useState<Record<string, string>>({})
+  const [flashId, setFlashId] = useState<string | null>(null)
+  const [filter, setFilter] = useStoredState<Filter>('v4:experiments:filter', 'all', (v): v is Filter => v === 'all' || v === 'running' || v === 'done')
   const formRef = useRef<HTMLDivElement | null>(null)
   const autoOpened = useRef(false)
+  const hasDataRef = useRef(false)
 
-  const load = async () => {
-    const { ok, data: res } = await authedFetchJson<ExperimentsResponse>('/api/v4/experiments')
-    setLoading(false)
-    if (!ok || res?.error) {
-      const message = res?.error || '실험 목록을 불러오지 못했습니다.'
-      setLoadError(message)
-      showError(message)
+  const load = useCallback(async () => {
+    const result = await v4Fetch<ExperimentsResponse>('/api/v4/experiments', {}, '실험 목록을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.')
+    if (!result.ok) {
+      setLoadError(result.message)
+      // 이미 목록이 보이는 중이면 화면은 그대로 두고 알림만 띄운다.
+      if (hasDataRef.current) showError(result.message)
       return
     }
     setLoadError('')
-    setData(res)
-  }
+    hasDataRef.current = true
+    setData(result.data)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     void load()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [load])
 
   // 처음 들어왔는데 실험이 하나도 없으면 등록 폼을 바로 펼쳐 둔다.
   useEffect(() => {
     if (data && !autoOpened.current) {
       autoOpened.current = true
-      if (data.items.length === 0) setFormOpen(true)
+      if (data.items.length === 0) setFormMode('new')
     }
   }, [data])
 
-  const errors = validate(form)
-  const showErr = (key: FieldKey) => (submitted || touched[key] ? errors[key] : undefined)
-  const touch = (key: FieldKey) => setTouched((prev) => ({ ...prev, [key]: true }))
-  const update = (patch: Partial<FormState>) => setForm((prev) => ({ ...prev, ...patch }))
-
-  const scrollToForm = () => window.setTimeout(() => formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 30)
-
-  const resetForm = () => {
-    setEditingId(null)
-    setForm(emptyForm())
-    setSubmitted(false)
-    setTouched({})
-    setMoreOpen(false)
-  }
-
-  const openNew = () => {
-    resetForm()
-    setFormOpen(true)
-    scrollToForm()
-  }
-
-  const closeForm = () => {
-    resetForm()
-    setFormOpen(false)
-  }
-
-  const startEdit = (item: ExperimentItem) => {
-    setEditingId(item.id)
-    setForm({
-      videoId: item.videoId || '',
-      hypothesis: item.hypothesis,
-      variantA: item.variantA,
-      variantB: item.variantB,
-      metric: item.metric === DEFAULT_METRIC ? '' : item.metric,
-      startedOn: item.startedOn,
-      endedOn: item.endedOn || '',
-      winner: item.winner || '',
-      learning: item.learning || ''
-    })
-    setSubmitted(false)
-    setTouched({})
-    setMoreOpen(true)
-    setFormOpen(true)
-    scrollToForm()
-  }
-
-  const submit = async (e?: FormEvent) => {
-    e?.preventDefault()
-    if (saving) return
-    setSubmitted(true)
-    if (Object.keys(errors).length > 0) return
-    setSaving(true)
-    // 결과를 골랐는데 종료일이 비어 있으면 오늘로 채운다.
-    const endedOn = form.endedOn || (form.winner ? getKstYmd() : '')
-    const payload = {
-      videoId: form.videoId || null,
-      hypothesis: form.hypothesis.trim(),
-      variantA: form.variantA.trim(),
-      variantB: form.variantB.trim(),
-      metric: form.metric.trim() || DEFAULT_METRIC,
-      startedOn: form.startedOn,
-      endedOn: endedOn || null,
-      winner: form.winner || null,
-      learning: form.learning.trim() || null
+  // 삭제 확인 중 Esc = 취소, 몇 초 지나면 저절로 원래 버튼으로 돌아간다.
+  useEffect(() => {
+    if (!confirmId) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setConfirmId(null)
     }
-    const result = editingId
-      ? await authedFetchJson<{ error?: string }>(`/api/v4/experiments/${editingId}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        })
-      : await authedPostJson<{ error?: string }>('/api/v4/experiments', payload)
-    setSaving(false)
-    if (!result.ok || result.data?.error) {
-      showError(result.data?.error || '저장하지 못했습니다. 잠시 후 다시 시도해 주세요.')
-      return
+    const timer = window.setTimeout(() => setConfirmId(null), 7000)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.clearTimeout(timer)
     }
-    showSuccess(editingId ? '실험을 저장했어요.' : '실험을 등록했어요.')
-    closeForm()
-    void load()
-  }
-
-  const remove = async (item: ExperimentItem) => {
-    setDeletingId(item.id)
-    const { ok, data: res } = await authedFetchJson<{ error?: string }>(`/api/v4/experiments/${item.id}`, { method: 'DELETE' })
-    setDeletingId(null)
-    setConfirmId(null)
-    if (!ok || res?.error) {
-      showError(res?.error || '삭제하지 못했습니다.')
-      return
-    }
-    showSuccess('실험을 삭제했어요.')
-    if (editingId === item.id) closeForm()
-    void load()
-  }
+  }, [confirmId])
 
   const all = useMemo(() => data?.items ?? [], [data])
   const running = useMemo(() => all.filter((i) => !i.winner), [all])
@@ -248,8 +115,57 @@ export default function ExperimentsPage() {
   const sample = Boolean(data?.sample)
   const canEdit = (item: ExperimentItem) => !sample && (isAdmin || Boolean(me?.crmUserId && item.createdBy === me.crmUserId))
   const today = getKstYmd()
-
   const noData = Boolean(data) && all.length === 0
+  const editingItem = typeof formMode === 'object' ? all.find((i) => i.id === formMode.edit) ?? null : null
+
+  // ---- 화면 상태만 바꾸는 도우미: 서버가 돌려준 실험으로 목록을 바로 갱신한다 (다시 불러오지 않아 화면이 튀지 않는다)
+  const applyItem = (item: ExperimentItem) => {
+    setData((prev) => (prev ? { ...prev, items: sortItems([item, ...prev.items.filter((i) => i.id !== item.id)]) } : prev))
+    setFlashId(item.id)
+    window.setTimeout(() => setFlashId((cur) => (cur === item.id ? null : cur)), 1500)
+  }
+
+  const scrollTo = (elementId: string) =>
+    window.setTimeout(() => document.getElementById(elementId)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 40)
+
+  const openNew = () => {
+    setRecordId(null)
+    setFormMode('new')
+    window.setTimeout(() => formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 30)
+  }
+
+  const openEdit = (item: ExperimentItem) => {
+    setRecordId(null)
+    setFormMode({ edit: item.id })
+    window.setTimeout(() => formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 30)
+  }
+
+  const openRecord = (item: ExperimentItem) => {
+    setFormMode('closed')
+    setConfirmId(null)
+    // 필터 때문에 카드가 안 보이면 전체 보기로 바꿔 준다.
+    if (filter === 'done' && !item.winner) setFilter('all')
+    if (filter === 'running' && item.winner) setFilter('all')
+    setRecordId(item.id)
+    scrollTo(`exp-${item.id}`)
+  }
+
+  const remove = async (item: ExperimentItem) => {
+    setDeletingId(item.id)
+    setRowError((prev) => ({ ...prev, [item.id]: '' }))
+    const result = await v4Fetch<{ ok: boolean }>(`/api/v4/experiments/${item.id}`, { method: 'DELETE' }, '삭제하지 못했어요. 잠시 후 다시 시도해 주세요.')
+    setDeletingId(null)
+    setConfirmId(null)
+    if (!result.ok) {
+      setRowError((prev) => ({ ...prev, [item.id]: result.message }))
+      return
+    }
+    setData((prev) => (prev ? { ...prev, items: prev.items.filter((i) => i.id !== item.id) } : prev))
+    if (recordId === item.id) setRecordId(null)
+    if (typeof formMode === 'object' && formMode.edit === item.id) setFormMode('closed')
+  }
+
+  const formOpen = formMode !== 'closed'
 
   return (
     <>
@@ -257,7 +173,7 @@ export default function ExperimentsPage() {
         title="실험 관리 (A/B 로그)"
         subtitle="썸네일·제목을 두 가지로 만들어 비교해 보고, 결과와 배운 점을 남깁니다."
         actions={
-          <button type="button" className="button" onClick={openNew} disabled={saving}>
+          <button type="button" className="button" onClick={openNew} disabled={sample}>
             + 새 실험 만들기
           </button>
         }
@@ -268,7 +184,7 @@ export default function ExperimentsPage() {
         {sample ? <SampleNote /> : null}
 
         {loadError && !data ? (
-          <ErrorPanel message={loadError} onRetry={() => { setLoading(true); void load() }} />
+          <ErrorPanel message={loadError} onRetry={() => void load()} />
         ) : (
           <>
             {/* 답부터: 지금 결과를 기다리는 실험 / 최근 배운 점 / 첫 사용 안내 */}
@@ -279,22 +195,28 @@ export default function ExperimentsPage() {
                   <li>비슷한 영상에 각각 적용해서 올려요.</li>
                   <li>며칠 뒤 조회수를 보고 어느 쪽이 나았는지 기록해요. 배운 점은 다음 영상에 써먹어요.</li>
                 </ol>
-                <div className="v4p-hero-actions">
-                  <button type="button" className="button" onClick={openNew}>
-                    첫 실험 만들기
-                  </button>
-                </div>
+                {!formOpen ? (
+                  <div className="v4p-hero-actions">
+                    <button type="button" className="button" onClick={openNew}>
+                      첫 실험 만들기
+                    </button>
+                  </div>
+                ) : null}
               </Hero>
             ) : (
               <Hero
                 loading={!data}
                 eyebrow={data ? (isAdmin ? '팀 전체 실험' : '내가 등록한 실험') : undefined}
                 headline={
-                  running.length > 0
-                    ? <>진행 중인 실험 <span className="em">{fmtNumber(running.length)}개</span>가 결과를 기다리고 있어요</>
-                    : latestLearning
-                      ? '진행 중인 실험이 없어요. 가장 최근에 알게 된 점이에요'
-                      : '진행 중인 실험이 없어요. 새 실험을 시작해 보세요'
+                  running.length > 0 ? (
+                    <>
+                      진행 중인 실험 <span className="em">{fmtNumber(running.length)}개</span>가 결과를 기다리고 있어요
+                    </>
+                  ) : latestLearning ? (
+                    '진행 중인 실험이 없어요. 가장 최근에 알게 된 점이에요'
+                  ) : (
+                    '진행 중인 실험이 없어요. 새 실험을 시작해 보세요'
+                  )
                 }
               >
                 {running.length > 0 ? (
@@ -302,11 +224,15 @@ export default function ExperimentsPage() {
                     {running.slice(0, 3).map((item) => (
                       <div className="v4p-running-item" key={item.id}>
                         <div>
-                          <div style={{ fontWeight: 700 }} className="v4p-ellipsis">{item.hypothesis}</div>
-                          <div className="small muted">{fmtDateKst(item.startedOn)} 시작 · {fmtNumber(daysBetween(item.startedOn, today) + 1)}일째</div>
+                          <div style={{ fontWeight: 700 }} className="v4p-ellipsis">
+                            {item.hypothesis}
+                          </div>
+                          <div className="small muted">
+                            {fmtDateKst(item.startedOn)} 시작 · {fmtNumber(daysBetween(item.startedOn, today) + 1)}일째
+                          </div>
                         </div>
                         {canEdit(item) ? (
-                          <button type="button" className="button secondary" onClick={() => startEdit(item)} disabled={saving}>
+                          <button type="button" className="button secondary" onClick={() => openRecord(item)}>
                             결과 기록
                           </button>
                         ) : null}
@@ -331,122 +257,23 @@ export default function ExperimentsPage() {
               </KpiRow>
             ) : null}
 
-            {formOpen ? (
+            {formOpen && data ? (
               <div ref={formRef} style={{ scrollMarginTop: 16 }}>
                 <Card
-                  title={editingId ? '실험 결과 기록 / 수정' : '새 실험 만들기'}
-                  sub={editingId ? '어느 쪽이 더 좋았는지와 배운 점을 남겨 주세요. 아래 “더 적기”에 있어요.' : '한 번에 한 가지만 바꿔야 결과를 제대로 해석할 수 있어요.'}
-                  actions={
-                    <button type="button" className="button secondary" onClick={closeForm} disabled={saving}>
-                      닫기
-                    </button>
-                  }
+                  title={editingItem ? '실험 내용 고치기' : '새 실험 만들기'}
+                  sub={editingItem ? '결과와 배운 점은 목록의 “결과 기록”에서 남길 수 있어요.' : '한 번에 한 가지만 바꿔야 결과를 제대로 해석할 수 있어요.'}
                 >
-                  <form className="v4p-form" onSubmit={submit} noValidate>
-                    <Field id="exp-hypothesis" label="무엇을 확인하고 싶나요?" error={showErr('hypothesis')} hint="한 문장이면 충분해요.">
-                      <textarea
-                        id="exp-hypothesis"
-                        className={`textarea ${showErr('hypothesis') ? 'invalid' : ''}`}
-                        value={form.hypothesis}
-                        onChange={(e) => update({ hypothesis: e.target.value })}
-                        onBlur={() => touch('hypothesis')}
-                        placeholder="예: 썸네일에 종목명을 크게 넣으면 조회수가 더 잘 나온다"
-                        disabled={saving}
-                      />
-                    </Field>
-                    <div className="v4p-form-grid">
-                      <Field id="exp-a" label="A · 지금 하던 방식" error={showErr('variantA')}>
-                        <textarea
-                          id="exp-a"
-                          className={`textarea ${showErr('variantA') ? 'invalid' : ''}`}
-                          value={form.variantA}
-                          onChange={(e) => update({ variantA: e.target.value })}
-                          onBlur={() => touch('variantA')}
-                          placeholder="예: 종목명을 작은 글씨로"
-                          disabled={saving}
-                        />
-                      </Field>
-                      <Field id="exp-b" label="B · 새로 해볼 방식" error={showErr('variantB')}>
-                        <textarea
-                          id="exp-b"
-                          className={`textarea ${showErr('variantB') ? 'invalid' : ''}`}
-                          value={form.variantB}
-                          onChange={(e) => update({ variantB: e.target.value })}
-                          onBlur={() => touch('variantB')}
-                          placeholder="예: 종목명을 크게, 노란 배경으로"
-                          disabled={saving}
-                        />
-                      </Field>
-                    </div>
-                    <div className="v4p-form-grid">
-                      <Field id="exp-start" label="시작일" error={showErr('startedOn')}>
-                        <input
-                          id="exp-start"
-                          className={`input ${showErr('startedOn') ? 'invalid' : ''}`}
-                          type="date"
-                          value={form.startedOn}
-                          onChange={(e) => update({ startedOn: e.target.value })}
-                          onBlur={() => touch('startedOn')}
-                          disabled={saving}
-                        />
-                      </Field>
-                    </div>
-
-                    <details className="v4p-details" style={{ marginTop: 0 }} open={moreOpen} onToggle={(e) => setMoreOpen((e.currentTarget as HTMLDetailsElement).open)}>
-                      <summary>더 적기 (선택) — 결과, 배운 점, 대상 영상 등</summary>
-                      <div className="v4p-form" style={{ marginTop: 12 }}>
-                        <div className="v4p-form-grid">
-                          <Field id="exp-winner" label="결과" optional hint="아직 모르면 “진행 중”으로 두세요.">
-                            <select id="exp-winner" className="select" value={form.winner} onChange={(e) => update({ winner: e.target.value as Winner })} disabled={saving}>
-                              <option value="">아직 진행 중이에요</option>
-                              <option value="a">A(기존 방식)가 더 좋았어요</option>
-                              <option value="b">B(새 방식)가 더 좋았어요</option>
-                              <option value="tie">차이가 없었어요</option>
-                            </select>
-                          </Field>
-                          <Field id="exp-end" label="종료일" optional error={showErr('endedOn')} hint="결과를 고르고 비워 두면 오늘로 저장돼요.">
-                            <input
-                              id="exp-end"
-                              className={`input ${showErr('endedOn') ? 'invalid' : ''}`}
-                              type="date"
-                              value={form.endedOn}
-                              onChange={(e) => update({ endedOn: e.target.value })}
-                              onBlur={() => touch('endedOn')}
-                              disabled={saving}
-                            />
-                          </Field>
-                        </div>
-                        <Field id="exp-learning" label="배운 점" optional hint="다음 영상에 어떻게 쓸지 적어 두면 좋아요.">
-                          <textarea id="exp-learning" className="textarea" value={form.learning} onChange={(e) => update({ learning: e.target.value })} placeholder="예: 종목명을 크게 하니 조회수가 1.4배 나왔다. 앞으로 크게 쓰자" disabled={saving} />
-                        </Field>
-                        <div className="v4p-form-grid">
-                          <Field id="exp-metric" label="무엇으로 비교하나요?" optional hint={`비워 두면 “${DEFAULT_METRIC}”로 저장돼요.`}>
-                            <input id="exp-metric" className="input" value={form.metric} onChange={(e) => update({ metric: e.target.value })} placeholder="예: 올린 지 48시간 뒤 조회수" disabled={saving} />
-                          </Field>
-                          <Field id="exp-video" label="대상 영상" optional hint="특정 영상에 한 실험이면 골라 주세요.">
-                            <select id="exp-video" className="select" value={form.videoId} onChange={(e) => update({ videoId: e.target.value })} disabled={saving}>
-                              <option value="">연결 안 함 (채널 전체 실험 등)</option>
-                              {(data?.videoOptions ?? []).map((v) => (
-                                <option key={v.id} value={v.id}>
-                                  [{v.stockName}] {v.title} · {fmtDateKst(v.createdAt)}
-                                </option>
-                              ))}
-                            </select>
-                          </Field>
-                        </div>
-                      </div>
-                    </details>
-
-                    <div className="v4p-form-actions">
-                      <button type="submit" className="button" disabled={saving || sample}>
-                        {saving ? '저장 중...' : editingId ? '저장하기' : '실험 등록하기'}
-                      </button>
-                      <button type="button" className="button secondary" onClick={closeForm} disabled={saving}>
-                        취소
-                      </button>
-                      {sample ? <span className="small muted">샘플 데이터 상태에서는 저장할 수 없어요.</span> : null}
-                    </div>
-                  </form>
+                  <ExperimentForm
+                    key={editingItem?.id ?? 'new'}
+                    editing={editingItem}
+                    videoOptions={data.videoOptions}
+                    onClose={() => setFormMode('closed')}
+                    onSaved={(item, mode) => {
+                      applyItem(item)
+                      if (mode === 'edit') setFormMode('closed')
+                      else showSuccess('실험을 등록했어요. 아래 목록에서 볼 수 있어요.')
+                    }}
+                  />
                 </Card>
               </div>
             ) : null}
@@ -468,7 +295,7 @@ export default function ExperimentsPage() {
                   />
                 }
               >
-                {loading || !data ? (
+                {!data ? (
                   <SkelRows rows={3} />
                 ) : items.length === 0 ? (
                   <EmptyPanel
@@ -483,61 +310,93 @@ export default function ExperimentsPage() {
                   </EmptyPanel>
                 ) : (
                   <div className="v4p-exp-list">
-                    {items.map((item) => (
-                      <div className="v4p-exp" key={item.id}>
-                        <div style={{ minWidth: 0 }}>
-                          <div className="v4p-exp-meta">
-                            <StatusBadge winner={item.winner} />
-                            <span>
-                              {fmtDateKst(item.startedOn)} ~ {item.endedOn ? fmtDateKst(item.endedOn) : item.winner ? '' : `${fmtNumber(daysBetween(item.startedOn, today) + 1)}일째`}
-                            </span>
-                            {isAdmin ? <span>· {item.createdByName}</span> : null}
+                    {items.map((item) => {
+                      const editable = canEdit(item)
+                      const confirming = confirmId === item.id
+                      const busy = deletingId === item.id
+                      return (
+                        <div className={`v4p-exp ${flashId === item.id ? 'flash' : ''}`} key={item.id} id={`exp-${item.id}`}>
+                          <div style={{ minWidth: 0 }}>
+                            <div className="v4p-exp-meta">
+                              <StatusBadge winner={item.winner} />
+                              <span>
+                                {fmtDateKst(item.startedOn)} ~ {item.endedOn ? fmtDateKst(item.endedOn) : item.winner ? '' : `${fmtNumber(daysBetween(item.startedOn, today) + 1)}일째`}
+                              </span>
+                              {isAdmin ? <span>· {item.createdByName}</span> : null}
+                            </div>
+                            <div className="v4p-exp-title">{item.hypothesis}</div>
+                            {item.videoId || item.metric !== DEFAULT_METRIC ? (
+                              <div className="v4p-exp-link">
+                                {item.videoId ? (
+                                  <>
+                                    영상: {item.videoTitle}
+                                    {item.stockName !== '-' ? ` (${item.stockName})` : ''}
+                                  </>
+                                ) : null}
+                                {item.videoId && item.metric ? ' · ' : ''}
+                                {item.metric ? <>비교 기준: {item.metric}</> : null}
+                              </div>
+                            ) : null}
+                            <div className="v4p-ab">
+                              <div className={`v4p-ab-box ${item.winner === 'a' ? 'win' : ''}`}>
+                                <div className="v4p-ab-tag">A · 지금 하던 방식{item.winner === 'a' ? ' — 더 좋았어요' : ''}</div>
+                                {item.variantA}
+                              </div>
+                              <div className={`v4p-ab-box ${item.winner === 'b' ? 'win' : ''}`}>
+                                <div className="v4p-ab-tag">B · 새로 해본 방식{item.winner === 'b' ? ' — 더 좋았어요' : ''}</div>
+                                {item.variantB}
+                              </div>
+                            </div>
+                            {item.learning ? <div className="v4p-learn">{item.learning}</div> : null}
+                            {rowError[item.id] ? (
+                              <div className="v4p-inline-error" role="alert">
+                                {rowError[item.id]}
+                              </div>
+                            ) : null}
                           </div>
-                          <div className="v4p-exp-title">{item.hypothesis}</div>
-                          {item.videoId || item.metric !== DEFAULT_METRIC ? (
-                            <div className="v4p-exp-link">
-                              {item.videoId ? <>영상: {item.videoTitle}{item.stockName !== '-' ? ` (${item.stockName})` : ''}</> : null}
-                              {item.videoId && item.metric ? ' · ' : ''}
-                              {item.metric ? <>비교 기준: {item.metric}</> : null}
+                          {editable ? (
+                            <div className="v4p-exp-actions">
+                              <button type="button" className={item.winner ? 'button secondary' : 'button'} onClick={() => openRecord(item)} disabled={busy}>
+                                {item.winner ? '결과 고치기' : '결과 기록'}
+                              </button>
+                              <button type="button" className="button secondary" onClick={() => openEdit(item)} disabled={busy}>
+                                내용 고치기
+                              </button>
+                              {confirming ? (
+                                <>
+                                  <button type="button" className="button danger" onClick={() => void remove(item)} disabled={busy} autoFocus>
+                                    {busy ? '삭제 중…' : '정말 삭제'}
+                                  </button>
+                                  <button type="button" className="button secondary" onClick={() => setConfirmId(null)} disabled={busy}>
+                                    취소
+                                  </button>
+                                </>
+                              ) : (
+                                <button type="button" className="button v4p-btn-danger-soft" onClick={() => setConfirmId(item.id)} disabled={busy}>
+                                  삭제
+                                </button>
+                              )}
                             </div>
                           ) : null}
-                          <div className="v4p-ab">
-                            <div className={`v4p-ab-box ${item.winner === 'a' ? 'win' : ''}`}>
-                              <div className="v4p-ab-tag">A · 지금 하던 방식{item.winner === 'a' ? ' — 더 좋았어요' : ''}</div>
-                              {item.variantA}
-                            </div>
-                            <div className={`v4p-ab-box ${item.winner === 'b' ? 'win' : ''}`}>
-                              <div className="v4p-ab-tag">B · 새로 해본 방식{item.winner === 'b' ? ' — 더 좋았어요' : ''}</div>
-                              {item.variantB}
-                            </div>
-                          </div>
-                          {item.learning ? <div className="v4p-learn">{item.learning}</div> : null}
+                          {editable && recordId === item.id ? (
+                            <ResultRecorder
+                              key={`${item.id}-${item.updatedAt}`}
+                              item={item}
+                              today={today}
+                              onCancel={() => setRecordId(null)}
+                              onSaved={(saved, message) => {
+                                applyItem(saved)
+                                setRecordId(null)
+                                showSuccess(message)
+                              }}
+                            />
+                          ) : null}
                         </div>
-                        {canEdit(item) ? (
-                          <div className="v4p-exp-actions">
-                            <button type="button" className={item.winner ? 'button secondary' : 'button'} onClick={() => startEdit(item)} disabled={saving || deletingId === item.id}>
-                              {item.winner ? '수정' : '결과 기록'}
-                            </button>
-                            {confirmId === item.id ? (
-                              <>
-                                <button type="button" className="button danger" onClick={() => void remove(item)} disabled={deletingId === item.id}>
-                                  {deletingId === item.id ? '삭제 중...' : '정말 삭제'}
-                                </button>
-                                <button type="button" className="button secondary" onClick={() => setConfirmId(null)} disabled={deletingId === item.id}>
-                                  취소
-                                </button>
-                              </>
-                            ) : (
-                              <button type="button" className="button v4p-btn-danger-soft" onClick={() => setConfirmId(item.id)} disabled={saving}>
-                                삭제
-                              </button>
-                            )}
-                          </div>
-                        ) : null}
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 )}
+                {data?.truncated ? <p className="small muted" style={{ marginTop: 10 }}>실험이 매우 많아서 가장 최근 1,000개만 보여줘요.</p> : null}
               </Card>
             ) : null}
           </>

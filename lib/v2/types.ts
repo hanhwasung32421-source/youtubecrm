@@ -145,6 +145,16 @@ export type OptimizationRow = {
   improvementScore: number // 0~4, 높을수록 개선 필요
 }
 
+// 고칠 곳 개수(0~4). 서버 정렬과 화면의 즉시 갱신이 같은 계산을 쓰도록 한 곳에 둔다.
+export function improvementScoreOf(row: Pick<OptimizationRow, 'titleLengthOk' | 'titleHasStock' | 'hasDescription' | 'latestReview'>): number {
+  let score = 0
+  if (!row.titleLengthOk) score += 1
+  if (!row.titleHasStock) score += 1
+  if (!row.hasDescription) score += 1
+  if (!row.latestReview || row.latestReview.rating < 3) score += 1
+  return score
+}
+
 // ---- 검색 성과 리포트 ----
 export type DiscoverabilityRow = {
   video: VideoLite
@@ -159,8 +169,8 @@ export type DiscoverabilityRow = {
 
 // ---- 응답 payload 타입 ----
 export type SeoChecklistsPayload = { items: SeoChecklist[]; sample?: boolean; error?: string }
-export type OptimizationPayload = { items: OptimizationRow[]; sample?: boolean; error?: string }
-export type KeywordsPayload = { items: KeywordRadarItem[]; recentStocks: RecentStock[]; sample?: boolean; error?: string }
+export type OptimizationPayload = { items: OptimizationRow[]; capped?: boolean; sample?: boolean; error?: string }
+export type KeywordsPayload = { items: KeywordRadarItem[]; recentStocks: RecentStock[]; doneTotal?: number; sample?: boolean; error?: string }
 export type PlannerPayload = {
   weekStart: string
   days: string[]
@@ -174,6 +184,7 @@ export type PlannerPayload = {
 export type ReportPayload = {
   items: DiscoverabilityRow[]
   insight: string
+  capped?: boolean
   sample?: boolean
   error?: string
 }

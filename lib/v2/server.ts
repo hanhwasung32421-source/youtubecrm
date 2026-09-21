@@ -1,7 +1,6 @@
 // V2 API 라우트 공용 서버 헬퍼. 클라이언트 컴포넌트에서 import 금지.
 import { NextResponse } from 'next/server'
 import { getBearerToken, getProfileByAccessToken } from '@/lib/auth/session'
-import { errorResponse } from '@/lib/api/error-response'
 import { TABLES } from '@/lib/supabase/tables'
 import { V2_MISSING_TABLE_MESSAGE, V2_TABLES } from './tables'
 import { addDays, kstDayStart, kstHourOfIso, kstWeekdayOfIso, kstYmd, daysSince } from './dates'
@@ -65,11 +64,32 @@ export function unauthorizedResponse(e: unknown) {
   return NextResponse.json({ error: message }, { status: 401 })
 }
 
-// zod 검증 실패는 400, 권한 오류는 401/403, 나머지는 공통 errorResponse
+const HANGUL = /[가-힣]/
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+export function isUuid(value: unknown): value is string {
+  return typeof value === 'string' && UUID_RE.test(value)
+}
+
+// 실제 원인은 서버 로그에만 남기고, 사용자에게는 "무엇을 하면 되는지" 한 문장만 내려준다.
+export function serverError(error: unknown, fallback: string, status = 500) {
+  console.error('[v2]', fallback, error)
+  return NextResponse.json({ error: fallback }, { status })
+}
+
+// 사용자가 볼 수 있는 한글 문장인지 (영문 시스템 메시지 차단)
+function userFacingText(message: string | undefined, fallback: string) {
+  return message && HANGUL.test(message) ? message : fallback
+}
+
+// zod 검증 실패는 400, 권한 오류는 401/403, 나머지는 한글 안내 문장만 내려준다(원본 오류는 서버 로그에만).
 export function handleRouteError(e: unknown, fallback: string) {
   const issues = (e as { issues?: { message?: string }[] })?.issues
-  if (issues?.[0]?.message) {
-    return NextResponse.json({ error: issues[0].message }, { status: 400 })
+  if (issues?.length) {
+    return NextResponse.json({ error: userFacingText(issues[0]?.message, '입력한 내용을 다시 확인해 주세요.') }, { status: 400 })
+  }
+  if (e instanceof SyntaxError) {
+    return NextResponse.json({ error: '입력한 내용을 다시 확인해 주세요.' }, { status: 400 })
   }
   if (e instanceof Error && /관리자 권한이 필요/.test(e.message)) {
     return forbidden(e.message)
@@ -77,12 +97,38 @@ export function handleRouteError(e: unknown, fallback: string) {
   if (e instanceof Error && /로그인이 필요|프로필을 찾을 수 없/.test(e.message)) {
     return unauthorizedResponse(e)
   }
-  return errorResponse(e, fallback)
+  return serverError(e, fallback)
 }
 
-export function handleDbError(error: unknown, fallback: string) {
+// Postgres 오류 코드를 쉬운 말로 바꾼다. 23505=중복, 23503=연결된 정보 없음, 23514/23502/22xxx=입력값 문제.
+export function handleDbError(error: unknown, fallback: string, duplicateMessage = '이미 같은 내용이 있어요.') {
   if (isMissingTableError(error)) return missingTableResponse()
-  return errorResponse(error, fallback)
+  const code = (error as { code?: string } | null)?.code
+  if (code === '23505') return NextResponse.json({ error: duplicateMessage }, { status: 409 })
+  if (code === '23503') {
+    return NextResponse.json({ error: '연결된 정보를 찾을 수 없어요. 화면을 새로고침한 뒤 다시 시도해 주세요.' }, { status: 400 })
+  }
+  if (code && /^(23514|23502|22P02|22007|22008|22001)$/.test(code)) {
+    return NextResponse.json({ error: '입력한 내용을 다시 확인해 주세요.' }, { status: 400 })
+  }
+  return serverError(error, fallback)
+}
+
+// PostgREST 는 한 번에 최대 1000행까지만 돌려준다. 그 이상이 필요할 때 나눠서 모두 가져온다.
+export async function selectAllPages<T>(
+  build: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: unknown }>,
+  max = 5000,
+  pageSize = 1000
+): Promise<T[]> {
+  const rows: T[] = []
+  for (let from = 0; from < max; from += pageSize) {
+    const { data, error } = await build(from, from + pageSize - 1)
+    if (error) throw error
+    const page = data || []
+    rows.push(...page)
+    if (page.length < pageSize) break
+  }
+  return rows
 }
 
 const VIDEO_SELECT =
@@ -113,15 +159,18 @@ export async function loadStaffMap(supabaseAdmin: SupabaseAdmin): Promise<Map<st
 // 최근 N일 등록 영상의 종목명 집계 — 키워드 레이더 중복 소재 경고에 사용
 export async function loadRecentStocks(supabaseAdmin: SupabaseAdmin, days = 7): Promise<RecentStock[]> {
   const start = kstDayStart(addDays(kstYmd(), -(days - 1))).toISOString()
-  const { data, error } = await supabaseAdmin
-    .from(TABLES.videos)
-    .select('stock_name, created_at')
-    .gte('created_at', start)
-    .order('created_at', { ascending: false })
-    .limit(2000)
-  if (error) return []
+  type Row = { stock_name: string; created_at: string }
+  let data: Row[] = []
+  try {
+    data = await selectAllPages<Row>(
+      (from, to) => supabaseAdmin.from(TABLES.videos).select('stock_name, created_at').gte('created_at', start).order('created_at', { ascending: false }).range(from, to),
+      3000
+    )
+  } catch {
+    return []
+  }
   const map = new Map<string, RecentStock>()
-  for (const row of (data || []) as { stock_name: string; created_at: string }[]) {
+  for (const row of data) {
     const name = String(row.stock_name || '').trim()
     if (!name) continue
     const bucket = map.get(name)
@@ -157,25 +206,36 @@ function chunkIds(ids: string[], size = 100): string[][] {
 
 export async function loadChecklistMap(supabaseAdmin: SupabaseAdmin, videoIds: string[]): Promise<Map<string, SeoChecklist>> {
   const map = new Map<string, SeoChecklist>()
-  for (const ids of chunkIds(videoIds)) {
-    const { data, error } = await supabaseAdmin.from(V2_TABLES.seoChecklists).select('*').in('video_id', ids)
-    if (error) throw error
-    for (const row of (data || []) as SeoChecklist[]) map.set(row.video_id, row)
-  }
+  const results = await Promise.all(
+    chunkIds(videoIds).map(async (ids) => {
+      const { data, error } = await supabaseAdmin.from(V2_TABLES.seoChecklists).select('*').in('video_id', ids)
+      if (error) throw error
+      return (data || []) as SeoChecklist[]
+    })
+  )
+  for (const rows of results) for (const row of rows) map.set(row.video_id, row)
   return map
 }
 
 // 영상별 최신 썸네일 리뷰(자가평가) — created_at 내림차순 첫 건
 export async function loadLatestReviewMap(supabaseAdmin: SupabaseAdmin, videoIds: string[]): Promise<Map<string, ThumbnailReview>> {
   const map = new Map<string, ThumbnailReview>()
-  for (const ids of chunkIds(videoIds)) {
-    const { data, error } = await supabaseAdmin
-      .from(V2_TABLES.thumbnailReviews)
-      .select('id, video_id, rating, note, reviewed_by, created_at')
-      .in('video_id', ids)
-      .order('created_at', { ascending: false })
-    if (error) throw error
-    for (const row of (data || []) as ThumbnailReview[]) {
+  const results = await Promise.all(
+    chunkIds(videoIds).map((ids) =>
+      selectAllPages<ThumbnailReview>(
+        (from, to) =>
+          supabaseAdmin
+            .from(V2_TABLES.thumbnailReviews)
+            .select('id, video_id, rating, note, reviewed_by, created_at')
+            .in('video_id', ids)
+            .order('created_at', { ascending: false })
+            .range(from, to),
+        5000
+      )
+    )
+  )
+  for (const rows of results) {
+    for (const row of rows) {
       if (!map.has(row.video_id)) map.set(row.video_id, row)
     }
   }

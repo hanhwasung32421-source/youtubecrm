@@ -7,6 +7,9 @@ import { createSupabaseBrowserClient } from '@/lib/supabase/browser-client'
 import { fetchMe } from '@/lib/session/me-client'
 import { V2_HOME_HREF } from '@/lib/v2/menu'
 
+type FieldKey = 'loginId' | 'password' | 'name' | 'birthDate' | 'phone' | 'antiBot'
+type InputRef = React.RefObject<HTMLInputElement | null>
+
 export default function SignupPage() {
   const router = useRouter()
   const [loginId, setLoginId] = useState('')
@@ -26,21 +29,40 @@ export default function SignupPage() {
   const [emailCheckError, setEmailCheckError] = useState('')
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<FieldKey, string>>>({})
+
+  const emailRef = useRef<HTMLInputElement | null>(null)
+  const loginIdRef = useRef<HTMLInputElement | null>(null)
+  const passwordRef = useRef<HTMLInputElement | null>(null)
+  const nameRef = useRef<HTMLInputElement | null>(null)
+  const birthRef = useRef<HTMLInputElement | null>(null)
   const phoneMidRef = useRef<HTMLInputElement | null>(null)
   const phoneLastRef = useRef<HTMLInputElement | null>(null)
-  const emailRef = useRef<HTMLInputElement | null>(null)
-  const birthRef = useRef<HTMLInputElement | null>(null)
+  const antiBotRef = useRef<HTMLInputElement | null>(null)
 
   const refresh = async () => {
     setAntiBotCode('')
-    const res = await fetch('/api/auth/challenge')
-    const data = (await res.json()) as { code: string }
-    setChallengeCode(data.code)
+    try {
+      const res = await fetch('/api/auth/challenge')
+      const data = (await res.json()) as { code: string }
+      setChallengeCode(data.code)
+    } catch {
+      setChallengeCode('----')
+    }
   }
 
   useEffect(() => {
     void refresh()
   }, [])
+
+  const setFieldError = (key: FieldKey, text: string) => setFieldErrors((prev) => ({ ...prev, [key]: text }))
+  const clearFieldError = (key: FieldKey) =>
+    setFieldErrors((prev) => {
+      if (!prev[key]) return prev
+      const next = { ...prev }
+      delete next[key]
+      return next
+    })
 
   const checkEmailDuplicate = async () => {
     setError('')
@@ -49,6 +71,7 @@ export default function SignupPage() {
 
     if (!email.trim()) {
       setEmailCheckError('이메일을 먼저 입력해 주세요.')
+      emailRef.current?.focus()
       return
     }
 
@@ -76,6 +99,7 @@ export default function SignupPage() {
       setEmailChecked(true)
       setEmailCheckedValue(email.trim())
       setMessage('사용 가능한 이메일입니다.')
+      setTimeout(() => loginIdRef.current?.focus(), 0)
     } catch (e: any) {
       setEmailCheckError(e?.message || '이메일 중복확인 중 오류가 발생했습니다.')
     } finally {
@@ -83,17 +107,46 @@ export default function SignupPage() {
     }
   }
 
+  // 빈칸·형식 오류를 칸 바로 아래에 알려 주고, 첫 문제 칸으로 커서를 옮긴다.
+  const validate = (): boolean => {
+    const errors: Partial<Record<FieldKey, string>> = {}
+    const order: InputRef[] = []
+    const add = (key: FieldKey, text: string, ref: InputRef) => {
+      errors[key] = text
+      order.push(ref)
+    }
+
+    if (loginId.trim().length < 2) add('loginId', '아이디를 2자 이상 적어 주세요.', loginIdRef)
+    if (password.length < 6) add('password', '비밀번호는 6자 이상이에요.', passwordRef)
+    if (!name.trim()) add('name', '이름을 적어 주세요.', nameRef)
+    if (!/^\d{8}$/.test(birthDate)) add('birthDate', '생년월일 숫자 8자리를 적어 주세요. (예: 19950710)', birthRef)
+    if (!/^\d{4}$/.test(phoneMid)) add('phone', '전화번호 가운데 4자리를 적어 주세요.', phoneMidRef)
+    else if (!/^\d{4}$/.test(phoneLast)) add('phone', '전화번호 마지막 4자리를 적어 주세요.', phoneLastRef)
+    if (!/^\d{4}$/.test(antiBotCode)) add('antiBot', '왼쪽에 보이는 숫자 4자리를 그대로 적어 주세요.', antiBotRef)
+
+    setFieldErrors(errors)
+    if (order.length > 0) {
+      order[0].current?.focus()
+      return false
+    }
+    return true
+  }
+
   const onSubmit = async () => {
     setError('')
     setMessage('')
+    setFieldErrors({})
+
+    if (!emailChecked || emailCheckedValue !== email.trim()) {
+      setEmailChecked(false)
+      await checkEmailDuplicate()
+      return
+    }
+    if (!validate()) return
+
     setLoading(true)
 
     try {
-      if (!emailChecked || emailCheckedValue !== email.trim()) {
-        setError('이메일 중복확인을 먼저 완료해 주세요.')
-        return
-      }
-
       const res = await fetch('/api/auth/signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -111,8 +164,19 @@ export default function SignupPage() {
 
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
-        setError(data?.error || '회원가입에 실패했습니다.')
+        const text: string = data?.error || '회원가입에 실패했습니다.'
+        const isAntiBot = /자동가입방지/.test(text)
+        // 서버가 알려 준 문제를 해당 칸 아래에 붙여 준다.
+        if (isAntiBot) {
+          setFieldError('antiBot', text)
+        } else if (/아이디/.test(text)) {
+          setFieldError('loginId', text)
+          loginIdRef.current?.focus()
+        } else {
+          setError(text)
+        }
         await refresh()
+        if (isAntiBot) antiBotRef.current?.focus()
         return
       }
 
@@ -153,90 +217,173 @@ export default function SignupPage() {
     }
   }
 
+  // Enter: 이메일 확인 전이면 중복확인, 확인 뒤에는 가입 진행
+  const onFormSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (loading) return
+    void onSubmit()
+  }
+
   return (
     <div className="auth-wrap">
       <div className="auth-shell">
         <div className="panel soft">
           <img className="auth-logo" src="/logo-ant.png" alt="" width={56} height={56} />
           <div className="panel-title">회원가입</div>
-          <p className="panel-subtitle">
-            먼저 이메일 중복확인을 하면 나머지 정보를 입력할 수 있어요.
-          </p>
+          <p className="panel-subtitle">먼저 이메일 중복확인을 하면 나머지 정보를 입력할 수 있어요.</p>
         </div>
 
-        <div className="panel form-stack">
+        <form className="panel v2-signup-form" onSubmit={onFormSubmit} noValidate>
           <div className="field">
-            <label className="label">이메일</label>
+            <label className="label" htmlFor="v2-su-email">
+              이메일
+            </label>
             <div className="row">
               <input
+                id="v2-su-email"
                 ref={emailRef}
                 className="input"
+                type="email"
+                inputMode="email"
+                autoComplete="email"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                readOnly={loading}
+                onChange={(e) => {
+                  setEmail(e.target.value)
+                  setEmailCheckError('')
+                }}
                 onBlur={() => {
                   if (emailCheckedValue !== email.trim()) {
                     setEmailChecked(false)
                   }
                 }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.nativeEvent.isComposing && !emailChecked) {
-                    e.preventDefault()
-                    void checkEmailDuplicate()
-                  }
-                }}
+                aria-invalid={emailCheckError ? true : undefined}
+                aria-describedby="v2-su-email-help"
                 autoFocus
               />
-              <button className="button secondary nowrap" type="button" disabled={loading} onClick={checkEmailDuplicate}>
-                {loading ? '확인 중...' : '중복확인'}
+              <button className="button secondary nowrap" type="button" disabled={loading} onClick={() => void checkEmailDuplicate()}>
+                {loading ? '확인 중...' : emailChecked ? '확인됨 ✓' : '중복확인'}
               </button>
             </div>
-            {emailCheckError ? <div className="message-error small">{emailCheckError}</div> : null}
+            <div className="v2-field-help" id="v2-su-email-help">
+              이미 가입한 이메일인지 확인해요. Enter를 눌러도 됩니다.
+            </div>
+            {emailCheckError ? <div className="v2-field-error">{emailCheckError}</div> : null}
           </div>
 
           {emailChecked ? (
             <>
               <div className="field">
-                <label className="label">아이디</label>
-                <input className="input" value={loginId} onChange={(e) => setLoginId(e.target.value)} />
-              </div>
-              <div className="field">
-                <label className="label">비밀번호 (6자 이상)</label>
-                <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-              </div>
-              <div className="field">
-                <label className="label">이름</label>
-                <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
-              </div>
-              <div className="field">
-                <label className="label">생년월일</label>
+                <label className="label" htmlFor="v2-su-loginid">
+                  아이디
+                </label>
                 <input
+                  id="v2-su-loginid"
+                  ref={loginIdRef}
+                  className="input"
+                  autoComplete="username"
+                  value={loginId}
+                  readOnly={loading}
+                  onChange={(e) => {
+                    setLoginId(e.target.value)
+                    clearFieldError('loginId')
+                  }}
+                  aria-invalid={fieldErrors.loginId ? true : undefined}
+                />
+                <div className="v2-field-help">로그인할 때 이메일 대신 쓸 수 있는 이름이에요. (2자 이상)</div>
+                {fieldErrors.loginId ? <div className="v2-field-error">{fieldErrors.loginId}</div> : null}
+              </div>
+
+              <div className="field">
+                <label className="label" htmlFor="v2-su-password">
+                  비밀번호
+                </label>
+                <input
+                  id="v2-su-password"
+                  ref={passwordRef}
+                  className="input"
+                  type="password"
+                  autoComplete="new-password"
+                  value={password}
+                  readOnly={loading}
+                  onChange={(e) => {
+                    setPassword(e.target.value)
+                    clearFieldError('password')
+                  }}
+                  aria-invalid={fieldErrors.password ? true : undefined}
+                />
+                <div className="v2-field-help">6자 이상으로 만들어 주세요.</div>
+                {fieldErrors.password ? <div className="v2-field-error">{fieldErrors.password}</div> : null}
+              </div>
+
+              <div className="field">
+                <label className="label" htmlFor="v2-su-name">
+                  이름
+                </label>
+                <input
+                  id="v2-su-name"
+                  ref={nameRef}
+                  className="input"
+                  autoComplete="name"
+                  value={name}
+                  readOnly={loading}
+                  onChange={(e) => {
+                    setName(e.target.value)
+                    clearFieldError('name')
+                  }}
+                  aria-invalid={fieldErrors.name ? true : undefined}
+                />
+                {fieldErrors.name ? <div className="v2-field-error">{fieldErrors.name}</div> : null}
+              </div>
+
+              <div className="field">
+                <label className="label" htmlFor="v2-su-birth">
+                  생년월일
+                </label>
+                <input
+                  id="v2-su-birth"
                   ref={birthRef}
                   className="input"
                   value={birthDate}
+                  readOnly={loading}
                   onChange={(e) => {
                     const next = e.target.value.replace(/[^\d]/g, '').slice(0, 8)
                     setBirthDate(next)
+                    clearFieldError('birthDate')
                     if (next.length === 8) phoneMidRef.current?.focus()
                   }}
                   placeholder="19950710"
                   inputMode="numeric"
+                  autoComplete="off"
+                  aria-invalid={fieldErrors.birthDate ? true : undefined}
                 />
+                <div className="v2-field-help">숫자 8자리만 적어 주세요.</div>
+                {fieldErrors.birthDate ? <div className="v2-field-error">{fieldErrors.birthDate}</div> : null}
               </div>
+
               <div className="field">
-                <label className="label">전화번호</label>
+                <label className="label" htmlFor="v2-su-phone-mid">
+                  전화번호
+                </label>
                 <div className="row">
-                  <input className="input" style={{ maxWidth: 90, textAlign: 'center' }} value="010" disabled />
+                  <input className="input" style={{ maxWidth: 90, textAlign: 'center' }} value="010" disabled aria-label="전화번호 앞자리" />
                   <span className="muted">-</span>
                   <input
+                    id="v2-su-phone-mid"
                     ref={phoneMidRef}
                     className="input"
                     style={{ maxWidth: 120, textAlign: 'center' }}
                     value={phoneMid}
                     maxLength={4}
                     inputMode="numeric"
+                    autoComplete="off"
+                    readOnly={loading}
+                    aria-label="전화번호 가운데 4자리"
+                    aria-invalid={fieldErrors.phone ? true : undefined}
                     onChange={(e) => {
                       const next = e.target.value.replace(/[^\d]/g, '').slice(0, 4)
                       setPhoneMid(next)
+                      clearFieldError('phone')
                       if (next.length === 4) phoneLastRef.current?.focus()
                     }}
                   />
@@ -248,46 +395,75 @@ export default function SignupPage() {
                     value={phoneLast}
                     maxLength={4}
                     inputMode="numeric"
+                    autoComplete="off"
+                    readOnly={loading}
+                    aria-label="전화번호 마지막 4자리"
+                    aria-invalid={fieldErrors.phone ? true : undefined}
                     onChange={(e) => {
                       const next = e.target.value.replace(/[^\d]/g, '').slice(0, 4)
                       setPhoneLast(next)
-                      if (next.length === 4) setTimeout(() => emailRef.current?.focus(), 0)
+                      clearFieldError('phone')
+                      if (next.length === 4) setTimeout(() => antiBotRef.current?.focus(), 0)
                     }}
                   />
                 </div>
+                <div className="v2-field-help">010은 미리 들어 있어요. 뒤의 8자리만 적어 주세요.</div>
+                {fieldErrors.phone ? <div className="v2-field-error">{fieldErrors.phone}</div> : null}
               </div>
-              <div className="panel soft">
-                <div className="row-between">
-                  <span className="label">자동가입방지</span>
-                  <button className="button secondary" onClick={refresh}>
-                    새로 만들기
-                  </button>
-                </div>
-                <div className="row-between" style={{ marginTop: 12 }}>
-                  <div className="card-value">{challengeCode}</div>
+
+              <div className="field">
+                <label className="label" htmlFor="v2-su-antibot">
+                  자동가입방지
+                </label>
+                <div className="row">
+                  <div className="card-value" aria-label={`보이는 숫자 ${challengeCode.split('').join(' ')}`}>
+                    {challengeCode}
+                  </div>
                   <input
+                    id="v2-su-antibot"
+                    ref={antiBotRef}
                     className="input"
                     style={{ maxWidth: 140, textAlign: 'center' }}
                     value={antiBotCode}
                     maxLength={4}
-                    onChange={(e) => setAntiBotCode(e.target.value)}
+                    readOnly={loading}
+                    onChange={(e) => {
+                      setAntiBotCode(e.target.value.replace(/[^\d]/g, '').slice(0, 4))
+                      clearFieldError('antiBot')
+                    }}
                     placeholder="4자리"
                     inputMode="numeric"
+                    autoComplete="off"
+                    aria-invalid={fieldErrors.antiBot ? true : undefined}
                   />
+                  <button className="button secondary nowrap" type="button" disabled={loading} onClick={() => void refresh()}>
+                    새로 만들기
+                  </button>
                 </div>
+                <div className="v2-field-help">왼쪽에 보이는 숫자 4자리를 그대로 적어 주세요.</div>
+                {fieldErrors.antiBot ? <div className="v2-field-error">{fieldErrors.antiBot}</div> : null}
               </div>
-              <button className="button" disabled={loading} onClick={onSubmit}>
+
+              <button className="button" type="submit" disabled={loading}>
                 {loading ? '처리 중...' : '가입하기'}
               </button>
             </>
           ) : null}
 
-          {error ? <div className="message-error small">{error}</div> : null}
-          {message ? <div className="message-success small">{message}</div> : null}
+          {error ? (
+            <div className="message-error small" role="alert">
+              {error}
+            </div>
+          ) : null}
+          {message ? (
+            <div className="message-success small" role="status">
+              {message}
+            </div>
+          ) : null}
           <div className="small muted">
             이미 계정이 있나요? <Link className="link" href="/v2/login">로그인</Link>
           </div>
-        </div>
+        </form>
       </div>
     </div>
   )
