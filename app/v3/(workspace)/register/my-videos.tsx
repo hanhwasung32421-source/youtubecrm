@@ -42,10 +42,25 @@ type Handlers = {
   onNotice: (text: string, tone: 'success' | 'error') => void
 }
 
-function VideoRow({ video, today, highlight, stockListId, ...handlers }: { video: MineVideo; today: boolean; highlight: boolean } & Handlers) {
+function VideoRow({
+  video,
+  today,
+  highlight,
+  quickFix,
+  stockListId,
+  ...handlers
+}: { video: MineVideo; today: boolean; highlight: boolean; quickFix: boolean } & Handlers) {
   const [mode, setMode] = useState<'view' | 'edit' | 'delete'>('view')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+
+  // 가장 최근에 등록한 줄에서는 종목만 그 자리에서 바로 고칠 수 있다(수정 창을 열지 않고).
+  const [fixing, setFixing] = useState(false)
+  const [fixValue, setFixValue] = useState('')
+  const [fixBusy, setFixBusy] = useState(false)
+  const [fixError, setFixError] = useState('')
+  const fixInputRef = useRef<HTMLInputElement | null>(null)
+  const fixBtnRef = useRef<HTMLButtonElement | null>(null)
 
   const [stock, setStock] = useState('')
   const [type, setType] = useState<ContentType>('longform')
@@ -129,6 +144,49 @@ function VideoRow({ video, today, highlight, stockListId, ...handlers }: { video
     })
     handlers.onNotice('수정했어요.', 'success')
     close('edit')
+  }
+
+  const openFix = () => {
+    setFixValue(video.stock_name || '')
+    setFixError('')
+    setFixing(true)
+    window.setTimeout(() => fixInputRef.current?.select(), 0)
+  }
+
+  const closeFix = () => {
+    setFixing(false)
+    setFixError('')
+    window.setTimeout(() => fixBtnRef.current?.focus(), 0)
+  }
+
+  const saveFix = async (e?: React.FormEvent) => {
+    e?.preventDefault()
+    if (fixBusy) return
+    const next = fixValue.replace(/\s+/g, ' ').trim()
+    if (!next) {
+      setFixError('종목명을 입력해 주세요.')
+      fixInputRef.current?.focus()
+      return
+    }
+    if (next === (video.stock_name || '')) {
+      closeFix()
+      return
+    }
+    setFixBusy(true)
+    setFixError('')
+    const res = await callMyVideo<{ video?: { stock_name: string | null; content_type: ContentType } }>(video.id, 'PATCH', { stock_name: next })
+    if (!alive.current) return
+    setFixBusy(false)
+    if (!res.ok) {
+      setFixError(res.message)
+      return
+    }
+    handlers.onPatched(video.id, {
+      stock_name: res.data?.video?.stock_name ?? next,
+      content_type: res.data?.video?.content_type ?? video.content_type
+    })
+    handlers.onNotice('종목을 바꿨어요.', 'success')
+    closeFix()
   }
 
   const remove = async () => {
@@ -240,9 +298,54 @@ function VideoRow({ video, today, highlight, stockListId, ...handlers }: { video
         ) : (
           <div className="v3-cell-clip">{title}</div>
         )}
-        {video.stock_name || highlight ? (
+        {video.stock_name || highlight || quickFix ? (
           <div className="v3-cell-sub">
-            {video.stock_name}
+            {fixing ? (
+              <form
+                className="v3-quickfix-form"
+                onSubmit={saveFix}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape' && !fixBusy) {
+                    e.stopPropagation()
+                    closeFix()
+                  }
+                }}
+                noValidate
+              >
+                <input
+                  ref={fixInputRef}
+                  className="input v3-quickfix-input"
+                  aria-label="종목 고치기"
+                  autoFocus
+                  autoComplete="off"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  enterKeyHint="done"
+                  list={stockListId}
+                  value={fixValue}
+                  readOnly={fixBusy}
+                  onChange={(e) => {
+                    setFixValue(e.target.value)
+                    if (fixError) setFixError('')
+                  }}
+                />
+                <button type="submit" className="button xs" disabled={fixBusy}>
+                  {fixBusy ? '저장 중…' : '저장'}
+                </button>
+                <button type="button" className="button secondary xs" disabled={fixBusy} onClick={closeFix}>
+                  취소
+                </button>
+                <span className="v3-edit-error" role="alert">{fixError}</span>
+              </form>
+            ) : quickFix ? (
+              <button ref={fixBtnRef} type="button" className="v3-stock-fix" onClick={openFix} aria-label={`종목 고치기: ${video.stock_name || '아직 없음'}`}>
+                {video.stock_name || '종목 입력'}
+                <span aria-hidden> ✎</span>
+              </button>
+            ) : (
+              video.stock_name
+            )}
             {highlight ? <span className="v3-tag green v3-just-added">방금 등록</span> : null}
           </div>
         ) : null}
@@ -266,11 +369,12 @@ function VideoRow({ video, today, highlight, stockListId, ...handlers }: { video
 export function MyVideosList({
   videos,
   highlightIds,
+  quickFixId,
   onPatched,
   onDeleted,
   onNotice,
   stockListId
-}: { videos: MineVideo[]; highlightIds: Set<string> } & Handlers) {
+}: { videos: MineVideo[]; highlightIds: Set<string>; quickFixId?: string | null } & Handlers) {
   const today = videos.filter((v) => isTodayKst(v.created_at))
   const earlier = videos.filter((v) => !isTodayKst(v.created_at))
   const [showEarlier, setShowEarlier] = useState(false)
@@ -295,11 +399,11 @@ export function MyVideosList({
           </div>
         ) : null}
         {today.map((video) => (
-          <VideoRow key={video.id} video={video} today highlight={highlightIds.has(video.id)} {...handlers} />
+          <VideoRow key={video.id} video={video} today highlight={highlightIds.has(video.id)} quickFix={video.id === quickFixId} {...handlers} />
         ))}
         {earlierOpen
           ? earlier.slice(0, 8).map((video) => (
-              <VideoRow key={video.id} video={video} today={false} highlight={highlightIds.has(video.id)} {...handlers} />
+              <VideoRow key={video.id} video={video} today={false} highlight={highlightIds.has(video.id)} quickFix={video.id === quickFixId} {...handlers} />
             ))
           : null}
       </div>

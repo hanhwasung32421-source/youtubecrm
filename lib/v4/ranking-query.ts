@@ -9,7 +9,8 @@ export type RankFormat = '' | 'longform' | 'shortform'
 // 새 파라미터 없이 부르던 예전 화면이 받던 응답을 너무 크지 않게 자르는 상한
 export const RANK_LEGACY_MAX = 500
 export const RANK_DEFAULT_LIMIT = 10
-export const RANK_MAX_LIMIT = 100
+// 내려받기(CSV)가 200개씩 이어 받을 수 있도록 200 까지 허용한다.
+export const RANK_MAX_LIMIT = 200
 const MAX_OFFSET = 100000
 const MAX_QUERY_LENGTH = 60
 
@@ -21,13 +22,23 @@ export type RankQuery = {
   staffId: string
   format: RankFormat
   q: string
-  // 새 파라미터(sort/dir/limit/offset/staffId/format/q)가 하나도 없으면 true → 예전 응답 모양 유지
+  // 올린 요일(0=일~6=토)·시각(0~23), 한국 시간. 없으면 null
+  dow: number | null
+  hour: number | null
+  // 새 파라미터(sort/dir/limit/offset/staffId/format/q/dow/hour)가 하나도 없으면 true → 예전 응답 모양 유지
   legacy: boolean
 }
 
 type ParamReader = { get(name: string): string | null }
 
-const NEW_PARAMS = ['sort', 'dir', 'limit', 'offset', 'staffId', 'format', 'q'] as const
+const NEW_PARAMS = ['sort', 'dir', 'limit', 'offset', 'staffId', 'format', 'q', 'dow', 'hour'] as const
+
+// 범위 안의 정수만 받는다. 비었거나 이상하면 null (= 그 필터를 쓰지 않음).
+function toOptionalInt(raw: string | null, min: number, max: number): number | null {
+  if (raw === null || raw.trim() === '') return null
+  const n = Number(raw)
+  return Number.isInteger(n) && n >= min && n <= max ? n : null
+}
 
 function toInt(raw: string | null, fallback: number, min: number, max: number) {
   if (raw === null || raw.trim() === '') return fallback
@@ -51,6 +62,8 @@ export function parseRankQuery(params: ParamReader): RankQuery {
     staffId: (params.get('staffId') || '').trim().slice(0, 64),
     format,
     q: (params.get('q') || '').trim().slice(0, MAX_QUERY_LENGTH),
+    dow: toOptionalInt(params.get('dow'), 0, 6),
+    hour: toOptionalInt(params.get('hour'), 0, 23),
     legacy
   }
 }
@@ -68,17 +81,38 @@ export type RankLike = {
   velocity: number
   likeRate: number
   createdAt: string
+  // 타이밍 화면과 같은 기준(게시 시각, 없으면 등록 시각)으로 요일·시각을 계산하려고 필요하다.
+  publishedAt?: string | null
 }
 
-export function filterRanked<T extends RankLike>(items: T[], filter: { staffId?: string; format?: RankFormat; q?: string }): T[] {
+const KST_OFFSET_MS = 9 * 60 * 60 * 1000
+
+// 한국 시간 기준 요일(0=일)·시각. 이상한 값이면 null. (analytics 의 kstWeekdayHour 와 같은 계산)
+export function kstSlotOf(iso: string | null | undefined): { weekday: number; hour: number } | null {
+  if (!iso) return null
+  const ms = new Date(iso).getTime()
+  if (!Number.isFinite(ms)) return null
+  const kst = new Date(ms + KST_OFFSET_MS)
+  return { weekday: kst.getUTCDay(), hour: kst.getUTCHours() }
+}
+
+export function filterRanked<T extends RankLike>(items: T[], filter: { staffId?: string; format?: RankFormat; q?: string; dow?: number | null; hour?: number | null }): T[] {
   const staffId = filter.staffId || ''
   const format = filter.format || ''
   const q = (filter.q || '').trim().toLowerCase()
-  if (!staffId && !format && !q) return items
+  const dow = typeof filter.dow === 'number' ? filter.dow : null
+  const hour = typeof filter.hour === 'number' ? filter.hour : null
+  if (!staffId && !format && !q && dow === null && hour === null) return items
   return items.filter((v) => {
     if (staffId && v.ownerId !== staffId) return false
     if (format && v.contentType !== format) return false
     if (q && !v.stockName.toLowerCase().includes(q) && !v.title.toLowerCase().includes(q)) return false
+    if (dow !== null || hour !== null) {
+      const slot = kstSlotOf(v.publishedAt || v.createdAt)
+      if (!slot) return false
+      if (dow !== null && slot.weekday !== dow) return false
+      if (hour !== null && slot.hour !== hour) return false
+    }
     return true
   })
 }

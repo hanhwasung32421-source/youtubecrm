@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
+import { TABLES } from '@/lib/supabase/tables'
 import { V2_TABLES } from '@/lib/v2/tables'
 import {
   authedContext,
@@ -12,7 +13,9 @@ import {
   loadRecentStocks,
   loadStaffMap,
   noStoreJson,
-  nowIso
+  nowIso,
+  selectAllPages,
+  type SupabaseAdmin
 } from '@/lib/v2/server'
 import { sampleKeywordsPayload } from '@/lib/v2/sample-data'
 import { KEYWORD_STATUSES, PRIORITIES, type KeywordRadarItem, type KeywordsPayload } from '@/lib/v2/types'
@@ -61,7 +64,28 @@ const patchSchema = z.object({
 const SELECT = 'id, stock_name, keyword, source_url, priority, status, created_by, created_at, updated_at'
 
 const PRIORITY_ORDER: Record<string, number> = { high: 0, normal: 1, low: 2 }
+const COUNT_STOCKS_MAX = 60 // 영상 수를 세어 줄 종목 수(할 일 키워드의 종목만)
 const DONE_KEEP = 100 // 완료된 키워드는 최근 100개만 함께 내려준다(할 일이 완료 목록에 밀려 잘리지 않도록 분리 조회)
+
+// 종목 이름 목록(중복 가능)에 대해 등록된 영상 수를 센다. 종목명이 정확히 같은 영상만 센다.
+async function loadVideoCounts(supabaseAdmin: SupabaseAdmin, stockNames: string[]): Promise<Record<string, number>> {
+  const names = [...new Set(stockNames.map((n) => n.trim()).filter(Boolean))].slice(0, COUNT_STOCKS_MAX)
+  if (names.length === 0) return {}
+  try {
+    const rows = await selectAllPages<{ stock_name: string }>(
+      (from, to) => supabaseAdmin.from(TABLES.videos).select('stock_name').in('stock_name', names).order('id', { ascending: true }).range(from, to),
+      5000
+    )
+    const counts: Record<string, number> = {}
+    for (const row of rows) {
+      const name = String(row.stock_name || '').trim()
+      if (name) counts[name] = (counts[name] || 0) + 1
+    }
+    return counts
+  } catch {
+    return {}
+  }
+}
 
 export async function GET(request: Request) {
   try {
@@ -91,7 +115,13 @@ export async function GET(request: Request) {
         return aDone - bDone || PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority] || (a.created_at < b.created_at ? 1 : -1)
       })
 
-    const payload: KeywordsPayload = { items, recentStocks, doneTotal: doneCountRes.count ?? items.filter((i) => i.status === 'done').length }
+    // 키워드 → 그 종목으로 지금까지 등록된 영상 수. 실패해도 목록은 그대로 보여준다(링크만 빠진다).
+    const videoCounts = await loadVideoCounts(
+      supabaseAdmin,
+      items.filter((i) => i.status !== 'done').map((i) => i.stock_name)
+    )
+
+    const payload: KeywordsPayload = { items, recentStocks, doneTotal: doneCountRes.count ?? items.filter((i) => i.status === 'done').length, videoCounts }
     return cachedJson(payload)
   } catch (e) {
     return handleRouteError(e, READ_ERROR)

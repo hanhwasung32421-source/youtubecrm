@@ -3,8 +3,17 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 
-// V5 공용 위젯 카드: header(icon+title+kebab) / body / footer(summary+link).
-// 모든 V5 기능 블록이 이 컴포넌트를 재사용한다.
+// V5 공용 위젯 모음. 모든 V5 화면이 이 파일을 함께 쓴다(내보낸 이름·속성은 바꾸지 않고 덧붙이기만 한다).
+//
+//  카드/표시    WidgetCard · Badge · Kpi · Donut · SampleBanner
+//  선택         Segment(필터 조각 버튼) · Tabs / StatusTabs / tabPanelProps(탭 + 화면 전환)
+//  상태 화면    EmptyState(비었음·오류) · Skeleton / SkeletonText / SkeletonRegion(불러오는 중)
+//  덮개 패널    Drawer(오른쪽에서 열리는 입력 패널)
+//
+// 상태 화면 원칙(모든 화면 동일)
+//  1) 불러오는 중  = SkeletonRegion + Skeleton  (글자 "불러오는 중..." 대신 실제 모양의 회색 조각)
+//  2) 비었음        = EmptyState (무엇인지 + 지금 무엇을 하면 되는지 + 바로 할 수 있는 버튼)
+//  3) 오류          = EmptyState tone="error" (무슨 일이 생겼는지 + 다시 시도 버튼). 입력 중이던 값은 절대 지우지 않는다.
 
 export function SampleBanner({ show, sqlFile = 'supabase/sql/v5/100_v5_growth_lab.sql' }: { show: boolean; sqlFile?: string }) {
   if (!show) return null
@@ -15,10 +24,24 @@ export function SampleBanner({ show, sqlFile = 'supabase/sql/v5/100_v5_growth_la
   )
 }
 
-// 비어 있는 화면 안내: 이 화면이 무엇인지 + 무엇을 하면 되는지 + (선택) 바로 할 수 있는 버튼.
-export function EmptyState({ title, children, action }: { title: ReactNode; children?: ReactNode; action?: ReactNode }) {
+// 비어 있거나 실패한 화면 안내: 이 화면이 무엇인지 + 무엇을 하면 되는지 + (선택) 바로 할 수 있는 버튼.
+//  - tone="error"  실패 안내. 화면 읽기 프로그램에 즉시 알려 준다(role=alert). 문구는 "무슨 일 + 다음에 할 일" 한 쌍으로.
+//  - compact       표 안이나 작은 카드 안에서 쓰는 낮은 버전(여백을 줄인다).
+export function EmptyState({
+  title,
+  children,
+  action,
+  tone = 'default',
+  compact
+}: {
+  title: ReactNode
+  children?: ReactNode
+  action?: ReactNode
+  tone?: 'default' | 'error'
+  compact?: boolean
+}) {
   return (
-    <div className="v5-empty">
+    <div className={`v5-empty ${tone === 'error' ? 'is-error' : ''} ${compact ? 'is-compact' : ''}`} role={tone === 'error' ? 'alert' : undefined}>
       <div className="v5-empty-title">{title}</div>
       {children ? <div className="v5-empty-body">{children}</div> : null}
       {action ? <div className="v5-empty-action">{action}</div> : null}
@@ -184,9 +207,110 @@ export function Segment<T extends string>({
   )
 }
 
+// ---- Tabs / StatusTabs -----------------------------------------------------------------------
+// 화면 안에서 "보기"를 바꾸는 탭 줄(예: 전체 · 진행 중 · 끝난 실험). 화면 읽기 프로그램에는 탭 목록으로 읽히고,
+// 방향키(←→)·Home·End 로 옮기면 바로 선택된다(선택된 탭만 Tab 키로 들어간다).
+//  - Tabs        밑줄 모양. 서로 다른 내용 화면을 오갈 때.
+//  - StatusTabs  알약 모양 + 개수 배지. 같은 목록을 상태별로 걸러 볼 때(개수 0 이어도 누를 수 있다).
+// 탭 아래 내용에는 tabPanelProps(idBase, value) 를 펼쳐 넣으면 탭과 연결된다(생략해도 동작한다).
+//   <Tabs idBase="exp" value={v} onChange={setV} label="실험 상태" tabs={[{ value: 'all', label: '전체', count: 12 }]} />
+//   <div {...tabPanelProps('exp', v)}>…</div>
+
+export type TabItem<T extends string> = { value: T; label: ReactNode; count?: number; disabled?: boolean }
+
+const tabId = (base: string, value: string) => `${base}-tab-${value}`
+const panelId = (base: string, value: string) => `${base}-panel-${value}`
+
+export function tabPanelProps(idBase: string, value: string) {
+  return { role: 'tabpanel' as const, id: panelId(idBase, value), 'aria-labelledby': tabId(idBase, value), tabIndex: 0 }
+}
+
+export type TabsProps<T extends string> = {
+  value: T
+  tabs: Array<TabItem<T>>
+  onChange: (v: T) => void
+  label: string
+  idBase?: string
+  variant?: 'line' | 'pill'
+  className?: string
+}
+
+export function Tabs<T extends string>({ value, tabs, onChange, label, idBase, variant = 'line', className }: TabsProps<T>) {
+  const autoId = useId()
+  const base = idBase || autoId
+  const refs = useRef<Array<HTMLButtonElement | null>>([])
+
+  const move = (from: number, step: number) => {
+    // 못 누르는 탭은 건너뛴다.
+    for (let i = 1; i <= tabs.length; i += 1) {
+      const idx = (from + step * i + tabs.length * i) % tabs.length
+      if (!tabs[idx].disabled) {
+        onChange(tabs[idx].value)
+        refs.current[idx]?.focus()
+        return
+      }
+    }
+  }
+  const jump = (idx: number) => {
+    if (tabs[idx] && !tabs[idx].disabled) {
+      onChange(tabs[idx].value)
+      refs.current[idx]?.focus()
+    }
+  }
+
+  return (
+    <div className={`v5-tabs ${variant === 'pill' ? 'pill' : 'line'} ${className || ''}`} role="tablist" aria-label={label}>
+      {tabs.map((tab, i) => {
+        const selected = tab.value === value
+        return (
+          <button
+            key={tab.value}
+            ref={(el) => {
+              refs.current[i] = el
+            }}
+            type="button"
+            role="tab"
+            id={tabId(base, tab.value)}
+            aria-selected={selected}
+            aria-controls={panelId(base, tab.value)}
+            tabIndex={selected ? 0 : -1}
+            disabled={tab.disabled}
+            className={`v5-tab ${selected ? 'active' : ''}`}
+            onClick={() => onChange(tab.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+                e.preventDefault()
+                move(i, 1)
+              } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+                e.preventDefault()
+                move(i, -1)
+              } else if (e.key === 'Home') {
+                e.preventDefault()
+                jump(0)
+              } else if (e.key === 'End') {
+                e.preventDefault()
+                jump(tabs.length - 1)
+              }
+            }}
+          >
+            <span>{tab.label}</span>
+            {tab.count !== undefined ? <span className="v5-tab-count">{tab.count.toLocaleString('ko-KR')}</span> : null}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+export function StatusTabs<T extends string>(props: Omit<TabsProps<T>, 'variant'>) {
+  return <Tabs {...props} variant="pill" />
+}
+
 // ---- 불러오는 중 자리표시(shimmer) -------------------------------------------------------
 // 글자 "불러오는 중..." 대신 실제 모양과 비슷한 회색 조각을 보여 준다.
-// prefers-reduced-motion 이면 움직이지 않는다(theme.css).
+// 규칙: (1) 조각의 높이·너비는 진짜 내용과 비슷하게 잡아 화면이 덜 흔들리게 한다.
+//       (2) 조각은 화면 읽기 프로그램에서 숨기고(aria-hidden), 바깥 SkeletonRegion 이 "불러오는 중" 한 마디만 전한다.
+//       (3) prefers-reduced-motion 이면 움직이지 않는다(theme.css).
 
 export function Skeleton({
   width,
@@ -236,6 +360,9 @@ export function SkeletonRegion({ label = '불러오는 중', className, children
 // 오른쪽 슬라이드 인 폼 패널(등록/편집용). 좁은 화면에서는 화면 전체 너비.
 // 열려 있는 동안: 포커스가 패널 안에서만 돌고, Esc 로 닫히고, 뒤 화면은 스크롤되지 않으며,
 // 닫으면 열기 전에 있던 자리로 포커스가 돌아간다.
+// 쓰는 법: 열 때만 그린다({open ? <Drawer title=… onClose=…>…</Drawer> : null}). 안쪽에 autoFocus 가 있으면 그 칸이 먼저 포커스를 받는다.
+// Esc: 안쪽 입력 위젯이 Esc 를 이미 처리(preventDefault)했다면 Drawer 는 닫지 않는다 → 입력 중 Esc 로 자동완성만 닫을 수 있다.
+// 주의: 위 동작(포커스 가두기 · Esc · 스크롤 잠금 · 포커스 복귀)은 접근성 약속이므로 바꾸면 안 된다.
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'

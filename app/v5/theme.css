@@ -2501,3 +2501,388 @@ body:has(.v5-theme) {
   opacity: 0.6;
   cursor: not-allowed;
 }
+
+/* ------------------------------------------------------------------
+   4차 사용성 개선(영상 등록 반복 작업): 붙여넣기 · 되돌리기 · 오늘 진행 · 탭
+   모든 규칙은 .v5-theme 안에서만. 뒤쪽에 있어 앞의 같은 우선순위 규칙을 이긴다.
+------------------------------------------------------------------ */
+
+/* 주소칸 + 붙여넣기 버튼 */
+.v5-theme .v5-url-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.v5-theme .v5-url-row .input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.v5-theme .v5-url-row .button {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* 등록 중에는 입력칸을 잠그되(readOnly) 포커스는 그대로 둔다 */
+.v5-theme .v5-quick .input[readonly] {
+  background: var(--panel-soft);
+  cursor: progress;
+}
+
+.v5-theme .v5-hint {
+  min-height: 22px;
+  line-height: 1.5;
+}
+
+.v5-theme .v5-linkbtn {
+  border: none;
+  background: transparent;
+  padding: 0 2px;
+  margin-left: 4px;
+  font: inherit;
+  font-weight: 700;
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.v5-theme .v5-linkbtn:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.v5-theme .v5-auto-row {
+  margin-top: 8px;
+}
+
+.v5-theme .v5-kbd-hint {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.v5-theme .v5-kbd-hint kbd {
+  display: inline-block;
+  padding: 0 6px;
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--panel);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+/* 키보드가 없는 기기(폰/태블릿)에서는 단축키 안내를 숨긴다 */
+@media (hover: none) {
+  .v5-theme .v5-kbd-hint {
+    display: none;
+  }
+}
+
+.v5-theme .v5-submit {
+  min-width: 132px;
+}
+
+/* 등록 결과 자리: 높이가 고정돼 있어서 결과가 나타나도 아래 화면이 움직이지 않는다 */
+.v5-theme .v5-feedback {
+  margin-top: 12px;
+  min-height: 64px;
+}
+
+.v5-theme .v5-feedback .v5-confirm {
+  margin-top: 0;
+  min-height: 64px;
+  box-sizing: border-box;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+
+.v5-theme .v5-confirm.info {
+  background: var(--primary-soft);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.v5-theme .v5-confirm-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 220px;
+}
+
+/* 모든 화면 크기에서 한 줄로 줄여 보여 준다(위 폰 규칙보다 우선) */
+.v5-theme .v5-feedback .v5-confirm .v5-confirm-detail {
+  white-space: nowrap;
+}
+
+.v5-theme .v5-confirm-msg {
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--text);
+  white-space: normal;
+}
+
+.v5-theme .v5-confirm.error .v5-confirm-msg {
+  color: #991b1b;
+}
+
+.v5-theme .v5-confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+.v5-theme .v5-confirm-actions .v5-undo-count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  opacity: 0.8;
+}
+
+.v5-theme .v5-confirm .button.secondary,
+.v5-theme .v5-confirm .button.ghost {
+  background: var(--panel);
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+
+.v5-theme .v5-confirm .button.ghost:hover,
+.v5-theme .v5-confirm .button.secondary:hover {
+  background: var(--primary-soft);
+}
+
+.v5-theme .v5-quickfix {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.v5-theme .v5-quickfix .input {
+  width: 180px;
+  max-width: 100%;
+  padding: 6px 10px;
+}
+
+.v5-theme .v5-quickfix-err {
+  flex-basis: 100%;
+  font-size: 12px;
+  font-weight: 600;
+  color: #b91c1c;
+}
+
+@media (max-width: 720px) {
+  .v5-theme .v5-feedback {
+    min-height: 104px;
+  }
+
+  .v5-theme .v5-feedback .v5-confirm {
+    min-height: 104px;
+    align-content: center;
+  }
+
+  .v5-theme .v5-confirm-actions {
+    width: 100%;
+  }
+
+  .v5-theme .v5-confirm-actions .button {
+    flex: 1 1 auto;
+  }
+
+  .v5-theme .v5-url-row {
+    flex-wrap: wrap;
+  }
+
+  .v5-theme .v5-quickfix .input {
+    width: 100%;
+  }
+}
+
+/* 오늘 진행 막대 + 오늘 등록한 종목 */
+.v5-theme .v5-goal-sub {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.v5-theme .v5-goal-track {
+  height: 8px;
+}
+
+.v5-theme .v5-today {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.v5-theme .v5-today-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.v5-theme .v5-today-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.v5-theme .v5-today-list li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px 3px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--panel-soft);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.v5-theme .v5-today-list li b {
+  min-width: 22px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 12px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 오류/비어 있는 상태 안내 */
+.v5-theme .v5-empty.is-error {
+  border-style: solid;
+  border-color: rgba(220, 38, 38, 0.35);
+  background: rgba(220, 38, 38, 0.04);
+}
+
+.v5-theme .v5-empty.is-error .v5-empty-title {
+  color: #991b1b;
+}
+
+.v5-theme .v5-empty.is-compact {
+  padding: 16px 14px;
+  border-radius: 12px;
+}
+
+.v5-theme .v5-empty-action {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* 탭(Tabs / StatusTabs) */
+.v5-theme .v5-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.v5-theme .v5-tabs .v5-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.v5-theme .v5-tabs .v5-tab:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.v5-theme .v5-tabs .v5-tab:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.v5-theme .v5-tabs .v5-tab-count {
+  min-width: 20px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--bg-soft);
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.v5-theme .v5-tabs.line {
+  gap: 2px;
+  border-bottom: 1px solid var(--line);
+}
+
+.v5-theme .v5-tabs.line .v5-tab {
+  padding: 10px 12px;
+  border-bottom: 2px solid transparent;
+}
+
+.v5-theme .v5-tabs.line .v5-tab.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+
+.v5-theme .v5-tabs.pill .v5-tab {
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+}
+
+.v5-theme .v5-tabs.pill .v5-tab:hover:not(:disabled) {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.v5-theme .v5-tabs.pill .v5-tab.active {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.v5-theme .v5-tabs.pill .v5-tab.active .v5-tab-count {
+  background: var(--panel);
+  color: var(--primary);
+}
+
+@media (max-width: 720px), (pointer: coarse) {
+  .v5-theme .v5-tabs .v5-tab {
+    min-height: 44px;
+  }
+}
+
+.v5-theme .v5-tabs.line {
+  overflow-x: auto;
+  flex-wrap: nowrap;
+}
+
+.v5-theme .v5-tabs.line .v5-tab {
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .v5-theme .v5-goal-bar {
+    transition: none !important;
+  }
+}

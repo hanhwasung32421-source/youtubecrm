@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { getAccessToken } from '@/lib/session/authed-fetch'
 import { fetchMe } from '@/lib/session/me-client'
 import { isAdminRoleType, V2_HOME_HREF } from '@/lib/v2/menu'
+import { safeNextPath } from './register-flow'
 import { ShellSkeleton } from './skeletons'
 import { getCachedV2Me, sameV2Me, setCachedV2Me, V2SessionProvider, useV2Me, type V2Me } from './session-context'
 
@@ -23,7 +24,9 @@ export function AuthGuard({ children, requireAdmin = false }: { children: React.
     let cancelled = false
     const leaveToLogin = () => {
       setCachedV2Me(null)
-      router.replace('/v2/login')
+      // 로그인이 끊겨서 쫓겨나는 경우, 로그인 뒤 지금 보던 화면으로 돌아올 수 있게 주소를 실어 보낸다.
+      const here = safeNextPath(`${window.location.pathname}${window.location.search}`)
+      router.replace(here ? `/v2/login?next=${encodeURIComponent(here)}` : '/v2/login')
     }
     const run = async () => {
       try {

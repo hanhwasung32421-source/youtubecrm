@@ -1,4 +1,4 @@
-import { average, CONTENT_TYPE_LABELS, engagementRatePct, summarizeByFormat, type VideoLite, viewVelocity } from '@/lib/v3/engagement'
+import { average, CONTENT_TYPE_LABELS, engagementRatePct, isoDaysAgo, summarizeByFormat, timeMs, type VideoLite, viewVelocity } from '@/lib/v3/engagement'
 import {
   VIDEO_FIELDS_RATES,
   apiError,
@@ -21,6 +21,7 @@ const PAGE = 1000
 //   형식 효율 = 형식별 평균 참여율, 평균 조회 속도 (V4의 형식별 "건수" 비교와는 다른 지표)
 //   시리즈 성과 = 시리즈에 속한 영상들의 평균 참여율 · 조회 속도를,
 //                같은 종목의 시리즈 밖 영상(baseline)과 비교
+//   선택 조건: ?staffId=(관리자만) &days=7|30|90 — 롱폼/숏폼 비교표의 범위만 좁힌다(시리즈 목록·기준 영상은 그대로).
 export async function GET(request: Request) {
   const auth = await authenticate(request)
   if (!auth.ok) return auth.response
@@ -30,6 +31,8 @@ export async function GET(request: Request) {
     const now = new Date()
     const staffParam = new URL(request.url).searchParams.get('staffId')
     const staffId = isUuid(staffParam) ? staffParam : null
+    const daysParam = Number(new URL(request.url).searchParams.get('days'))
+    const days = [7, 30, 90].includes(daysParam) ? daysParam : 0
 
     // 관리자가 팀 전체를 볼 때는 "범위 영상"이 "팀 영상"의 앞 1500개와 똑같으므로 한 번만 받는다.
     const sameAsTeam = isAdmin && !staffId
@@ -47,7 +50,8 @@ export async function GET(request: Request) {
         .limit(500)
     ])
 
-    const formatStats = summarizeByFormat(scopedVideos, now)
+    const periodSince = days > 0 ? timeMs(isoDaysAgo(days, now)) : null
+    const formatStats = summarizeByFormat(periodSince === null ? scopedVideos : scopedVideos.filter((v) => timeMs(v.created_at) >= periodSince), now)
 
     let sample = false
     let seriesRows: { id: string; name: string; stock_name: string | null; created_by: string | null; created_at: string }[] = []
@@ -105,7 +109,7 @@ export async function GET(request: Request) {
           avgVelocity: r.avg_velocity,
           baselineEngagementPct: r.baseline_engagement_pct,
           baselineVelocity: r.baseline_velocity,
-          members: [] as { id: string; title: string }[],
+          members: [] as { id: string; title: string; publishedAt: string | null }[],
           createdByName: null as string | null,
           canEdit: false
         }))
@@ -128,7 +132,10 @@ export async function GET(request: Request) {
             avgVelocity: average(velocities),
             baselineEngagementPct: baselineEngagement,
             baselineVelocity,
-            members: memberVideos.map((v) => ({ id: v.id, title: titleOf(v) })),
+            // 회차 순서처럼 보이도록 올린 날짜가 이른 영상이 먼저
+            members: [...memberVideos]
+              .sort((a, b) => timeMs(a.published_at || a.created_at) - timeMs(b.published_at || b.created_at) || a.id.localeCompare(b.id))
+              .map((v) => ({ id: v.id, title: titleOf(v), publishedAt: v.published_at || v.created_at })),
             createdByName: s.created_by ? names.get(s.created_by) || null : null,
             canEdit: canEditOf(s.created_by)
           }
@@ -156,6 +163,7 @@ export async function GET(request: Request) {
 
     return cachedJson({
       sample,
+      filters: { staffId, days },
       formatStats: {
         longform: { label: CONTENT_TYPE_LABELS.longform, ...formatStats.longform },
         shortform: { label: CONTENT_TYPE_LABELS.shortform, ...formatStats.shortform }

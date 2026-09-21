@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import { createSupabaseBrowserClient } from '@/lib/supabase/browser-client'
 import { fetchMe } from '@/lib/session/me-client'
 import { getHomeHref } from '@/lib/v5/menu'
+import { readNextFromSearch } from '@/components/v5/register-logic'
 import { useHomeRedirect } from '@/components/v5/use-home-redirect'
 import { PasswordField } from '@/components/v5/password-field'
 import { Skeleton, SkeletonRegion } from '@/components/v5/widget'
@@ -38,6 +39,7 @@ export default function LoginPage() {
   const [remember, setRemember] = useState(true)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [returning, setReturning] = useState(false) // 하던 화면으로 돌아가는 로그인인가(?next=)
   const idRef = useRef<HTMLInputElement | null>(null)
   const pwRef = useRef<HTMLInputElement | null>(null)
   const submittingRef = useRef(false)
@@ -45,6 +47,7 @@ export default function LoginPage() {
   // 확인이 끝나 폼이 보일 때: 기억해 둔 아이디가 있으면 채우고 비밀번호 칸으로, 없으면 아이디 칸으로.
   useEffect(() => {
     if (checking) return
+    setReturning(readNextFromSearch(window.location.search) !== null)
     const saved = readStorage(LS_LAST_ID)
     const wantsRemember = readStorage(LS_REMEMBER) !== '0'
     setRemember(wantsRemember)
@@ -115,10 +118,11 @@ export default function LoginPage() {
         headers: { Authorization: `Bearer ${data.session.access_token}` }
       })
 
+      // 하던 화면(?next=/v5/…, 같은 사이트의 V5 화면만 허용)이 있으면 그곳으로, 없으면
       // 직원 = 영상 등록, 관리자 = 성장 실험 화면으로.
       const me = await fetchMe(data.session.access_token)
       moved = true // 화면이 바뀔 때까지 버튼을 계속 잠가 둔다.
-      router.push(getHomeHref(me.roleType))
+      router.push(readNextFromSearch(window.location.search) ?? getHomeHref(me.roleType))
     } catch (e: any) {
       setError(e instanceof TypeError ? '인터넷 연결을 확인해 주세요.' : e?.message || '로그인 중 오류가 발생했습니다.')
     } finally {
@@ -158,7 +162,7 @@ export default function LoginPage() {
         >
           <img className="auth-logo" src="/logo-ant.png" alt="" width={56} height={56} />
           <h1 className="auth-title">여왕개미미디어 CRM</h1>
-          <p className="auth-subtitle">영상 등록부터 성장 관리까지, 한곳에서</p>
+          <p className="auth-subtitle">{returning ? '로그인이 풀렸어요. 다시 로그인하면 하던 화면으로 돌아가요.' : '영상 등록부터 성장 관리까지, 한곳에서'}</p>
           <div className="field">
             <label className="label" htmlFor="v5-login-id">
               아이디

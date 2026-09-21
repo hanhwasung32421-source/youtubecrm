@@ -4,13 +4,16 @@
 // - 표(grid)로 만들어 스크린리더가 칸마다 "월요일 오후 3시 · 평균 조회수 1.2만 · 영상 4개" 를 읽어 준다.
 // - Tab 으로 표에 한 번 들어와 화살표 키/Home/End 로 칸을 옮긴다 (칸이 168개라 칸마다 Tab 을 멈추지 않는다).
 // - 마우스를 올리거나 칸을 누르거나 키보드로 가면 아래 한 줄에 정확한 숫자가 나온다 (터치 화면 포함).
-// - 색만으로 구분하지 않는다: 칸 안에 숫자, 추천 칸은 ★ + 테두리, 영상 1개뿐인 칸은 점선 테두리.
+// - 색만으로 구분하지 않는다: 칸 안에 숫자, 추천 칸은 ★ + 테두리, 영상이 3개 미만인 칸(표본이 적어요)은 점선 테두리.
+// - 칸을 누르면 그 칸이 고정되고, 아래 줄에 "이 시간대에 올린 영상 보기" 링크(hrefFor)가 나온다.
 // - 화면이 좁으면 가로(24시간)가 아니라 세로로 24시간을 세워 7열로 보여준다 (가로 스크롤 없음).
 
+import Link from 'next/link'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent, RefObject } from 'react'
 import type { HeatCell } from '@/lib/v4/analytics'
 import { WEEKDAY_LABELS, fmtHourKo, fmtNumber, fmtShort } from '@/lib/v4/format'
+import { TIMING_RELIABLE_MIN, isThinCell } from '@/lib/v4/insights'
 import { WEEK_ORDER, cellAriaLabel, heatAlpha, heatSummary, heatTextColor, slotRangeName, type HeatMode } from '@/lib/v4/timing-view'
 
 const NARROW_BELOW_PX = 860
@@ -38,13 +41,16 @@ export function Heatmap({
   mode,
   max,
   sampleCount,
-  highlight
+  highlight,
+  hrefFor
 }: {
   cells: HeatCell[]
   mode: HeatMode
   max: number
   sampleCount: number
   highlight: Set<string>
+  // 칸(요일·시각)에 올린 영상을 보는 화면 주소. 없으면 링크를 보여주지 않는다.
+  hrefFor?: (weekday: number, hour: number) => string
 }) {
   const rootRef = useRef<HTMLDivElement | null>(null)
   const narrow = useNarrow(rootRef)
@@ -52,6 +58,7 @@ export function Heatmap({
   const summaryId = `${uid}-sum`
   const [hover, setHover] = useState<Slot | null>(null)
   const [focused, setFocused] = useState<Slot | null>(null)
+  const [pinned, setPinned] = useState<Slot | null>(null)
   // 표에서 Tab 이 멈추는 칸 (기본: 가장 먼저 추천된 칸, 없으면 월요일 오전 9시)
   const firstPick = useMemo(() => {
     const key = Array.from(highlight)[0]
@@ -70,7 +77,7 @@ export function Heatmap({
 
   const rgb = mode === 'avg' ? '16, 185, 129' : '79, 70, 229'
   const summary = useMemo(() => heatSummary(cells, sampleCount, mode), [cells, sampleCount, mode])
-  const shown = hover ?? focused
+  const shown = hover ?? focused ?? pinned
   const shownCell = shown ? cells[shown.weekday * 24 + shown.hour] : undefined
 
   const focusSlot = (slot: Slot) => {
@@ -139,7 +146,7 @@ export function Heatmap({
               const alpha = heatAlpha(value, max)
               const key = `${slot.weekday}-${slot.hour}`
               const rec = highlight.has(key)
-              const thin = mode === 'avg' && Boolean(cell) && cell.count === 1
+              const thin = mode === 'avg' && Boolean(cell) && isThinCell(cell.count)
               const label = cellAriaLabel(cell, slot.weekday, slot.hour)
               const isStop = tabStop.weekday === slot.weekday && tabStop.hour === slot.hour
               return (
@@ -153,6 +160,7 @@ export function Heatmap({
                   className={`v4p-heat-cell ${rec ? 'rec' : ''} ${thin ? 'thin' : ''} ${value <= 0 ? 'empty' : ''}`}
                   style={{ background: alpha > 0 ? `rgba(${rgb}, ${alpha.toFixed(2)})` : undefined, color: alpha > 0 ? heatTextColor(mode, alpha) : undefined }}
                   onMouseEnter={() => setHover(slot)}
+                  onClick={() => setPinned(slot)}
                   onFocus={() => {
                     setActive(slot)
                     setFocused(slot)
@@ -175,14 +183,20 @@ export function Heatmap({
             {shownCell && shownCell.count > 0 ? (
               <>
                 {' · '}영상 {fmtNumber(shownCell.count)}개 · 평균 조회수 {fmtNumber(shownCell.avgViews)}회
-                {shownCell.count === 1 ? ' (영상 1개뿐이라 참고만)' : ''}
+                {isThinCell(shownCell.count) ? ` (영상 ${TIMING_RELIABLE_MIN}개 미만이라 표본이 적어요)` : ''}
+                {hrefFor ? (
+                  <>
+                    {' · '}
+                    <Link href={hrefFor(shown.weekday, shown.hour)}>이 시간대에 올린 영상 보기 →</Link>
+                  </>
+                ) : null}
               </>
             ) : (
               ' · 올린 영상이 없어요'
             )}
           </>
         ) : (
-          <span className="muted">칸에 마우스를 올리거나 눌러 보세요. 키보드는 표에 들어와 화살표 키로 옮길 수 있어요.</span>
+          <span className="muted">칸에 마우스를 올리거나 눌러 보세요. 누르면 그 시간대에 올린 영상을 볼 수 있는 링크가 나와요. 키보드는 표에 들어와 화살표 키로 옮길 수 있어요.</span>
         )}
       </div>
 
@@ -194,7 +208,7 @@ export function Heatmap({
         </span>
         <span className="v4p-legend-item"><i className="v4p-swatch" /> 올린 영상 없음</span>
         <span className="v4p-legend-item"><i className="v4p-swatch rec" /> ★ 추천 시간대</span>
-        {mode === 'avg' ? <span className="v4p-legend-item"><i className="v4p-swatch thin" /> 점선 = 영상 1개뿐이라 참고만</span> : null}
+        {mode === 'avg' ? <span className="v4p-legend-item"><i className="v4p-swatch thin" /> 점선 = 영상 {TIMING_RELIABLE_MIN}개 미만이라 표본이 적어요</span> : null}
       </div>
     </div>
   )

@@ -1,0 +1,49 @@
+// 화면에 나오는 낯선 말을 쉬운 문장으로 풀어 쓴 사전. "이게 뭐예요?" 를 누르면 여기 글이 나온다.
+// 계산 방식(가중치·구간)은 lib/v5/score-view.ts 의 SCORE_FACTORS / TIER_MIN 과 같은 값이어야 한다.
+
+export const GLOSSARY_KEYS = ['score', 'velocity', 'engagement', 'early', 'tier', 'playbook', 'experiment'] as const
+export type GlossaryKey = (typeof GLOSSARY_KEYS)[number]
+
+export type GlossaryEntry = { term: string; short: string; detail: string }
+
+export const GLOSSARY: Record<GlossaryKey, GlossaryEntry> = {
+  score: {
+    term: '반응 점수',
+    short: '영상 하나가 유튜브에서 얼마나 반응을 얻고 있는지 0~100점으로 나타낸 값이에요.',
+    detail: '같은 기간에 올린 다른 영상들과 비교한 순위로 계산해요. 조회 속도 45점 + 참여율 35점 + 초기 성장 20점을 더해요. 60점 이상이면 잘 되는 영상, 40점 미만이면 손봐야 할 영상이에요.'
+  },
+  velocity: {
+    term: '조회 속도',
+    short: '올라온 뒤 하루에 평균 몇 번 봤는지예요.',
+    detail: '올린 지 오래된 영상과 방금 올린 영상을 공평하게 비교하려고 “총 조회수”가 아니라 “하루 평균”으로 계산해요. 점수가 낮으면 제목·썸네일이 눈길을 못 끌고 있을 수 있어요.'
+  },
+  engagement: {
+    term: '참여율',
+    short: '영상을 본 사람 중 좋아요·댓글을 남긴 사람의 비율이에요.',
+    detail: '조회수가 적어도 참여율이 높으면 “본 사람은 좋아했다”는 뜻이에요. 낮다면 영상 끝에 질문을 던지거나 고정 댓글로 대화를 열어 보세요.'
+  },
+  early: {
+    term: '초기 성장',
+    short: '올린 뒤 48시간(이틀) 안에 조회수가 얼마나 빨리 늘었는지예요.',
+    detail: '유튜브는 처음 이틀 반응을 크게 봐요. 조회수 기록이 2번 이상 있어야 계산할 수 있고, 기록이 부족하면 절반인 10점을 기본으로 줘요.'
+  },
+  tier: {
+    term: '구간',
+    short: '점수를 4단계로 나눈 이름이에요.',
+    detail: '매우 좋음 80점 이상 · 좋음 60~79점 · 보통 40~59점 · 아쉬움 40점 미만이에요. “구간별 영상 수”를 보면 팀 영상이 어디에 몰려 있는지 알 수 있어요.'
+  },
+  playbook: {
+    term: '성공 공식',
+    short: '반응이 좋았던 영상에서 찾은 “다음에도 통하는 방법”을 한 줄로 적어 둔 카드예요.',
+    detail: '예: “실적 발표 당일, 숫자를 제목 맨 앞에 넣는다.” 팀 누구나 보고 따라 할 수 있고, 써 봤다면 “써봤어요”를 눌러 얼마나 통하는지 함께 쌓아요.'
+  },
+  experiment: {
+    term: '성장 실험',
+    short: '조회수를 늘리려고 한 가지를 바꿔 보고 결과를 비교하는 기록이에요.',
+    detail: '무엇을 바꿀지, 왜 그렇게 될 것 같은지(가설), 어떤 영상에 해 볼지를 적고 며칠 뒤 성공·실패를 남겨요.'
+  }
+}
+
+export function glossaryOf(key: GlossaryKey): GlossaryEntry {
+  return GLOSSARY[key]
+}

@@ -6,6 +6,8 @@
 import Link from 'next/link'
 import type { ReactNode } from 'react'
 import { fmtKstStamp, fmtRelative } from '@/lib/v4/format'
+import type { GlossaryKey } from '@/lib/v4/glossary'
+import { GlossaryHint } from '@/lib/v4/page-tools'
 import { V4_SQL_FILE } from '@/lib/v4/tables'
 
 // ------------------------------------------------------------------ 답부터 보여주는 상단 카드
@@ -48,17 +50,23 @@ export function Kpi({
   value,
   hint,
   tone = 'neutral',
-  loading
+  loading,
+  term
 }: {
   label: string
   value: string
   hint: string
   tone?: 'good' | 'bad' | 'neutral'
   loading?: boolean
+  // 낯선 말이면 라벨 옆에 "이게 뭐예요?" 버튼을 붙인다
+  term?: GlossaryKey
 }) {
   return (
     <div className={`v4p-kpi ${tone}`}>
-      <div className="v4p-kpi-label">{label}</div>
+      <div className="v4p-kpi-label">
+        {label}
+        {term ? <GlossaryHint term={term} /> : null}
+      </div>
       {loading ? <Skel w={90} h={28} /> : <div className="v4p-kpi-value">{value}</div>}
       <div className="v4p-kpi-hint">{hint}</div>
     </div>

@@ -10,14 +10,23 @@ const MAX_ATTEMPTS = 5
 // 비교-교체(compare-and-swap)로 갱신한다: `where id = ? and usage_count = 읽은값`.
 // 그 사이 다른 사람이 먼저 올렸다면 0행이 갱신되므로 다시 읽고 재시도한다 → 동시에 눌러도 횟수가 사라지지 않는다.
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  return changeUsage(request, params, 1)
+}
+
+// "방금 누른 써봤어요 취소" — 사용 횟수를 1 줄인다(0 아래로는 내려가지 않는다). 같은 비교-교체 방식이라 동시에 눌러도 안전하다.
+export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  return changeUsage(request, params, -1)
+}
+
+async function changeUsage(request: Request, paramsPromise: Promise<{ id: string }>, delta: 1 | -1) {
   try {
-    const { id } = await params
+    const { id } = await paramsPromise
     if (!uuidSchema.safeParse(id).success) return notFound('성공 공식을 찾을 수 없어요.')
     const session = await getSession(request)
     const { supabaseAdmin } = session
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
-      const { data: existing, error: findError } = await supabaseAdmin.from(V5_TABLES.playbookEntries).select('id, usage_count').eq('id', id).maybeSingle()
+      const { data: existing, error: findError } = await supabaseAdmin.from(V5_TABLES.playbookEntries).select(PLAYBOOK_SELECT).eq('id', id).maybeSingle()
       if (findError) {
         if (isMissingTableError(findError)) return missingTableResponse()
         throw findError
@@ -25,9 +34,15 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       if (!existing) return notFound('성공 공식을 찾을 수 없어요. 이미 지워졌을 수 있어요.')
 
       const current = Number(existing.usage_count) || 0
+      const nextCount = Math.max(current + delta, 0)
+      if (nextCount === current) {
+        // 이미 0 이라 더 줄일 수 없다: 그대로 현재 값을 돌려준다.
+        const [item] = await mapPlaybook(supabaseAdmin, [existing as unknown as PlaybookRow], session)
+        return jsonNoStore({ item })
+      }
       const { data: updated, error } = await supabaseAdmin
         .from(V5_TABLES.playbookEntries)
-        .update({ usage_count: current + 1 })
+        .update({ usage_count: nextCount })
         .eq('id', id)
         .eq('usage_count', current)
         .select(PLAYBOOK_SELECT)

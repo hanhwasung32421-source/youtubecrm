@@ -1,40 +1,40 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { PageHeader } from '@/components/v4/app-shell'
 import { BulkRegister } from '@/components/v4/bulk-register'
 import { useV4Me } from '@/components/v4/me-context'
 import { MyVideoList, type MyVideo } from '@/components/v4/my-video-list'
-import { DAILY_TARGET, fetchTodayCount, registerVideo, type ContentType } from '@/components/v4/register-api'
+import { DAILY_TARGET, deleteMyVideo, fetchDailyTarget, fetchTodayCount, patchMyVideo, registerVideo, type ContentType } from '@/components/v4/register-api'
+import { RegisterFeedback, type FeedbackStatus } from '@/components/v4/register-feedback'
+import { TodayChip, TodayPanel } from '@/components/v4/today-progress'
 import { EmptyState, FormatToggle } from '@/components/v4/ui'
 import { ListSkeleton } from '@/components/v4/skeleton'
 import { analyzePaste, looksLikeStockName, toBulkText } from '@/components/v4/paste-detect'
-import {
-  extractVideoId,
-  isShortsUrl,
-  isYoutubeUrl,
-  normalizeStockName,
-  normalizeYoutubeUrl,
-  readJson,
-  readStorage,
-  writeStorage
-} from '@/components/v4/register-utils'
+import { buildVideoIndex, diagnoseYoutubeUrl, duplicateChoice, duplicateMessage, findDuplicate, groupTodayByStock } from '@/components/v4/register-logic'
+import { UNDO_IDLE, deleteSafety, undoReducer } from '@/components/v4/undo-state'
+import { isShortsUrl, normalizeStockName, normalizeYoutubeUrl, readJson, readStorage, todayKst, writeStorage } from '@/components/v4/register-utils'
 import { authedFetchJson } from '@/lib/session/authed-fetch'
 
-type Status = { tone: 'ok' | 'error'; text: string; detail?: string } | null
 type Mode = 'single' | 'bulk'
+type SubmitOverride = { url?: string; type?: ContentType }
 
 const FORMAT_KEY = 'v4.register.format'
 const STOCKS_KEY = 'v4.register.recentStocks'
+const AUTO_SUBMIT_KEY = 'v4.register.autoSubmit'
 const MAX_CHIPS = 8
 const NEW_HIGHLIGHT_MS = 5000
+const PAGE_SIZE = 20
+const OLDER_PAGES = 4 // 중복 확인·오늘 종목 묶음을 위해 최근 100개까지 미리 읽어 둔다 (2~5쪽)
 
 export default function VideoRegisterPage() {
-  const { isAdmin } = useV4Me()
+  const { me, isAdmin } = useV4Me()
   const urlRef = useRef<HTMLInputElement>(null)
   const stockRef = useRef<HTMLInputElement>(null)
   const submitRef = useRef<HTMLButtonElement>(null)
   const savingRef = useRef(false)
+  const aliveRef = useRef(true)
+  const olderStartedRef = useRef(false)
   const highlightTimer = useRef<number | null>(null)
 
   const [mode, setMode] = useState<Mode>('single')
@@ -46,15 +46,18 @@ export default function VideoRegisterPage() {
   const [memo, setMemo] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [showHints, setShowHints] = useState(false)
-  const [status, setStatus] = useState<Status>(null)
+  const [status, setStatus] = useState<FeedbackStatus>(null)
   const [autoShortNote, setAutoShortNote] = useState(false)
-  // 붙여넣기 안내: 제목이 같이 붙었을 때 / 주소가 여러 개일 때
+  // 붙여넣기 안내: 제목이 같이 붙었을 때 / 주소가 여러 개일 때 / 클립보드를 못 읽었을 때
   const [pasteNote, setPasteNote] = useState('')
   const [stockSuggest, setStockSuggest] = useState('')
   const [bulkSuggest, setBulkSuggest] = useState<{ text: string; count: number } | null>(null)
   const [bulkSeed, setBulkSeed] = useState<{ id: number; text: string } | null>(null)
+  const [canPaste, setCanPaste] = useState(false)
+  const [autoSubmit, setAutoSubmit] = useState(false)
 
   const [items, setItems] = useState<MyVideo[]>([])
+  const [older, setOlder] = useState<MyVideo[]>([])
   const [loaded, setLoaded] = useState(false)
   const [loadError, setLoadError] = useState('')
   const [newIds, setNewIds] = useState<Set<string>>(new Set())
@@ -62,26 +65,58 @@ export default function VideoRegisterPage() {
 
   const [recentStocks, setRecentStocks] = useState<string[]>([])
   const [todayCount, setTodayCount] = useState<number | null>(null)
+  const [daily, setDaily] = useState<{ target: number; source: 'personal' | 'default' }>({ target: DAILY_TARGET, source: 'default' })
 
-  const loadMine = async () => {
+  const [undo, dispatchUndo] = useReducer(undoReducer, UNDO_IDLE)
+  const [nowMs, setNowMs] = useState(() => Date.now())
+
+  // 최신 입력값을 비동기 작업(등록 응답 뒤)에서 읽기 위한 사본
+  const urlNowRef = useRef('')
+  const stockNowRef = useRef('')
+  urlNowRef.current = youtubeUrl
+  stockNowRef.current = stockName
+
+  const loadMine = async (): Promise<MyVideo[] | null> => {
     try {
       const { ok, data } = await authedFetchJson<{ items?: MyVideo[]; error?: string }>('/api/videos/mine?page=1')
+      if (!aliveRef.current) return null
       setLoaded(true)
       if (!ok) {
-        setLoadError('등록한 영상 목록을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.')
-        return
+        setLoadError('등록한 영상 목록을 불러오지 못했어요. "다시 불러오기"를 눌러 주세요.')
+        return null
       }
       setLoadError('')
-      setItems(data.items || [])
+      const list = data.items || []
+      setItems(list)
+      return list
     } catch {
+      if (!aliveRef.current) return null
       setLoaded(true)
-      setLoadError('인터넷 연결을 확인해 주세요.')
+      setLoadError('인터넷 연결을 확인하고 "다시 불러오기"를 눌러 주세요.')
+      return null
+    }
+  }
+
+  // 2~5쪽(최근 100개)을 뒤에서 조용히 읽어 온다: "이미 등록한 영상" 확인과 오늘 종목 묶음이 더 정확해진다.
+  const loadOlder = async () => {
+    const collected: MyVideo[] = []
+    for (let page = 2; page <= OLDER_PAGES + 1; page += 1) {
+      try {
+        const { ok, data } = await authedFetchJson<{ items?: MyVideo[] }>(`/api/videos/mine?page=${page}`)
+        if (!ok || !aliveRef.current) return
+        const list = data.items || []
+        collected.push(...list)
+        setOlder([...collected])
+        if (list.length < PAGE_SIZE) return
+      } catch {
+        return
+      }
     }
   }
 
   const refreshToday = async () => {
     const count = await fetchTodayCount()
-    if (count !== null) setTodayCount(count)
+    if (count !== null && aliveRef.current) setTodayCount(count)
     return count
   }
 
@@ -92,20 +127,86 @@ export default function VideoRegisterPage() {
     highlightTimer.current = window.setTimeout(() => setNewIds(new Set()), NEW_HIGHLIGHT_MS)
   }
 
-  // 처음 열 때: 마지막에 쓴 형식·최근 종목 복원, 주소 칸에 커서, 목록·오늘 등록 수 불러오기
+  const focusStock = () => {
+    const el = stockRef.current
+    if (!el) return
+    el.focus()
+    el.select() // 미리 채워진 종목은 그대로 Enter, 바꾸려면 바로 타이핑
+  }
+
+  // 처음 열 때: 마지막에 쓴 형식·최근 종목·자동 등록 설정 복원, 주소 칸에 커서, 목록·오늘 등록 수 불러오기
   useEffect(() => {
+    aliveRef.current = true
     const savedFormat = readStorage(FORMAT_KEY)
     if (savedFormat === 'longform' || savedFormat === 'shortform') setContentType(savedFormat)
     const savedStocks = readJson<unknown>(STOCKS_KEY, [])
     if (Array.isArray(savedStocks)) setRecentStocks(savedStocks.filter((s): s is string => typeof s === 'string').slice(0, MAX_CHIPS))
+    setAutoSubmit(readStorage(AUTO_SUBMIT_KEY) === 'on')
+    // "붙여넣기" 버튼은 브라우저가 클립보드 읽기를 지원할 때만 보인다.
+    setCanPaste(typeof window !== 'undefined' && window.isSecureContext && typeof navigator !== 'undefined' && typeof navigator.clipboard?.readText === 'function')
     urlRef.current?.focus()
-    void loadMine()
+    void loadMine().then((list) => {
+      if (list && list.length >= PAGE_SIZE && !olderStartedRef.current) {
+        olderStartedRef.current = true
+        void loadOlder()
+      }
+    })
     void refreshToday()
     return () => {
+      aliveRef.current = false
       if (highlightTimer.current) window.clearTimeout(highlightTimer.current)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // 하루 목표: 내 이번 달 개인 목표가 있으면 그 값, 없으면 기본 12개
+  const myId = me?.crmUserId || ''
+  useEffect(() => {
+    if (!myId) return
+    let cancelled = false
+    void fetchDailyTarget(myId).then((result) => {
+      if (!cancelled) setDaily(result)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [myId])
+
+  // 되돌리기 시간(10초) 카운트다운
+  useEffect(() => {
+    if (undo.phase !== 'open') return
+    const timer = window.setInterval(() => {
+      const now = Date.now()
+      setNowMs(now)
+      dispatchUndo({ type: 'tick', now })
+    }, 500)
+    return () => window.clearInterval(timer)
+  }, [undo.phase])
+
+  // "/" 키: 글을 쓰는 중이 아닐 때 주소 칸으로 바로 이동
+  useEffect(() => {
+    if (mode !== 'single') return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return
+      const target = e.target as HTMLElement | null
+      if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return
+      e.preventDefault()
+      urlRef.current?.focus()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [mode])
+
+  const allItems = useMemo(() => {
+    const seen = new Set<string>()
+    const out: MyVideo[] = []
+    for (const item of [...items, ...older]) {
+      if (seen.has(item.id)) continue
+      seen.add(item.id)
+      out.push(item)
+    }
+    return out
+  }, [items, older])
 
   const stockChoices = useMemo(() => {
     const seen = new Set<string>()
@@ -121,27 +222,26 @@ export default function VideoRegisterPage() {
     return out.slice(0, 20)
   }, [recentStocks, items, isAdmin])
 
-  const existingIds = useMemo(() => {
-    const set = new Set<string>()
-    for (const item of items) {
-      const id = item.youtube_url ? extractVideoId(item.youtube_url) : ''
-      if (id) set.add(id)
-    }
-    return set
-  }, [items])
+  const videoIndex = useMemo(() => buildVideoIndex(allItems), [allItems])
+  const existingIds = useMemo(() => new Set(videoIndex.keys()), [videoIndex])
 
   const normalizedUrl = normalizeYoutubeUrl(youtubeUrl)
-  const urlInvalid = youtubeUrl.trim() !== '' && !isYoutubeUrl(normalizedUrl)
-  const duplicate = useMemo(() => {
-    if (!normalizedUrl || !isYoutubeUrl(normalizedUrl)) return null
-    const id = extractVideoId(normalizedUrl)
-    return id && existingIds.has(id) ? id : null
-  }, [normalizedUrl, existingIds])
+  const diagnosis = diagnoseYoutubeUrl(normalizedUrl)
+  const urlInvalid = youtubeUrl.trim() !== '' && !diagnosis.ok
+  const dupKnown = useMemo(() => findDuplicate(videoIndex, normalizedUrl), [videoIndex, normalizedUrl])
+  const dupChoice = dupKnown ? duplicateChoice(dupKnown, stockName) : null
+
+  const todayGroups = useMemo(() => (isAdmin ? [] : groupTodayByStock(allItems, todayKst())), [allItems, isAdmin])
 
   const changeFormat = (next: ContentType) => {
     setContentType(next)
     setAutoShortNote(false)
     writeStorage(FORMAT_KEY, next)
+  }
+
+  const toggleAutoSubmit = (on: boolean) => {
+    setAutoSubmit(on)
+    writeStorage(AUTO_SUBMIT_KEY, on ? 'on' : 'off')
   }
 
   const switchMode = (next: Mode) => {
@@ -164,49 +264,109 @@ export default function VideoRegisterPage() {
     switchMode('bulk')
   }
 
+  const clearUrlField = () => {
+    setYoutubeUrl('')
+    setStatus(null)
+    setShowHints(false)
+    setAutoShortNote(false)
+    setPasteNote('')
+    setStockSuggest('')
+    setBulkSuggest(null)
+    urlRef.current?.focus()
+  }
+
   const applyUrl = (raw: string) => {
     const cleaned = normalizeYoutubeUrl(raw)
     setYoutubeUrl(cleaned || raw.trim())
     setStatus(null)
+    let type = contentType
     // 쇼츠 주소면 형식을 알아서 숏폼으로
-    if (cleaned && isShortsUrl(cleaned) && contentType !== 'shortform') {
-      setContentType('shortform')
-      writeStorage(FORMAT_KEY, 'shortform')
-      setAutoShortNote(true)
+    if (cleaned && isShortsUrl(cleaned)) {
+      type = 'shortform'
+      if (contentType !== 'shortform') {
+        setContentType('shortform')
+        writeStorage(FORMAT_KEY, 'shortform')
+        setAutoShortNote(true)
+      } else {
+        setAutoShortNote(false)
+      }
     } else {
       setAutoShortNote(false)
     }
-    return cleaned
+    return { cleaned, type }
   }
 
-  const onPasteUrl = (e: React.ClipboardEvent<HTMLInputElement>) => {
-    const text = e.clipboardData.getData('text')
-    if (!text) return
+  // 붙여넣은 글(Ctrl+V 든 "붙여넣기" 버튼이든)을 처리한다. 처리했으면 true.
+  const ingestPaste = (text: string, source: 'field' | 'button'): boolean => {
     const info = analyzePaste(text)
     setPasteNote('')
     setStockSuggest('')
 
     // 주소가 둘 이상 = 여러 개를 한꺼번에 붙여넣은 것 → "여러 개 붙여넣기"를 권하고, 클릭 한 번에 글을 옮겨 준다.
     if (info.kind === 'multi') {
-      e.preventDefault()
       setStatus(null)
+      setShowHints(false)
       setBulkSuggest({ text: toBulkText(text), count: info.urls.length })
-      return
+      return true
     }
     setBulkSuggest(null)
-    // 주소가 없는 글은 그대로 두고(직접 고쳐 쓰는 중일 수 있어요), 나머지는 주소만 뽑아 넣는다.
-    if (info.kind === 'none') return
+    // 주소가 없는 글은 그대로 두고(직접 고쳐 쓰는 중일 수 있어요), 버튼으로 읽었을 땐 안내만 한다.
+    if (info.kind === 'none') {
+      if (source === 'button') {
+        setShowHints(false)
+        setPasteNote('복사한 글에서 유튜브 주소를 찾지 못했어요. 유튜브에서 영상 주소를 다시 복사해 주세요.')
+        urlRef.current?.focus()
+      }
+      return false
+    }
 
-    e.preventDefault()
-    const cleaned = applyUrl(text)
+    const { cleaned, type } = applyUrl(text)
     if (info.kind === 'single-with-text') {
       setPasteNote('제목은 빼고 주소만 넣었어요. 제목은 유튜브에서 자동으로 채워져요.')
       if (!stockName.trim() && looksLikeStockName(info.leftover)) setStockSuggest(info.leftover)
     }
-    // 주소가 제대로 들어왔으면 바로 종목 칸으로 → 붙여넣기 · 종목 입력 · Enter 만으로 끝
-    if (cleaned && isYoutubeUrl(cleaned)) {
+    if (!diagnoseYoutubeUrl(cleaned).ok) {
+      // 재생목록·채널 주소 등: 안내 문장이 주소 칸 아래에 바로 보인다.
+      setShowHints(true)
+      return true
+    }
+    setShowHints(false)
+    // 이미 등록한 영상이면 자동으로 등록하지 않는다 (아래 안내에서 고른다).
+    if (findDuplicate(videoIndex, cleaned)) {
+      window.setTimeout(focusStock, 0)
+      return true
+    }
+    // "주소만 붙이면 바로 등록"을 켜 두었고 종목이 채워져 있으면 붙여넣기만으로 끝난다.
+    if (autoSubmit && normalizeStockName(stockName)) {
+      void submit({ url: cleaned, type })
+      return true
+    }
+    window.setTimeout(focusStock, 0)
+    return true
+  }
+
+  const onPasteUrl = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    const text = e.clipboardData.getData('text')
+    if (!text) return
+    if (ingestPaste(text, 'field')) e.preventDefault()
+  }
+
+  const pasteFromClipboard = async () => {
+    if (submitting) return
+    try {
+      const text = await navigator.clipboard.readText()
+      if (!text.trim()) {
+        setShowHints(false)
+        setPasteNote('복사된 내용이 없어요. 유튜브에서 영상 주소를 먼저 복사해 주세요.')
+        urlRef.current?.focus()
+        return
+      }
+      ingestPaste(text, 'button')
+    } catch {
+      // 사용자가 거절했거나 브라우저가 막은 경우
       setShowHints(false)
-      window.setTimeout(() => stockRef.current?.focus(), 0)
+      setPasteNote('붙여넣기 버튼을 쓸 수 없었어요. 주소 칸을 누르고 Ctrl+V 로 붙여넣어 주세요. (주소창 옆 자물쇠에서 "클립보드"를 허용하면 버튼이 동작해요)')
+      urlRef.current?.focus()
     }
   }
 
@@ -217,19 +377,88 @@ export default function VideoRegisterPage() {
     writeStorage(STOCKS_KEY, JSON.stringify(unique))
   }
 
-  const submit = async () => {
+  const patchLocalItem = (id: string, patch: { stock_name: string; content_type: ContentType }) => {
+    const apply = (list: MyVideo[]) => list.map((item) => (item.id === id ? { ...item, ...patch } : item))
+    setItems(apply)
+    setOlder(apply)
+  }
+
+  const removeLocalItem = (id: string) => {
+    setItems((prev) => prev.filter((item) => item.id !== id))
+    setOlder((prev) => prev.filter((item) => item.id !== id))
+  }
+
+  // 이미 등록한 영상: 새로 등록하지 않고 종목만 바꾼다 (영상 정보·조회수는 그대로).
+  const changeDuplicateStock = async (known: MyVideo, stock: string, url: string) => {
+    savingRef.current = true
+    setSubmitting(true)
+    setStatus(null)
+    try {
+      const res = await patchMyVideo(known.id, { stock_name: stock })
+      if (!res.ok) {
+        setStatus({ tone: 'error', text: res.message, kind: res.auth ? 'auth' : 'other', retry: true })
+        return
+      }
+      patchLocalItem(known.id, { stock_name: res.item.stock_name, content_type: res.item.content_type })
+      rememberStocks([res.item.stock_name])
+      const now = Date.now()
+      setNowMs(now)
+      dispatchUndo({
+        type: 'registered',
+        now,
+        recent: { id: known.id, mode: 'restore', stock: res.item.stock_name, title: known.title || '', url, ordinal: null, prevStock: known.stock_name }
+      })
+      highlight([known.id])
+      finishInput(url)
+    } finally {
+      savingRef.current = false
+      setSubmitting(false)
+    }
+  }
+
+  // 등록이 끝난 뒤 입력칸 정리: 주소·메모만 비우고 종목·형식은 그대로 둔다. 커서는 주소 칸.
+  // 그 사이 다음 주소를 이미 붙여넣었다면 지우거나 커서를 빼앗지 않는다.
+  const finishInput = (doneUrl: string) => {
+    setMemo('')
+    setAutoShortNote(false)
+    setPasteNote('')
+    setStockSuggest('')
+    setBulkSuggest(null)
+    setShowHints(false)
+    const current = urlNowRef.current.trim()
+    const pending = current !== '' && normalizeYoutubeUrl(current) !== doneUrl
+    if (!pending) {
+      setYoutubeUrl('')
+      urlRef.current?.focus()
+    }
+  }
+
+  const submit = async (override: SubmitOverride = {}) => {
     if (savingRef.current) return
-    const url = normalizeYoutubeUrl(youtubeUrl)
+    const url = normalizeYoutubeUrl(override.url ?? youtubeUrl)
+    const type = override.type ?? contentType
     const stock = normalizeStockName(stockName)
 
-    if (!url || !isYoutubeUrl(url)) {
+    if (!diagnoseYoutubeUrl(url).ok) {
       setShowHints(true)
       urlRef.current?.focus()
       return
     }
     if (!stock) {
       setShowHints(true)
-      stockRef.current?.focus()
+      focusStock()
+      return
+    }
+
+    const known = findDuplicate(videoIndex, url)
+    if (known) {
+      const choice = duplicateChoice(known, stock)
+      if (choice.kind === 'same') {
+        clearUrlField()
+        setStatus({ tone: 'ok', text: '이미 같은 종목으로 등록돼 있어서 그대로 두었어요.' })
+        return
+      }
+      await changeDuplicateStock(known, choice.stock, url)
       return
     }
 
@@ -238,9 +467,10 @@ export default function VideoRegisterPage() {
     setStatus(null)
     setListNotice('')
     try {
-      const result = await registerVideo({ youtubeUrl: url, contentType, stockName: stock, contentCategory: memo.trim() || null })
+      const result = await registerVideo({ youtubeUrl: url, contentType: type, stockName: stock, contentCategory: memo.trim() || null })
       if (!result.ok) {
-        setStatus({ tone: 'error', text: result.message, detail: '입력한 내용은 그대로 남아 있어요' })
+        // 입력한 내용은 그대로 두고, 무엇을 하면 되는지 알려 준다.
+        setStatus({ tone: 'error', text: result.message, kind: result.kind, retry: result.retry })
         return
       }
 
@@ -249,22 +479,88 @@ export default function VideoRegisterPage() {
       const ordinal = fresh ?? (todayCount ?? 0) + 1
       if (fresh === null) setTodayCount(ordinal)
       rememberStocks([stock])
-      setStatus({ tone: 'ok', text: `등록됨 · 오늘 ${ordinal}번째`, detail: `${stock}${result.video?.title ? ` · ${result.video.title}` : ''}` })
+      const now = Date.now()
+      setNowMs(now)
+      dispatchUndo({
+        type: 'registered',
+        now,
+        recent: { id: result.video?.id || null, mode: 'delete', stock, title: result.video?.title || '', url, ordinal, prevStock: null }
+      })
       highlight(result.video?.id ? [result.video.id] : [])
-      setYoutubeUrl('')
-      setStockName('')
-      setMemo('')
-      setShowHints(false)
-      setAutoShortNote(false)
-      setPasteNote('')
-      setStockSuggest('')
-      setBulkSuggest(null)
-      urlRef.current?.focus()
-      void loadMine()
+      finishInput(url)
+      void loadMine().then((list) => {
+        if (list && list.length >= PAGE_SIZE && !olderStartedRef.current) {
+          olderStartedRef.current = true
+          void loadOlder()
+        }
+      })
     } finally {
       savingRef.current = false
       setSubmitting(false)
     }
+  }
+
+  // ---- 되돌리기 / 바로 고치기 ----------------------------------------------------
+  const failUndo = (id: string, message: string) => dispatchUndo({ type: 'failed', id, message, now: Date.now() })
+
+  const onUndo = async () => {
+    const recent = undo.recent
+    if (!recent || !recent.id || undo.phase !== 'open') return
+    const id = recent.id
+    dispatchUndo({ type: 'begin', id, now: Date.now() })
+
+    if (recent.mode === 'restore') {
+      const res = await patchMyVideo(id, { stock_name: recent.prevStock || recent.stock })
+      if (!res.ok) {
+        failUndo(id, res.message)
+        return
+      }
+      patchLocalItem(id, { stock_name: res.item.stock_name, content_type: res.item.content_type })
+      dispatchUndo({ type: 'succeeded', id })
+      setStatus({ tone: 'ok', text: `종목을 '${res.item.stock_name}'(으)로 되돌렸어요.` })
+      return
+    }
+
+    // 지우기: 방금 새로 등록한 영상만 지운다. 예전에 등록해 둔 영상을 실수로 지우지 않도록 목록을 다시 확인한다.
+    const list = await loadMine()
+    if (list === null) {
+      failUndo(id, '목록을 확인하지 못해서 지우지 않았어요. 인터넷 연결을 확인하고 다시 눌러 주세요.')
+      return
+    }
+    const safety = deleteSafety(list.find((item) => item.id === id), Date.now())
+    if (!safety.safe) {
+      failUndo(id, '예전에 등록해 둔 영상이라 자동으로 지우지 않았어요. 잘못 올렸다면 아래 목록에서 직접 삭제해 주세요.')
+      return
+    }
+    const res = await deleteMyVideo(id)
+    if (!res.ok) {
+      failUndo(id, res.message)
+      return
+    }
+    removeLocalItem(id)
+    void refreshToday()
+    dispatchUndo({ type: 'succeeded', id })
+    setStatus({ tone: 'ok', text: '되돌렸어요. 목록에서 지웠고, 주소를 다시 넣어 두었어요. 종목을 고쳐서 등록해 주세요.' })
+    if (!urlNowRef.current.trim()) {
+      setYoutubeUrl(recent.url)
+      window.setTimeout(focusStock, 0)
+    }
+  }
+
+  const onQuickFix = async (raw: string): Promise<{ ok: boolean; message: string }> => {
+    const recent = undo.recent
+    if (!recent || !recent.id) return { ok: false, message: '' }
+    const next = normalizeStockName(raw)
+    if (!next) return { ok: false, message: '종목명을 적어 주세요.' }
+    if (next === recent.stock) return { ok: true, message: '' }
+    const res = await patchMyVideo(recent.id, { stock_name: next })
+    if (!res.ok) return { ok: false, message: res.message }
+    patchLocalItem(recent.id, { stock_name: res.item.stock_name, content_type: res.item.content_type })
+    dispatchUndo({ type: 'edited', id: recent.id, stock: res.item.stock_name })
+    rememberStocks([res.item.stock_name])
+    // 방금 틀린 종목이 다음 영상 칸에도 남아 있었다면 함께 고쳐 준다.
+    if (normalizeStockName(stockNowRef.current) === recent.stock) setStockName(res.item.stock_name)
+    return { ok: true, message: '고쳤어요.' }
   }
 
   const pickStock = (name: string) => {
@@ -282,35 +578,34 @@ export default function VideoRegisterPage() {
   }
 
   const onUpdated = (id: string, patch: { stock_name: string; content_type: ContentType }) => {
-    setItems((prev) => prev.map((item) => (item.id === id ? { ...item, ...patch } : item)))
+    patchLocalItem(id, patch)
+    if (undo.recent?.id === id) dispatchUndo({ type: 'edited', id, stock: patch.stock_name })
   }
 
   const onDeleted = (id: string) => {
-    setItems((prev) => prev.filter((item) => item.id !== id))
+    removeLocalItem(id)
+    if (undo.recent?.id === id) dispatchUndo({ type: 'dismiss' })
     setListNotice('영상을 지웠어요. 오늘 등록 수도 다시 셌어요.')
     void refreshToday()
     void loadMine()
   }
 
   const firstRun = loaded && !loadError && items.length === 0
-  const progress = todayCount === null ? 0 : Math.min(1, todayCount / DAILY_TARGET)
-  const reached = todayCount !== null && todayCount >= DAILY_TARGET
+  const urlOk = diagnosis.ok
+  const submitLabel = submitting
+    ? '등록 중…'
+    : dupKnown && dupChoice?.kind === 'change'
+      ? '종목만 바꾸기'
+      : dupKnown && dupChoice?.kind === 'same'
+        ? '이미 등록됨'
+        : '등록'
 
   return (
     <>
       <PageHeader
         title="영상 등록"
         subtitle="유튜브 주소를 붙여넣고 종목명만 적으면 끝입니다. 제목·조회수·좋아요·댓글은 유튜브에서 자동으로 채워져요."
-        actions={
-          <div className="v4-today-chip" title={`오늘(한국 시간) 내가 등록한 영상 수 · 하루 목표 ${DAILY_TARGET}개는 참고용이에요`}>
-            <div>
-              오늘 <strong>{todayCount === null ? '–' : todayCount}</strong>개 등록 <span className="v4-today-goal">· 오늘 목표 {DAILY_TARGET}개</span>
-            </div>
-            <div className="v4-today-bar" role="progressbar" aria-valuemin={0} aria-valuemax={DAILY_TARGET} aria-valuenow={todayCount ?? 0} aria-label="오늘 등록 진행">
-              <span className={reached ? 'done' : ''} style={{ width: `${Math.round(progress * 100)}%` }} />
-            </div>
-          </div>
-        }
+        actions={<TodayChip count={todayCount} target={daily.target} source={daily.source} />}
       />
 
       <div className="v4-mode-tabs" role="group" aria-label="등록 방법">
@@ -323,8 +618,19 @@ export default function VideoRegisterPage() {
       </div>
 
       <div hidden={mode !== 'single'}>
+      <div
+        className="panel v4-reg-form"
+        onKeyDown={(e) => {
+          // Ctrl/Cmd + Enter: 어느 칸에 있든 바로 등록
+          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.nativeEvent.isComposing) {
+            if ((e.target as HTMLElement).closest('[data-v4-quickfix]')) return
+            e.preventDefault()
+            void submit()
+          }
+        }}
+      >
         <form
-          className="panel v4-reg-form"
+          className="v4-reg-fields"
           noValidate
           onSubmit={(e) => {
             e.preventDefault()
@@ -335,58 +641,59 @@ export default function VideoRegisterPage() {
             <label className="label" htmlFor="v4-reg-url">
               1. 유튜브 주소
             </label>
-            <input
-              id="v4-reg-url"
-              ref={urlRef}
-              className="input v4-reg-url"
-              inputMode="url"
-              type="text"
-              autoComplete="off"
-              autoCorrect="off"
-              autoCapitalize="none"
-              spellCheck={false}
-              enterKeyHint="next"
-              aria-describedby="v4-reg-url-hint"
-              placeholder="여기에 영상 주소를 붙여넣으세요"
-              value={youtubeUrl}
-              readOnly={submitting}
-              aria-invalid={showHints && urlInvalid ? true : undefined}
-              onChange={(e) => {
-                setYoutubeUrl(e.target.value)
-                setStatus(null)
-                setAutoShortNote(false)
-                setPasteNote('')
-                setStockSuggest('')
-                setBulkSuggest(null)
-              }}
-              onPaste={onPasteUrl}
-              onBlur={() => {
-                if (youtubeUrl.trim()) {
-                  const cleaned = normalizeYoutubeUrl(youtubeUrl)
-                  if (cleaned && cleaned !== youtubeUrl) setYoutubeUrl(cleaned)
-                  setShowHints(true)
-                }
-              }}
-              onKeyDown={(e) => {
-                // Esc: 주소 칸을 비우고 안내도 지운다 (잘못 붙여넣었을 때 빨리 다시 시작)
-                if (e.key === 'Escape' && (youtubeUrl || bulkSuggest || pasteNote)) {
-                  e.preventDefault()
-                  setYoutubeUrl('')
+            <div className="v4-reg-urlrow">
+              <input
+                id="v4-reg-url"
+                ref={urlRef}
+                className="input v4-reg-url"
+                inputMode="url"
+                type="text"
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="none"
+                spellCheck={false}
+                enterKeyHint="next"
+                aria-describedby="v4-reg-url-hint"
+                placeholder="여기에 영상 주소를 붙여넣으세요"
+                value={youtubeUrl}
+                aria-invalid={showHints && urlInvalid ? true : undefined}
+                onChange={(e) => {
+                  setYoutubeUrl(e.target.value)
                   setStatus(null)
-                  setShowHints(false)
                   setAutoShortNote(false)
                   setPasteNote('')
                   setStockSuggest('')
                   setBulkSuggest(null)
-                  return
-                }
-                if (e.key === 'Enter' && !e.nativeEvent.isComposing && !stockName.trim()) {
-                  // 종목을 아직 안 적었다면 등록 대신 종목 칸으로 이동
-                  e.preventDefault()
-                  stockRef.current?.focus()
-                }
-              }}
-            />
+                }}
+                onPaste={onPasteUrl}
+                onBlur={() => {
+                  if (youtubeUrl.trim()) {
+                    const cleaned = normalizeYoutubeUrl(youtubeUrl)
+                    if (cleaned && cleaned !== youtubeUrl) setYoutubeUrl(cleaned)
+                    // 주소가 이상할 때만 안내한다 (올바른 주소를 붙인 직후에는 종목 칸으로 넘어가도 재촉하지 않는다)
+                    if (!diagnoseYoutubeUrl(cleaned).ok) setShowHints(true)
+                  }
+                }}
+                onKeyDown={(e) => {
+                  // Esc: 주소 칸을 비우고 안내도 지운다 (잘못 붙여넣었을 때 빨리 다시 시작)
+                  if (e.key === 'Escape' && (youtubeUrl || bulkSuggest || pasteNote || status)) {
+                    e.preventDefault()
+                    clearUrlField()
+                    return
+                  }
+                  if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && !e.nativeEvent.isComposing && !stockName.trim()) {
+                    // 종목을 아직 안 적었다면 등록 대신 종목 칸으로 이동
+                    e.preventDefault()
+                    focusStock()
+                  }
+                }}
+              />
+              {canPaste ? (
+                <button type="button" className="button secondary v4-paste-btn v4-touch" onClick={() => void pasteFromClipboard()} disabled={submitting} title="복사해 둔 유튜브 주소를 바로 붙여넣어요">
+                  붙여넣기
+                </button>
+              ) : null}
+            </div>
             {bulkSuggest ? (
               <div className="v4-suggest" role="status">
                 <span>
@@ -402,13 +709,37 @@ export default function VideoRegisterPage() {
                 </span>
               </div>
             ) : null}
-            <div className="v4-hint-slot" id="v4-reg-url-hint">
+            {dupKnown && dupChoice && !bulkSuggest ? (
+              <div className="v4-suggest v4-dup" role="status">
+                <span>
+                  <strong>{duplicateMessage(dupKnown, isAdmin)}</strong>
+                  <span className="v4-dup-detail">
+                    {' '}
+                    · 지금 종목: {dupKnown.stock_name || '없음'}.{' '}
+                    {dupChoice.kind === 'change'
+                      ? '영상 정보는 그대로 두고 종목만 바꿀 수 있어요.'
+                      : dupChoice.kind === 'same'
+                        ? '종목도 같아서 바꿀 것이 없어요.'
+                        : '종목만 바꾸려면 아래 종목명을 적어 주세요.'}
+                  </span>
+                </span>
+                <span className="v4-suggest-actions">
+                  {dupChoice.kind === 'change' ? (
+                    <button type="button" className="button v4-mini v4-touch" disabled={submitting} onClick={() => void submit()}>
+                      종목만 &lsquo;{dupChoice.stock}&rsquo;로 바꾸기
+                    </button>
+                  ) : null}
+                  <button type="button" className="button secondary v4-mini v4-touch" onClick={clearUrlField}>
+                    주소 지우기
+                  </button>
+                </span>
+              </div>
+            ) : null}
+            <div className="v4-hint-slot" id="v4-reg-url-hint" aria-live="polite">
               {showHints && !youtubeUrl.trim() ? (
                 <span className="v4-hint warn">유튜브 주소를 붙여넣어 주세요.</span>
-              ) : showHints && urlInvalid ? (
-                <span className="v4-hint warn">유효하지 않은 주소예요. youtube.com 또는 youtu.be 로 시작하는 영상 주소를 넣어 주세요.</span>
-              ) : duplicate ? (
-                <span className="v4-hint warn">이미 등록된 영상이에요. 다시 등록하면 종목·형식이 지금 입력한 값으로 바뀝니다.</span>
+              ) : showHints && urlInvalid && !diagnosis.ok ? (
+                <span className="v4-hint warn">{diagnosis.message}</span>
               ) : pasteNote ? (
                 <span className="v4-hint">
                   {pasteNote}
@@ -451,11 +782,17 @@ export default function VideoRegisterPage() {
                 enterKeyHint="done"
                 placeholder="예: 삼성전자"
                 value={stockName}
-                readOnly={submitting}
-                aria-invalid={showHints && !stockName.trim() ? true : undefined}
+                aria-invalid={showHints && urlOk && !stockName.trim() ? true : undefined}
                 onChange={(e) => {
                   setStockName(e.target.value)
                   setStatus(null)
+                }}
+                onKeyDown={(e) => {
+                  // Esc: 종목명을 한 번에 지운다 (미리 채워진 종목을 바꿀 때)
+                  if (e.key === 'Escape' && stockName) {
+                    e.preventDefault()
+                    setStockName('')
+                  }
                 }}
               />
               <datalist id="v4-reg-stock-list">
@@ -473,11 +810,11 @@ export default function VideoRegisterPage() {
             </div>
 
             <button ref={submitRef} className="button v4-reg-submit" type="submit" disabled={submitting}>
-              {submitting ? '등록 중…' : '등록'}
+              {submitLabel}
             </button>
           </div>
 
-          {showHints && !stockName.trim() ? (
+          {showHints && urlOk && !stockName.trim() ? (
             <div className="v4-hint-slot">
               <span className="v4-hint warn">종목명을 적어 주세요.</span>
             </div>
@@ -499,23 +836,31 @@ export default function VideoRegisterPage() {
             <label className="v4-sr" htmlFor="v4-reg-memo">
               메모
             </label>
-            <input id="v4-reg-memo" className="input" autoComplete="off" value={memo} readOnly={submitting} placeholder="예: 실적 발표 · 급등 이슈" onChange={(e) => setMemo(e.target.value)} />
+            <input id="v4-reg-memo" className="input" autoComplete="off" value={memo} placeholder="예: 실적 발표 · 급등 이슈" onChange={(e) => setMemo(e.target.value)} />
           </details>
-
-          <div className={`v4-reg-status ${status ? status.tone : ''}`} aria-live="polite" aria-atomic="true">
-            {status ? (
-              <span role={status.tone === 'error' ? 'alert' : undefined}>
-                <strong>
-                  {status.tone === 'ok' ? '✓ ' : ''}
-                  {status.text}
-                </strong>
-                {status.detail ? <span className="v4-reg-status-detail"> — {status.detail}</span> : null}
-              </span>
-            ) : (
-              <span className="muted">주소 붙여넣기 → 종목 입력 → Enter. 형식은 마지막에 고른 것으로 기억돼요. (Esc: 주소 지우기)</span>
-            )}
-          </div>
         </form>
+
+        <RegisterFeedback
+          status={status}
+          undo={undo}
+          nowMs={nowMs}
+          busy={submitting}
+          onUndo={() => void onUndo()}
+          onRetry={() => void submit()}
+          onQuickFix={onQuickFix}
+          idleHint={
+            <>
+              <span>주소를 붙여넣고 Enter. 형식과 종목은 마지막에 쓴 그대로 남아 있어요.</span>
+              <span className="v4-kbd-hint"> / 주소 칸으로 이동 · Esc 지우기 · Ctrl+Enter 어느 칸에서든 등록</span>
+            </>
+          }
+        />
+
+        <label className="v4-check v4-auto-submit" htmlFor="v4-reg-auto">
+          <input id="v4-reg-auto" type="checkbox" checked={autoSubmit} onChange={(e) => toggleAutoSubmit(e.target.checked)} />
+          <span>주소만 붙이면 바로 등록 (종목이 채워져 있을 때만 · 이미 등록한 영상은 제외)</span>
+        </label>
+      </div>
       </div>
 
       {bulkOpened ? (
@@ -524,14 +869,16 @@ export default function VideoRegisterPage() {
         </div>
       ) : null}
 
+      {!isAdmin && mode === 'single' ? <TodayPanel count={todayCount} target={daily.target} groups={todayGroups} showGroups /> : null}
+
       {firstRun ? (
         <details className="panel soft v4-firstrun" open>
           <summary>처음이신가요? 이렇게 하세요</summary>
           <ol>
             <li>유튜브에서 영상을 올린 뒤, 영상 주소를 복사합니다.</li>
-            <li>위 칸에 붙여넣고, 다룬 종목명을 적습니다. 롱폼/숏폼도 확인하세요.</li>
-            <li>Enter 를 누르면 등록 끝. 바로 다음 영상 주소를 붙여넣을 수 있어요.</li>
-            <li>여러 개를 한꺼번에 올릴 땐 "여러 개 붙여넣기"를, 잘못 등록했다면 아래 목록에서 수정·삭제하세요.</li>
+            <li>위 칸에 붙여넣고(또는 &quot;붙여넣기&quot; 버튼), 다룬 종목명을 적습니다. 롱폼/숏폼도 확인하세요.</li>
+            <li>Enter 를 누르면 등록 끝. 종목은 그대로 남아 있으니 바로 다음 영상 주소를 붙여넣을 수 있어요.</li>
+            <li>잘못 등록했다면 등록 직후 10초 안에 &quot;되돌리기&quot;, 그 뒤에는 아래 목록에서 수정·삭제하세요.</li>
           </ol>
         </details>
       ) : null}

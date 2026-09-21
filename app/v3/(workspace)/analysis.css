@@ -1149,3 +1149,385 @@
     flex-shrink: 0;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   4라운드: 다음 할 일 · 기억하는 필터 · 링크/CSV · 용어 설명 · 시리즈 관리
+   (기존 규칙을 덮어쓰지 않도록 모두 새 클래스. 좁은 화면 규칙은 맨 아래에 .v3-theme 를 붙여 함께 둔다)
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── 필터 줄 ────────────────────────────────────────────────── */
+.v3-theme .v3a-filterbar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.v3-theme .v3a-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 14px;
+}
+
+.v3-theme .v3a-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.v3-theme .v3a-filter-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.v3-theme .select.v3a-filter-select {
+  width: auto;
+  min-width: 128px;
+  max-width: 100%;
+  min-height: 36px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+.v3-theme .v3a-filter-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin-left: auto;
+}
+
+.v3-theme .v3a-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.v3-theme .v3a-chips-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.v3-theme .v3a-chip {
+  padding: 4px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--bg-soft);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.v3-theme .v3a-chip:hover {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.v3-theme .v3a-chips-reset {
+  font-size: 12px;
+}
+
+/* ── 빈 화면의 행동 버튼 ────────────────────────────────────── */
+.v3-theme .v3a-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+/* ── 용어 설명 ──────────────────────────────────────────────── */
+.v3-theme .v3a-term-wrap {
+  position: relative;
+  display: inline-block;
+}
+
+.v3-theme .v3a-term {
+  padding: 0;
+  border: none;
+  border-bottom: 1px dotted var(--muted);
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: help;
+}
+
+.v3-theme .v3a-term-tip {
+  display: none;
+  position: absolute;
+  z-index: 30;
+  left: 0;
+  top: calc(100% + 6px);
+  width: max-content;
+  max-width: min(260px, calc(100vw - 48px));
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #37352f;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.55;
+  text-align: left;
+  white-space: normal;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+}
+
+.v3-theme .v3a-term-wrap.open .v3a-term-tip,
+.v3-theme .v3a-term-wrap:hover .v3a-term-tip,
+.v3-theme .v3a-term-wrap:focus-within .v3a-term-tip {
+  display: block;
+}
+
+.v3-theme .v3a-gloss-list {
+  margin: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.v3-theme .v3a-gloss-list dt {
+  font-weight: 700;
+}
+
+.v3-theme .v3a-gloss-list dd {
+  margin: 2px 0 0;
+  color: var(--muted);
+}
+
+/* ── 급상승 카드: 왜 떴을까 · 다음에 할 일 ──────────────────── */
+.v3-theme .v3a-why {
+  padding: 8px 12px;
+  border-left: 3px solid var(--warning);
+  border-radius: 4px;
+  background: rgba(217, 130, 43, 0.07);
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.v3-theme .v3a-why strong {
+  margin-right: 4px;
+}
+
+.v3-theme .v3a-next {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.v3-theme .v3a-next-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.v3-theme a.button.xs {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+
+.v3-theme .v3a-sub-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ── 순위 행의 보조 링크 ────────────────────────────────────── */
+.v3-theme .v3a-row-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.v3-theme .v3a-row-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  font-size: 12px;
+}
+
+.v3-theme .v3a-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
+/* ── 조회수 성장: 링크로 연 영상 안내 ───────────────────────── */
+.v3-theme .v3a-linked {
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-soft);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+/* ── 시리즈 관리 ────────────────────────────────────────────── */
+.v3-theme .v3a-order-hint {
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.v3-theme .v3a-member-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 4px 8px;
+}
+
+.v3-theme .v3a-move {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.v3-theme .v3a-move:hover:not(:disabled) {
+  background: var(--bg-soft);
+  border-color: var(--primary);
+}
+
+.v3-theme .v3a-move:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.v3-theme .v3a-member-no {
+  flex-shrink: 0;
+  min-width: 22px;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.v3-theme .v3a-member-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.v3-theme .v3a-adder {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-soft);
+}
+
+.v3-theme .v3a-adder-results {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.v3-theme .v3a-adder-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  font-size: 13px;
+}
+
+.v3-theme .v3a-adder-item > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.v3-theme .v3a-adder-item .button {
+  flex-shrink: 0;
+}
+
+/* ── 좁은 화면 ──────────────────────────────────────────────── */
+@media (max-width: 560px) {
+  .v3-theme .v3a-filter {
+    flex: 1 1 130px;
+  }
+  .v3-theme .select.v3a-filter-select {
+    width: 100%;
+  }
+  .v3-theme .v3a-filter-tools {
+    width: 100%;
+    margin-left: 0;
+  }
+  .v3-theme .v3a-filter-tools .button {
+    flex: 1 1 auto;
+    min-height: 40px;
+  }
+  .v3-theme .v3a-chip {
+    padding: 6px 12px;
+  }
+  /* 용어 설명은 화면 아래에 고정해서 잘리지 않게 */
+  .v3-theme .v3a-term-tip {
+    position: fixed;
+    left: 16px;
+    right: 16px;
+    top: auto;
+    bottom: 16px;
+    width: auto;
+    max-width: none;
+  }
+  .v3-theme .v3a-empty-actions,
+  .v3-theme .v3a-empty-actions .button {
+    width: 100%;
+  }
+  .v3-theme .v3a-next .button {
+    flex: 1 1 100%;
+    min-height: 40px;
+    justify-content: center;
+  }
+  .v3-theme .v3a-move {
+    width: 36px;
+    height: 36px;
+  }
+  .v3-theme .v3i-member {
+    flex-wrap: wrap;
+  }
+  .v3-theme .v3a-adder-item {
+    flex-wrap: wrap;
+  }
+  .v3-theme .v3a-adder-item .button {
+    width: 100%;
+    min-height: 40px;
+  }
+}
+
+/* 섹션 안에서 바로 이어지는 검색칸·안내 줄의 간격 */
+.v3-theme .v3-section > .v3a-search {
+  margin-bottom: 12px;
+}
+
+.v3-theme .v3-section > .v3a-toolbar {
+  margin-top: 12px;
+}
+
+.v3-theme .v3-section > .v3a-sub-note {
+  margin-bottom: 10px;
+}

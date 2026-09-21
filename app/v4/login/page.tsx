@@ -8,6 +8,7 @@ import { fetchMe } from '@/lib/session/me-client'
 import { homeHrefForRole } from '@/lib/v4/menu'
 import { PasswordField } from '@/components/v4/password-field'
 import { readStorage, writeStorage } from '@/components/v4/register-utils'
+import { readNextFromSearch } from '@/components/v4/safe-next'
 
 // 마지막에 쓴 아이디만 이 기기에 기억한다. 비밀번호는 절대 저장하지 않는다.
 const LAST_ID_KEY = 'v4.login.lastId'
@@ -42,9 +43,12 @@ export default function LoginPage() {
   const [remember, setRemember] = useState(true)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  // 로그인이 풀려서 온 경우: 끝나면 하던 화면으로 돌아간다. /v4/ 안의 안전한 주소만 받는다.
+  const [nextPath, setNextPath] = useState<string | null>(null)
 
   // 처음 열 때: 지난번 아이디를 채우고, 있으면 곧장 비밀번호 칸으로 (없으면 아이디 칸으로)
   useEffect(() => {
+    setNextPath(readNextFromSearch(window.location.search))
     const savedRemember = readStorage(REMEMBER_KEY)
     const keep = savedRemember !== 'off'
     setRemember(keep)
@@ -129,7 +133,7 @@ export default function LoginPage() {
       // 직원은 매일 하는 영상 등록, 관리자는 성장 현황이 첫 화면.
       const me = await fetchMe(data.session.access_token)
       navigating = true
-      router.push(homeHrefForRole(me.roleType))
+      router.push(nextPath || homeHrefForRole(me.roleType))
     } catch (e: any) {
       setError(e?.message || '로그인 중 오류가 발생했습니다.')
     } finally {
@@ -153,7 +157,7 @@ export default function LoginPage() {
         >
           <img className="auth-logo" src="/logo-ant.png" alt="" width={56} height={56} />
           <h1 className="auth-title">여왕개미미디어 CRM</h1>
-          <p className="auth-subtitle">영상을 등록하고, 무엇이 잘 되는지 확인하는 공간입니다.</p>
+          <p className="auth-subtitle">{nextPath ? '로그인하면 하던 화면으로 바로 돌아가요.' : '영상을 등록하고, 무엇이 잘 되는지 확인하는 공간입니다.'}</p>
           <fieldset className="v4-auth-fields" disabled={loading}>
             <div className="field">
               <label className="label" htmlFor="v4-login-id">

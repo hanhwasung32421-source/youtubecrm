@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { getAccessToken } from '@/lib/session/authed-fetch'
 import { fetchMe } from '@/lib/session/me-client'
 import { LOGIN_HREF, findMenuByPath, homeHrefForRole, isAdminRole } from '@/lib/v4/menu'
+import { loginHrefWithNext } from '@/components/v4/safe-next'
 import { V4MeProvider, type V4Me } from '@/components/v4/me-context'
 import { KpiSkeleton, Skel, SkelRegion } from '@/components/v4/skeleton'
 
@@ -52,18 +53,20 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let cancelled = false
+    // 로그인이 필요하면 지금 보던 화면을 기억해 두었다가, 로그인 뒤에 그 화면으로 돌려보낸다.
+    const loginHref = () => loginHrefWithNext(LOGIN_HREF, `${window.location.pathname}${window.location.search}`)
     const run = async () => {
       try {
         const accessToken = await getAccessToken()
         if (!accessToken) {
-          router.replace(LOGIN_HREF)
+          router.replace(loginHref())
           return
         }
         let data: Awaited<ReturnType<typeof fetchMe>>
         try {
           data = await fetchMe(accessToken)
         } catch {
-          router.replace(LOGIN_HREF)
+          router.replace(loginHref())
           return
         }
         if (cancelled) return

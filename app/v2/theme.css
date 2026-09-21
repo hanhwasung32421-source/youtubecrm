@@ -1951,7 +1951,7 @@ body:has(.v2-theme) {
     grid-area: nav;
     flex-direction: row;
     gap: 6px;
-    margin: -3px;
+    margin: -3px 0;
     padding: 3px;
     overflow-x: auto;
     overscroll-behavior-x: contain;
@@ -2226,5 +2226,314 @@ body:has(.v2-theme) {
 
   .v2-theme .button:hover {
     transform: none;
+  }
+}
+
+/* =====================================================================
+   라운드 4 — 등록 흐름(빠른 반복 입력) · 되돌리기 · 오늘 진행 · 단축키 안내
+   (전부 .v2-theme 안에서만. 위 규칙과 같은 무게이므로 파일 맨 끝에 두어 덮어쓴다.)
+   ===================================================================== */
+
+/* ---- 오늘 진행 막대 ---- */
+.v2-theme .v2-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.v2-theme .v2-progress-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  font-size: 13px;
+}
+
+.v2-theme .v2-progress-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 15px;
+  color: var(--muted);
+}
+
+.v2-theme .v2-progress-count b {
+  font-size: 22px;
+  color: var(--text);
+}
+
+.v2-theme .v2-progress-msg {
+  flex: 1 1 200px;
+  min-width: 0;
+  color: var(--muted);
+}
+
+.v2-theme .v2-goal-btn {
+  margin-left: auto;
+}
+
+.v2-theme .v2-goal-input {
+  display: inline-block;
+  width: 72px;
+  min-width: 0;
+  padding: 4px 8px;
+  text-align: center;
+}
+
+.v2-theme .v2-progress-track {
+  height: 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 2px;
+  background: var(--bg-soft);
+  overflow: hidden;
+}
+
+.v2-theme .v2-progress-fill {
+  height: 100%;
+  background: var(--primary);
+  transition: width 0.3s ease;
+}
+
+.v2-theme .v2-progress-track.done .v2-progress-fill {
+  background: var(--success);
+}
+
+/* ---- 주소 칸 줄: 입력 + 붙여넣기 버튼, 그 아래 고정 높이 안내 칸 ---- */
+.v2-theme .v2-url-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.v2-theme .v2-url-row .v2-url-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.v2-theme .v2-paste-btn {
+  flex: none;
+  min-width: 96px;
+  min-height: 46px;
+}
+
+.v2-theme .v2-url-note {
+  min-height: 22px;
+  margin-top: 6px;
+}
+
+.v2-theme .v2-dup {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 6px;
+}
+
+/* ---- 종목 칸: 오른쪽 "×"(한 번에 지우기) ---- */
+.v2-theme .v2-stock-wrap {
+  position: relative;
+}
+
+.v2-theme .v2-stock-wrap .input {
+  padding-right: 60px;
+}
+
+.v2-theme .v2-clear-x {
+  position: absolute;
+  top: 50%;
+  right: 26px;
+  width: 28px;
+  height: 28px;
+  margin-top: -14px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.v2-theme .v2-clear-x:hover:not(:disabled) {
+  background: var(--panel-soft);
+  color: var(--text);
+}
+
+/* ---- 등록 결과 칸(고정 높이): 성공·되돌리기·오류·안내가 바뀌어도 아래가 출렁이지 않는다 ---- */
+.v2-theme .v2-slot {
+  display: flex;
+  align-items: center;
+  min-height: 92px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg-soft);
+}
+
+.v2-theme .v2-slot > * {
+  width: 100%;
+  min-width: 0;
+}
+
+.v2-theme .v2-last,
+.v2-theme .v2-slot-error {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.v2-theme .v2-last-line {
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.v2-theme .v2-slot-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.v2-theme .v2-slot-info,
+.v2-theme .v2-slot-idle {
+  margin: 0;
+}
+
+.v2-theme .v2-fix-input {
+  flex: 1 1 160px;
+  max-width: 260px;
+}
+
+.v2-theme .v2-relogin {
+  text-decoration: none;
+}
+
+/* 되돌리기 버튼: 10초 동안 왼쪽으로 줄어드는 띠로 남은 시간을 보여 준다 */
+.v2-theme .v2-undo-btn {
+  position: relative;
+  overflow: hidden;
+}
+
+.v2-theme .v2-undo-fill {
+  position: absolute;
+  inset: 0;
+  background: var(--primary-soft);
+  transform-origin: left center;
+  animation-name: v2-undo-drain;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+.v2-theme .v2-undo-text {
+  position: relative;
+}
+
+@keyframes v2-undo-drain {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
+/* ---- 단축키 안내 한 줄(마우스/키보드가 있는 화면에서만) ---- */
+.v2-theme .v2-kbd-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.9;
+  color: var(--muted);
+}
+
+.v2-theme .v2-kbd-hint kbd {
+  padding: 0 5px;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  background: var(--panel-soft);
+  color: var(--text);
+  font-family: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 11px;
+}
+
+@media (hover: none) {
+  .v2-theme .v2-kbd-hint {
+    display: none;
+  }
+}
+
+.v2-theme .v2-auto-line {
+  margin-top: -4px;
+}
+
+/* ---- 오늘 다룬 종목(개수) ---- */
+.v2-theme .v2-today-stocks {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.v2-theme .v2-today-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.v2-theme .v2-chip-rest {
+  color: var(--muted);
+}
+
+/* ---- 로그인 화면: 하던 화면으로 돌아간다는 안내 ---- */
+.v2-theme .v2-return-note {
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--primary-soft);
+  color: var(--text);
+}
+
+/* ---- 좁은 화면 · 터치 화면 ---- */
+@media (max-width: 720px), (pointer: coarse) {
+  .v2-theme .v2-slot {
+    min-height: 118px;
+  }
+
+  .v2-theme .v2-clear-x {
+    right: 22px;
+    width: 36px;
+    height: 36px;
+    margin-top: -18px;
+  }
+
+  .v2-theme .v2-paste-btn {
+    min-height: 46px;
+  }
+}
+
+@media (max-width: 720px) {
+  .v2-theme .v2-progress-msg {
+    flex-basis: 100%;
+  }
+
+  .v2-theme .v2-goal-btn {
+    margin-left: 0;
+  }
+
+  .v2-theme .v2-paste-btn {
+    min-width: 84px;
+    padding: 0 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .v2-theme .v2-undo-fill {
+    animation: none;
+    display: none;
   }
 }

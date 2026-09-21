@@ -2,12 +2,15 @@
 
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent, KeyboardEvent } from 'react'
-import { v4Json } from '@/lib/v4/client'
 import type { ExperimentItem } from '@/lib/v4/sample-data'
+import { REOPEN_CONSEQUENCE, validateResult } from '@/lib/v4/experiment-view'
 import { FormError } from '@/lib/v4/analysis-ui'
 import { Field } from './field'
 
-type Winner = 'a' | 'b' | 'tie'
+export type Winner = 'a' | 'b' | 'tie'
+export type ResultValues = { winner: Winner; learning: string; endedOn: string }
+// 저장에 실패해서 되돌아온 입력: 쓰던 내용을 그대로 채워 다시 열고 이유를 보여준다.
+export type ResultDraft = { winner: Winner | ''; learning: string; endedOn: string; message: string }
 
 const CHOICES: Array<[Winner, string]> = [
   ['a', 'A가 더 좋았어요 (지금 방식)'],
@@ -16,104 +19,68 @@ const CHOICES: Array<[Winner, string]> = [
 ]
 
 // 실험이 끝났을 때 "결과 기록": 승자 + 배운 점 + 종료일을 카드 안에서 바로 남긴다.
+// 저장은 위(page)에서 "화면 먼저 바꾸고 → 서버에 저장 → 실패하면 되돌리기" 로 처리한다. 여기서는 입력만 받는다.
 // Esc = 취소, Ctrl/⌘+Enter = 저장, 종료일 칸에서 Enter = 저장.
 export function ResultRecorder({
   item,
   today,
-  onSaved,
+  focus = 'winner',
+  draft,
+  onSubmit,
+  onReopen,
   onCancel
 }: {
   item: ExperimentItem
   today: string
-  onSaved: (item: ExperimentItem, message: string) => void
+  focus?: 'winner' | 'learning'
+  draft?: ResultDraft | null
+  onSubmit: (values: ResultValues) => void
+  onReopen: () => void
   onCancel: () => void
 }) {
-  const [winner, setWinner] = useState<Winner | ''>(item.winner ?? '')
-  const [learning, setLearning] = useState(item.learning ?? '')
-  const [endedOn, setEndedOn] = useState(item.endedOn ?? (today < item.startedOn ? item.startedOn : today))
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-  const [errorStatus, setErrorStatus] = useState(0)
-  const savingRef = useRef(false) // 아주 빠른 더블 클릭도 한 번만 저장되게
+  const [winner, setWinner] = useState<Winner | ''>(draft ? draft.winner : item.winner ?? '')
+  const [learning, setLearning] = useState(draft ? draft.learning : item.learning ?? '')
+  const [endedOn, setEndedOn] = useState(draft ? draft.endedOn : item.endedOn ?? (today < item.startedOn ? item.startedOn : today))
   const [submitted, setSubmitted] = useState(false)
   const [confirmReopen, setConfirmReopen] = useState(false)
   const firstRef = useRef<HTMLButtonElement | null>(null)
+  const learningRef = useRef<HTMLTextAreaElement | null>(null)
 
   useEffect(() => {
-    firstRef.current?.focus()
+    if (focus === 'learning') learningRef.current?.focus()
+    else firstRef.current?.focus()
+    // 처음 열릴 때만
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const winnerError = submitted && !winner ? '어느 쪽이 더 좋았는지 골라 주세요.' : ''
-  const endError = endedOn && endedOn < item.startedOn ? '종료일은 시작일보다 빠를 수 없어요.' : ''
+  const errors = validateResult(winner, endedOn, item.startedOn)
+  const winnerError = submitted ? errors.winner : ''
+  const endError = errors.endedOn
 
-  const save = async (e?: FormEvent) => {
+  const save = (e?: FormEvent) => {
     e?.preventDefault()
-    if (saving || savingRef.current) return
     setSubmitted(true)
-    if (!winner || endError) return
-    savingRef.current = true
-    setSaving(true)
-    setError('')
-    setErrorStatus(0)
-    const result = await v4Json<{ item: ExperimentItem }>(
-      'PATCH',
-      `/api/v4/experiments/${item.id}`,
-      { winner, learning: learning.trim() || null, endedOn: endedOn || today },
-      '결과를 저장하지 못했어요. 잠시 후 다시 시도해 주세요.'
-    )
-    savingRef.current = false
-    setSaving(false)
-    if (!result.ok) {
-      setError(result.message)
-      setErrorStatus(result.status)
-      return
-    }
-    onSaved(result.data.item, item.winner ? '결과를 고쳤어요.' : '결과를 기록했어요. 끝난 실험으로 옮겼어요.')
-  }
-
-  // 결과를 비우고 다시 "진행 중"으로 되돌린다 (두 번 눌러야 실행)
-  const reopen = async () => {
-    if (!confirmReopen) {
-      setConfirmReopen(true)
-      return
-    }
-    if (saving || savingRef.current) return
-    savingRef.current = true
-    setSaving(true)
-    setError('')
-    setErrorStatus(0)
-    const result = await v4Json<{ item: ExperimentItem }>(
-      'PATCH',
-      `/api/v4/experiments/${item.id}`,
-      { winner: null, endedOn: null },
-      '진행 중으로 되돌리지 못했어요. 잠시 후 다시 시도해 주세요.'
-    )
-    savingRef.current = false
-    setSaving(false)
-    if (!result.ok) {
-      setError(result.message)
-      setErrorStatus(result.status)
-      setConfirmReopen(false)
-      return
-    }
-    onSaved(result.data.item, '진행 중인 실험으로 되돌렸어요.')
+    if (!winner || errors.endedOn) return
+    onSubmit({ winner, learning, endedOn })
   }
 
   const onKeyDown = (e: KeyboardEvent<HTMLFormElement>) => {
     if (e.key === 'Escape') {
       e.preventDefault()
       e.stopPropagation()
-      if (!saving) onCancel()
+      if (confirmReopen) setConfirmReopen(false)
+      else onCancel()
     } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault()
-      void save()
+      save()
     }
   }
 
   const id = `rec-${item.id}`
+  const title = !item.winner ? '결과 기록하기' : !(item.learning && item.learning.trim()) && focus === 'learning' ? '배운 점 적기' : '결과 고치기'
   return (
     <form className="v4p-rec" onSubmit={save} onKeyDown={onKeyDown} noValidate aria-label="실험 결과 기록">
-      <h4 className="v4p-rec-title">{item.winner ? '결과 고치기' : '결과 기록'}</h4>
+      <h4 className="v4p-rec-title">{title}</h4>
       <p className="v4p-req-legend">
         <span className="v4p-req">*</span> 표시는 꼭 골라야 해요.
       </p>
@@ -128,21 +95,20 @@ export function ResultRecorder({
               aria-checked={winner === key}
               className={`v4p-choice-item ${winner === key ? 'on' : ''}`}
               onClick={() => setWinner(key)}
-              disabled={saving}
             >
               {text}
             </button>
           ))}
         </div>
       </Field>
-      <Field id={`${id}-learning`} label="배운 점" optional hint="다음 영상에 어떻게 쓸지 적어 두면 좋아요.">
+      <Field id={`${id}-learning`} label="배운 점" optional hint="다음 영상에 어떻게 쓸지 적어 두면 좋아요. 나중에 언제든 적을 수 있어요.">
         <textarea
           id={`${id}-learning`}
+          ref={learningRef}
           className="textarea"
           value={learning}
           onChange={(e) => setLearning(e.target.value)}
           placeholder="예: 종목명을 크게 하니 조회수가 1.4배 나왔다. 앞으로 크게 쓰자"
-          disabled={saving}
           maxLength={4000}
         />
       </Field>
@@ -155,27 +121,38 @@ export function ResultRecorder({
             value={endedOn}
             min={item.startedOn}
             onChange={(e) => setEndedOn(e.target.value)}
-            disabled={saving}
           />
         </Field>
       </div>
-      {error ? (
-        <FormError message={error} status={errorStatus} />
-      ) : null}
-      <div className="v4p-form-actions">
-        <button type="submit" className="button" disabled={saving}>
-          {saving ? '저장 중…' : item.winner ? '고친 내용 저장' : '결과 저장'}
-        </button>
-        <button type="button" className="button secondary" onClick={onCancel} disabled={saving}>
-          취소
-        </button>
-        {item.winner ? (
-          <button type="button" className={confirmReopen ? 'button danger' : 'button secondary'} onClick={() => void reopen()} disabled={saving} onBlur={() => setConfirmReopen(false)}>
-            {confirmReopen ? '정말 되돌리기' : '진행 중으로 되돌리기'}
+      {draft?.message ? <FormError message={`저장하지 못해서 원래대로 되돌렸어요. ${draft.message} 적어 둔 내용은 그대로 남아 있으니 다시 저장해 보세요.`} /> : null}
+      {confirmReopen ? (
+        <div className="v4p-confirm" role="alertdialog" aria-label="진행 중으로 되돌리기 확인">
+          <p>{REOPEN_CONSEQUENCE}</p>
+          <div className="v4p-form-actions">
+            <button type="button" className="button danger" onClick={onReopen} autoFocus>
+              진행 중으로 되돌리기
+            </button>
+            <button type="button" className="button secondary" onClick={() => setConfirmReopen(false)}>
+              그만두기
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="v4p-form-actions">
+          <button type="submit" className="button">
+            {item.winner ? '고친 내용 저장' : '결과 저장'}
           </button>
-        ) : null}
-        <span className="v4p-keyhint">Esc 취소 · Ctrl+Enter 저장</span>
-      </div>
+          <button type="button" className="button secondary" onClick={onCancel}>
+            취소
+          </button>
+          {item.winner ? (
+            <button type="button" className="button secondary" onClick={() => setConfirmReopen(true)}>
+              진행 중으로 되돌리기
+            </button>
+          ) : null}
+          <span className="v4p-keyhint">Esc 취소 · Ctrl+Enter 저장</span>
+        </div>
+      )}
     </form>
   )
 }

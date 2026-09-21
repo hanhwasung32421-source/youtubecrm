@@ -126,11 +126,27 @@ export type PlannedSlot = {
   created_at: string
 }
 
+// 요일·시간대 하나의 성과 (추천 시간의 근거로 보여준다)
+export type TimingSlot = {
+  weekday: number
+  hour: number
+  avgViews: number // 그 시간대에 올린 영상의 평균 조회수
+  avgViewsPerDay: number // 올린 뒤 하루당 평균 조회수 (오래된 영상과 새 영상을 공평하게 비교)
+  sampleSize: number // 그 시간대에 올린 영상 수
+}
+
 export type TimingHint = {
   weekday: number | null
   hour: number | null
   avgViews: number
   sampleSize: number
+  // ---- 라운드 4에서 더한 근거 값 (모두 선택: 옛 응답에도 화면이 그대로 동작) ----
+  avgViewsPerDay?: number
+  windowDays?: number // 며칠 치 영상을 봤는지 (예: 30)
+  totalVideos?: number // 그 기간 전체 영상 수 (조회수를 아는 것만)
+  overallAvgViews?: number // 그 기간 전체 평균 조회수
+  overallAvgViewsPerDay?: number
+  runnerUps?: TimingSlot[] // 그다음으로 좋았던 시간대
 }
 
 // ---- 제목·썸네일 최적화 스코어카드 ----
@@ -170,7 +186,15 @@ export type DiscoverabilityRow = {
 // ---- 응답 payload 타입 ----
 export type SeoChecklistsPayload = { items: SeoChecklist[]; sample?: boolean; error?: string }
 export type OptimizationPayload = { items: OptimizationRow[]; capped?: boolean; sample?: boolean; error?: string }
-export type KeywordsPayload = { items: KeywordRadarItem[]; recentStocks: RecentStock[]; doneTotal?: number; sample?: boolean; error?: string }
+export type KeywordsPayload = {
+  items: KeywordRadarItem[]
+  recentStocks: RecentStock[]
+  doneTotal?: number
+  // 종목별로 지금까지 등록된 영상 수 (키워드 → 그 종목 영상 보기 링크의 근거). 옛 응답에는 없다.
+  videoCounts?: Record<string, number>
+  sample?: boolean
+  error?: string
+}
 export type PlannerPayload = {
   weekStart: string
   days: string[]

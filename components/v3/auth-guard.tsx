@@ -6,6 +6,7 @@ import { createSupabaseBrowserClient } from '@/lib/supabase/browser-client'
 import { getAccessToken } from '@/lib/session/authed-fetch'
 import { clearMeCache, fetchMe } from '@/lib/session/me-client'
 import { getHomeHref, getMenuByPath, isAdminRole } from '@/lib/v3/menu'
+import { loginHref } from '@/components/v3/safe-next'
 
 export type V3Me = {
   crmUserId: string
@@ -42,11 +43,13 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let cancelled = false
+    // 로그인 화면으로 보낼 때 지금 보던 화면을 ?next= 로 남겨서, 로그인하면 그 화면으로 돌아오게 한다.
+    const goLogin = () => router.replace(loginHref(window.location.pathname + window.location.search))
     const run = async () => {
       try {
         const accessToken = await getAccessToken()
         if (!accessToken) {
-          router.replace('/v3/login')
+          goLogin()
           return
         }
 
@@ -54,7 +57,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
         try {
           profile = await fetchMe(accessToken)
         } catch {
-          router.replace('/v3/login')
+          goLogin()
           return
         }
         if (cancelled) return
@@ -79,7 +82,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
       const { data } = createSupabaseBrowserClient().auth.onAuthStateChange((event) => {
         if (event === 'SIGNED_OUT') {
           clearMeCache()
-          router.replace('/v3/login')
+          goLogin()
         }
       })
       unsubscribe = () => data.subscription.unsubscribe()

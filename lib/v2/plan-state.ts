@@ -43,7 +43,32 @@ export function nextFreeHour(used: readonly number[], from: number): number {
   return start
 }
 
-export type PlanSummary = { plannedAll: number; plannedDue: number; met: number; behind: number }
+// 지난 날 중 계획보다 적게 올린 칸이 담당자별로 몇 개인지 (많은 순, 0개는 뺀다). 오늘은 아직 진행 중이라 세지 않는다.
+export function behindByStaff(
+  staffIds: readonly string[],
+  days: readonly string[],
+  planned: Record<string, Record<string, ArrayLike<unknown> | undefined> | undefined>,
+  actual: Record<string, Record<string, number | undefined> | undefined>,
+  today: string
+): { staffId: string; cells: number; missing: number }[] {
+  const out: { staffId: string; cells: number; missing: number }[] = []
+  for (const id of staffIds) {
+    let cells = 0
+    let missing = 0
+    for (const day of days) {
+      const p = whole(planned[id]?.[day]?.length ?? 0)
+      const a = whole(actual[id]?.[day] ?? 0)
+      if (p > 0 && day < today && a < p) {
+        cells += 1
+        missing += p - a
+      }
+    }
+    if (cells > 0) out.push({ staffId: id, cells, missing })
+  }
+  return out.sort((a, b) => b.missing - a.missing || b.cells - a.cells)
+}
+
+export type PlanSummary ={ plannedAll: number; plannedDue: number; met: number; behind: number }
 
 // 이번 주 요약: 지나간 날(오늘 포함) 계획 중 얼마나 지켰는지
 export function summarizePlan(

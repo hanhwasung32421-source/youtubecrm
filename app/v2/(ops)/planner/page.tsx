@@ -1,15 +1,25 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import Link from 'next/link'
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { AdminOnly } from '@/components/v2/auth-guard'
 import { PageHeader } from '@/components/v2/app-shell'
 import { Toast, useToast } from '@/components/toast'
+import { NextSteps } from '@/lib/v2/actions-ui'
 import { Answer, EmptyGuide, FieldError, HowTo, InlineConfirm, Kpi, KpiRow, LoadError, RefreshNote, SampleNote, SkeletonPlanner, SkeletonSummary } from '@/lib/v2/analysis-ui'
 import { v2Delete, v2Patch, v2Post } from '@/lib/v2/client'
-import { addDays, formatYmdLabel, kstYmd, weekStartMonday, WEEKDAY_LABELS, weekdayOf } from '@/lib/v2/dates'
+import type { CsvValue } from '@/lib/v2/csv'
+import { addDays, formatYmdLabel, isRealYmd, kstYmd, weekStartMonday, WEEKDAY_LABELS, weekdayOf } from '@/lib/v2/dates'
+import { ActiveFilters, type FilterChip } from '@/lib/v2/filters-ui'
+import { withQuery, type FilterSpec } from '@/lib/v2/filters'
 import { formatCountOrDash, safeRatio } from '@/lib/v2/format'
-import { STATE_SYMBOL, STATE_WORD, cellState, countLabel, nextFreeHour, summarizePlan } from '@/lib/v2/plan-state'
+import { GlossaryDetails, Term } from '@/lib/v2/glossary-ui'
+import type { NextLink } from '@/lib/v2/next-actions'
+import { STATE_SYMBOL, STATE_WORD, behindByStaff, cellState, countLabel, nextFreeHour, summarizePlan } from '@/lib/v2/plan-state'
+import { ShareBar } from '@/lib/v2/share-ui'
 import { useV2Query } from '@/lib/v2/swr'
+import { describeTiming, slotLabel } from '@/lib/v2/timing'
+import { useUrlFilters } from '@/lib/v2/use-url-filters'
 import { V2_MISSING_TABLE_MESSAGE } from '@/lib/v2/tables'
 import type { PlannedSlot, PlannerPayload } from '@/lib/v2/types'
 
@@ -31,13 +41,26 @@ const LOAD_ERROR = '업로드 계획을 불러오지 못했어요. 잠시 뒤 �
 const SAVE_ERROR = '계획을 저장하지 못했어요. 다시 시도해 주세요.'
 const DUP_MESSAGE = '이 시간에는 이미 계획이 있어요. 다른 시간을 골라 주세요.'
 
+// 주소(?week=2026-09-14&staff=…)와 같은 이름이라, 링크로 공유·북마크할 수 있다. week 는 그 주 월요일 날짜(비우면 이번 주).
+const FILTER_SPEC = {
+  week: { default: '', pattern: /^\d{4}-\d{2}-\d{2}$/, transient: true },
+  staff: { default: '' }
+} as const satisfies FilterSpec
+
 // 열려 있는 입력 칸: 새로 추가하거나, 기존 계획(slot)을 고친다.
 type Editor = { staffId: string; day: string; slot: PlannedSlot | null }
 
 function PlannerBody() {
   const { toast, showError } = useToast()
   const today = kstYmd()
-  const [weekStart, setWeekStart] = useState(() => weekStartMonday(kstYmd()))
+  const { filters, setFilters, reset, shareHref } = useUrlFilters('planner', FILTER_SPEC)
+  const thisWeek = weekStartMonday(today)
+  // 주소의 날짜가 잘못됐거나 없으면 이번 주. 어느 날짜든 그 주 월요일로 맞춘다.
+  const weekStart = weekStartMonday(isRealYmd(filters.week) ? filters.week : today)
+  const setWeekStart = (fn: (w: string) => string) => {
+    const next = weekStartMonday(fn(weekStart))
+    setFilters({ week: next === thisWeek ? '' : next })
+  }
   // 주를 넘길 때마다 그 주 주소로 조회한다. 이미 본 주는 바로 보이고, 빠르게 넘기면 앞선 요청은 취소된다.
   const query = useV2Query<PlannerPayload>(`/api/v2/planner?weekStart=${weekStart}`, { fallback: LOAD_ERROR, validate: isPlanner })
   // 새 주를 받는 동안에는 직전 주 표를 흐리게 남겨 화면이 깜빡이지 않게 한다.
@@ -186,22 +209,60 @@ function PlannerBody() {
     }
   }
 
+  // 담당자 필터: 고른 사람 줄만 보이고, 요약 숫자도 그 사람 기준이 된다.
+  const staffFilter = payload.staff.some((s) => s.name === filters.staff) ? filters.staff : ''
+  const visibleStaff = useMemo(() => (staffFilter ? payload.staff.filter((s) => s.name === staffFilter) : payload.staff), [payload.staff, staffFilter])
+
   // 이번 주 요약: 지나간 날(오늘 포함) 계획 중 얼마나 지켰는지
   const summary = useMemo(
     () =>
       summarizePlan(
-        payload.staff.map((s) => s.id),
+        visibleStaff.map((s) => s.id),
         payload.days,
         payload.planned,
         payload.actual,
         today
       ),
-    [payload, today]
+    [payload, visibleStaff, today]
   )
   const fillRate = safeRatio(summary.met, summary.plannedDue)
+  const behind = useMemo(
+    () =>
+      behindByStaff(
+        visibleStaff.map((s) => s.id),
+        payload.days,
+        payload.planned,
+        payload.actual,
+        today
+      ),
+    [payload, visibleStaff, today]
+  )
+  const timing = useMemo(() => describeTiming(hint), [hint])
 
   const rangeLabel = `${formatYmdLabel(payload.days[0] || weekStart)} ~ ${formatYmdLabel(payload.days[6] || addDays(weekStart, 6))}`
-  const thisWeek = weekStartMonday(today)
+  const chips: FilterChip[] = []
+  if (weekStart !== thisWeek) chips.push({ key: 'week', label: `주: ${rangeLabel}`, onClear: () => setFilters({ week: '' }) })
+  if (filters.staff) chips.push({ key: 'staff', label: `담당자: ${filters.staff}`, onClear: () => setFilters({ staff: '' }) })
+  const nameOf = (id: string) => payload.staff.find((s) => s.id === id)?.name || ''
+  const nextSteps: NextLink[] = behind.slice(0, 3).map((b) => ({
+    key: b.staffId,
+    tone: 'bad' as const,
+    text: `${nameOf(b.staffId)}님이 지난 날 계획보다 ${b.missing}건 적게 올렸어요 (${b.cells}개 칸).`,
+    href: withQuery('/v2/report', { staff: nameOf(b.staffId), period: '30' }),
+    label: '이 담당자 성과 보기'
+  }))
+  const csvTable = () => {
+    const rows: CsvValue[][] = []
+    for (const s of visibleStaff) {
+      for (const day of payload.days) {
+        const slots = slotsOf(s.id, day)
+        const actualCount = payload.actual[s.id]?.[day] ?? 0
+        const state = cellState(day, today, slots.length, actualCount)
+        rows.push([s.name, day, WEEKDAY_LABELS[weekdayOf(day)], slots.map((x) => `${String(x.planned_hour).padStart(2, '0')}:00`).join(' / '), slots.length, actualCount, STATE_WORD[state] || ''])
+      }
+    }
+    return { name: `업로드 계획 ${payload.days[0] || weekStart}`, headers: ['담당자', '날짜', '요일', '계획한 시간', '계획 건수', '실제 등록 건수', '상태'], rows }
+  }
   const weekName = weekStart === thisWeek ? '이번 주' : '선택한 주'
 
   return (
@@ -235,22 +296,52 @@ function PlannerBody() {
                 <span aria-hidden="true">✓ </span>지금까지 계획 {summary.plannedDue}건 중 <b>{summary.met}건</b>을 채웠어요. 밀린 곳은 없어요.
               </>
             )}
-            {hasHint ? (
-              <span className="v2a-sub" style={{ display: 'block', marginTop: 6, fontWeight: 500 }}>
-                참고: 최근 영상을 보면 {WEEKDAY_LABELS[hint.weekday as number]}요일 {hint.hour}시에 올린 영상의 평균 조회수가 가장 높았어요 (평균 {formatCountOrDash(hint.avgViews)}회, 영상 {hint.sampleSize}개 기준).
-                이 시간대에 계획을 몰아 보세요.
-              </span>
-            ) : (
-              <span className="v2a-sub" style={{ display: 'block', marginTop: 6, fontWeight: 500 }}>
-                아직 영상이 충분히 쌓이지 않아 ‘몇 시에 올리면 좋은지’는 알려드리기 어려워요.
-              </span>
-            )}
           </Answer>
+
+          <section className="v2a-best" aria-label="추천 업로드 시간">
+            <div className="v2a-best-label">
+              <Term k="best" />
+            </div>
+            {timing ? (
+              <>
+                <div className="v2a-best-slot">{timing.headline}</div>
+                <p className="v2a-best-evidence">근거: {timing.evidence}.</p>
+                {timing.compare ? <p className="v2a-best-compare">▲ {timing.compare}</p> : null}
+                {hint.runnerUps && hint.runnerUps.length > 0 ? (
+                  <ul className="v2a-best-others" aria-label="그다음으로 좋았던 시간">
+                    {hint.runnerUps.map((slot) => (
+                      <li key={`${slot.weekday}-${slot.hour}`}>
+                        다음으로 좋은 시간: {slotLabel(slot.weekday, slot.hour)} (평균 조회 {formatCountOrDash(slot.avgViews)}회, 영상 {slot.sampleSize}개)
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                <div>
+                  <Link className="v2a-inline-link" href={withQuery('/v2/report', { period: '30' })}>
+                    지난 30일 성과 순위 보기 →
+                  </Link>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="v2a-best-evidence">
+                  아직 ‘몇 시에 올리면 좋은지’ 알려드리기 어려워요. 지난 {hint.windowDays ?? 30}일 동안 조회수를 확인한 영상이 {(hint.totalVideos ?? 0).toLocaleString('ko-KR')}개인데, 같은 요일·시간에 올린 영상이 더 쌓여야 비교할 수 있어요.
+                </p>
+                <div>
+                  <Link className="v2a-inline-link" href="/v2/register">
+                    영상 등록하러 가기 →
+                  </Link>
+                </div>
+              </>
+            )}
+          </section>
+
+          <NextSteps items={nextSteps} title="지금 챙길 담당자" />
 
           <KpiRow>
             <Kpi label={`${weekName} 계획`} value={summary.plannedAll.toLocaleString('ko-KR')} unit="건" hint="이 주에 올리기로 정해 둔 영상 수예요." />
             <Kpi
-              label="지금까지 채운 계획"
+              label={<Term k="plan">지금까지 채운 계획</Term>}
               value={summary.plannedDue === 0 ? '-' : `${summary.met.toLocaleString('ko-KR')}/${summary.plannedDue.toLocaleString('ko-KR')}`}
               unit={summary.plannedDue === 0 ? undefined : '건'}
               tone={summary.plannedDue === 0 ? 'neutral' : summary.met >= summary.plannedDue ? 'good' : 'warn'}
@@ -273,11 +364,26 @@ function PlannerBody() {
                   칸 안의 ‘+ 계획’을 눌러 올릴 시간을 정하고, 시간 칩을 누르면 고치거나 지울 수 있어요. 아래 숫자는 실제로 등록된 영상 수예요.
                 </p>
               </div>
-              <div className="row" style={{ gap: 6 }}>
+              <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+                {payload.staff.length > 1 ? (
+                  <>
+                    <label className="small muted" htmlFor="plan-staff">
+                      담당자
+                    </label>
+                    <select id="plan-staff" className="select compact" value={staffFilter} onChange={(e) => setFilters({ staff: e.target.value })}>
+                      <option value="">전체</option>
+                      {payload.staff.map((s) => (
+                        <option key={s.id} value={s.name}>
+                          {s.name}
+                        </option>
+                      ))}
+                    </select>
+                  </>
+                ) : null}
                 <button className="button secondary xs" onClick={() => setWeekStart((w) => addDays(w, -7))}>
                   ← 지난주
                 </button>
-                <button className="button secondary xs" disabled={weekStart === thisWeek} onClick={() => setWeekStart(thisWeek)}>
+                <button className="button secondary xs" disabled={weekStart === thisWeek} onClick={() => setFilters({ week: "" })}>
                   이번 주
                 </button>
                 <button className="button secondary xs" onClick={() => setWeekStart((w) => addDays(w, 7))}>
@@ -286,8 +392,17 @@ function PlannerBody() {
               </div>
             </div>
 
+            <ActiveFilters chips={chips} onReset={reset} />
+            <ShareBar getCsv={csvTable} csvDisabledReason={visibleStaff.length === 0 ? '저장할 표가 없어요' : undefined} getLink={shareHref} />
+
             {payload.staff.length === 0 ? (
-              <EmptyGuide title="계획을 세울 직원이 없어요">활성 상태의 직원이 등록되면 이 표에 담당자별로 줄이 만들어져요.</EmptyGuide>
+              <EmptyGuide title="계획을 세울 직원이 없어요" href="/admin/users" action="직원 관리 화면 열기">
+                이 표는 근무 중인 직원마다 한 줄씩 만들어져요. 직원 계정이 없거나 모두 퇴사 처리돼 있으면 비어 있어요. 직원을 추가하거나 상태를 확인해 주세요.
+              </EmptyGuide>
+            ) : visibleStaff.length === 0 ? (
+              <EmptyGuide title="이 담당자는 표에 없어요" action="필터 초기화" onAction={reset}>
+                링크의 담당자 이름이 지금 직원 목록에 없어요. 필터를 초기화하면 전체 직원이 보여요.
+              </EmptyGuide>
             ) : (
               <div className={`v2a-plan-scroll ${switching ? 'v2a-fading' : ''}`} aria-busy={switching}>
                 <div className="v2a-plan-grid" role="table" aria-label={`${rangeLabel} 담당자별 업로드 계획`}>
@@ -305,7 +420,7 @@ function PlannerBody() {
                       </div>
                     ))}
                   </div>
-                  {payload.staff.map((s) => (
+                  {visibleStaff.map((s) => (
                     <div className="v2a-plan-row" role="row" key={s.id}>
                       <div className="v2a-plan-name" role="rowheader">
                         {s.name}
@@ -433,9 +548,10 @@ function PlannerBody() {
               </li>
             </ul>
 
+            <GlossaryDetails keys={['plan', 'best']} />
             <HowTo>
               <p>칸의 ‘계획’은 그 담당자·요일에 정해 둔 시간 수, ‘등록’은 그날 실제로 등록된 영상 수예요. 등록이 계획 이상이면 초록색(✓)이에요.</p>
-              <p>추천 시간은 최근 등록된 영상 500개를 요일·시간대별로 묶어 평균 조회수가 가장 높은 곳을 찾은 결과예요. 영상이 2개 미만인 시간대는 믿기 어려워 제외해요.</p>
+              <p>추천 시간은 지난 30일에 올린 영상을 요일·시간대별로 묶어, 올린 뒤 하루당 평균 조회수가 가장 높은 곳을 찾은 결과예요. 오래된 영상은 조회수가 더 쌓여 있으니 하루당으로 나눠 공평하게 견줘요. 영상이 너무 적은(2~3개 미만) 시간대는 우연일 수 있어 제외해요.</p>
               <p>시간 칩 옆의 ‘•’ 표시는 메모가 있다는 뜻이에요. 담당자나 날짜를 바꾸고 싶으면 계획을 지우고 새로 추가해 주세요.</p>
             </HowTo>
           </div>
@@ -448,7 +564,10 @@ function PlannerBody() {
 export default function PlannerPage() {
   return (
     <AdminOnly>
-      <PlannerBody />
+      {/* 필터를 주소에서 읽기 때문에 Suspense 로 감싸야 한다 (Next.js 요구사항). */}
+      <Suspense fallback={<SkeletonSummary />}>
+        <PlannerBody />
+      </Suspense>
     </AdminOnly>
   )
 }

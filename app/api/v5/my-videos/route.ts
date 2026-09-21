@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { V5_TABLES } from '@/lib/v5/tables'
-import { getSession, handleRouteError, loadUserMap } from '@/lib/v5/api'
+import { badRequest, getSession, handleRouteError, jsonNoStore, loadUserMap } from '@/lib/v5/api'
 
 const PAGE_SIZE = 20
 
@@ -11,6 +11,39 @@ export async function GET(request: Request) {
     const { supabaseAdmin, profile, isAdmin } = await getSession(request)
 
     const url = new URL(request.url)
+
+    // ?videoId=유튜브영상번호(11자): 이미 등록된 영상인지 한 건만 확인한다(등록 전 중복 안내용).
+    // 내가 등록한 것이면 mine=true, 다른 팀원 것이면 mine=false 와 그 사람 이름을 준다.
+    const lookupId = url.searchParams.get('videoId')
+    if (lookupId !== null) {
+      if (!/^[\w-]{11}$/.test(lookupId)) return badRequest('영상 번호가 올바르지 않아요. 주소를 다시 붙여 넣어 주세요.')
+      const { data: found, error: lookupError } = await supabaseAdmin
+        .from(V5_TABLES.videos)
+        .select('id, stock_name, content_type, content_category, created_at, primary_owner_user_id')
+        .eq('youtube_video_id', lookupId)
+        .maybeSingle()
+      if (lookupError) throw lookupError
+      if (!found) return jsonNoStore({ match: null })
+      const row = found as { id: string; stock_name: string; content_type: string; content_category: string | null; created_at: string; primary_owner_user_id: string | null }
+      const mine = row.primary_owner_user_id === profile.id
+      let ownerName: string | null = null
+      if (!mine && row.primary_owner_user_id) {
+        const names = await loadUserMap(supabaseAdmin, [row.primary_owner_user_id])
+        ownerName = names.get(row.primary_owner_user_id) || null
+      }
+      return jsonNoStore({
+        match: {
+          id: row.id,
+          stock_name: row.stock_name,
+          content_type: row.content_type,
+          content_category: row.content_category,
+          created_at: row.created_at,
+          mine,
+          owner_name: ownerName
+        }
+      })
+    }
+
     const page = Math.max(Number(url.searchParams.get('page') || '1') || 1, 1)
     const from = (page - 1) * PAGE_SIZE
     const to = from + PAGE_SIZE - 1

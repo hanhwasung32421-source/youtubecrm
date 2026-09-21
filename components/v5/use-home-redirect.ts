@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { getAccessToken } from '@/lib/session/authed-fetch'
 import { fetchMe } from '@/lib/session/me-client'
 import { getHomeHref } from '@/lib/v5/menu'
+import { readNextFromSearch } from '@/components/v5/register-logic'
 
 // 이미 로그인한 사람이면 역할에 맞는 첫 화면(직원=영상 등록, 관리자=성장 실험)으로 보낸다.
 // 로그인 안 됐거나 확인에 실패하면 checking=false 로 돌려주고, 호출한 화면이 그대로 보여준다.
@@ -20,7 +21,8 @@ export function useHomeRedirect(fallback?: string) {
         if (token) {
           const me = await fetchMe(token)
           if (!cancelled) {
-            router.replace(getHomeHref(me.roleType))
+            // 로그인 화면에 ?next=/v5/… 로 들어왔다면 하던 화면으로(안전한 V5 주소만).
+            router.replace(readNextFromSearch(window.location.search) ?? getHomeHref(me.roleType))
             return
           }
         }

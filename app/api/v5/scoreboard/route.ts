@@ -153,6 +153,11 @@ export async function GET(request: Request) {
 
     return jsonCached({
       items: visible.slice(0, MAX_ROWS),
+      // 점수가 가장 낮은 "아쉬움" 구간 영상(낮은 순 최대 5개). 순위 목록이 200개에서 잘려도 "손봐야 할 영상"을 빠짐없이 짚기 위해 따로 내려준다.
+      bottom: visible
+        .slice(-5)
+        .filter((r) => r.tier === 'poor')
+        .reverse(),
       shown: Math.min(total, MAX_ROWS),
       days,
       since: sinceYmd,

@@ -4,6 +4,9 @@ import { useEffect, useRef, useState } from 'react'
 import { FormatPill, FormatToggle } from '@/components/v4/ui'
 import { deleteMyVideo, loadMyVideoMemo, patchMyVideo, type ContentType, type VideoPatch } from '@/components/v4/register-api'
 import { normalizeStockName } from '@/components/v4/register-utils'
+import { needsRelogin } from '@/components/v4/register-logic'
+import { loginHrefWithNext } from '@/components/v4/safe-next'
+import { LOGIN_HREF } from '@/lib/v4/menu'
 import { fmtNumber, fmtRelative } from '@/lib/v4/format'
 
 export type MyVideo = {
@@ -145,6 +148,14 @@ export function MyVideoList({ items, newIds, stockChoices, onUpdated, onDeleted 
               {msg ? (
                 <div className={`v4-reg-item-msg ${msg.tone}`} role={msg.tone === 'error' ? 'alert' : 'status'}>
                   {msg.text}
+                  {needsRelogin(msg.text) ? (
+                    <>
+                      {' '}
+                      <a className="link" href={loginHrefWithNext(LOGIN_HREF, '/v4/register')} target="_blank" rel="noopener noreferrer">
+                        다시 로그인 (새 창)
+                      </a>
+                    </>
+                  ) : null}
                 </div>
               ) : null}
             </div>
@@ -290,6 +301,14 @@ function EditForm({
         {error ? (
           <span className="v4-hint warn" role="alert">
             {error}
+            {needsRelogin(error) ? (
+              <>
+                {' '}
+                <a className="link" href={loginHrefWithNext(LOGIN_HREF, '/v4/register')} target="_blank" rel="noopener noreferrer">
+                  다시 로그인 (새 창)
+                </a>
+              </>
+            ) : null}
           </span>
         ) : (
           <span className="v4-hint">Enter 저장 · Esc 닫기</span>

@@ -3,8 +3,9 @@ import { z } from 'zod'
 import { TABLES } from '@/lib/supabase/tables'
 import { V2_TABLES } from '@/lib/v2/tables'
 import { addDays, kstDayStart, kstDayEnd, kstYmd, weekStartMonday } from '@/lib/v2/dates'
-import { cachedJson, computeTimingHint, handleDbError, handleRouteError, isMissingTableError, isUuid, loadStaff, noStoreJson, requireV2Admin, selectAllPages } from '@/lib/v2/server'
+import { cachedJson, handleDbError, handleRouteError, isMissingTableError, isUuid, loadStaff, noStoreJson, requireV2Admin, selectAllPages } from '@/lib/v2/server'
 import { samplePlannerPayload } from '@/lib/v2/sample-data'
+import { TIMING_WINDOW_DAYS, computeTimingEvidence } from '@/lib/v2/timing'
 import type { PlannedSlot, PlannerPayload, TimingHint } from '@/lib/v2/types'
 
 const READ_ERROR = '업로드 계획을 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.'
@@ -13,10 +14,11 @@ const DELETE_ERROR = '계획을 지우지 못했어요. 잠시 뒤 다시 시도
 const DUP_ERROR = '이 담당자는 그 시간에 이미 계획이 있어요. 다른 시간을 골라 주세요.'
 const SLOT_SELECT = 'id, staff_user_id, planned_date, planned_hour, note, created_at'
 
-// 주를 넘기며 볼 때마다 같은 "최근 영상 500개 통계"를 다시 계산하지 않도록 잠깐(60초) 기억해 둔다.
+// 주를 넘기며 볼 때마다 같은 "지난 30일 발행 시간 통계"를 다시 계산하지 않도록 잠깐(60초) 기억해 둔다.
 // (같은 서버 인스턴스 안에서만 적용되는 가벼운 캐시라, 없어져도 결과는 같다)
 const TIMING_TTL_MS = 60_000
 let timingCache: { at: number; value: TimingHint } | null = null
+type TimingRow = { published_at: string | null; view_count: number | null }
 
 // 발행 모멘텀 플래너: 요일 × 담당자 업로드 계획(planned_slots) vs 실제 등록 수, 최적 발행 시간 힌트
 export async function GET(request: Request) {
@@ -50,7 +52,28 @@ export async function GET(request: Request) {
           )
         : Promise.resolve([] as { primary_owner_user_id: string; created_at: string }[])
 
-    const [slotRes, videoRows, timingRes] = await Promise.all([
+    // 추천 시간의 근거: 지난 30일에 발행된 영상(발행 시각·조회수). 잠깐 전에 계산한 값이 있으면 다시 읽지 않는다(null).
+    // 읽다가 실패하면 undefined — 추천만 비우고 나머지 화면은 그대로 보여준다.
+    const timingSince = new Date(Date.now() - TIMING_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString()
+    const timingTask: Promise<TimingRow[] | null | undefined> =
+      timingCache && Date.now() - timingCache.at < TIMING_TTL_MS
+        ? Promise.resolve(null)
+        : selectAllPages<TimingRow>(
+            (from, to) =>
+              supabaseAdmin
+                .from(TABLES.videos)
+                .select('published_at, view_count')
+                .gte('published_at', timingSince)
+                .lte('published_at', new Date().toISOString())
+                .order('published_at', { ascending: false })
+                .range(from, to),
+            3000
+          ).catch((e) => {
+            console.error('[v2] planner timing', e)
+            return undefined
+          })
+
+    const [slotRes, videoRows, timingRows] = await Promise.all([
       supabaseAdmin
         .from(V2_TABLES.plannedSlots)
         .select(SLOT_SELECT)
@@ -59,9 +82,7 @@ export async function GET(request: Request) {
         .lte('planned_date', weekEnd)
         .order('planned_hour', { ascending: true }),
       videoTask,
-      timingCache && Date.now() - timingCache.at < TIMING_TTL_MS
-        ? Promise.resolve(null)
-        : supabaseAdmin.from(TABLES.videos).select('published_at, view_count').order('created_at', { ascending: false }).limit(500)
+      timingTask
     ])
 
     const { data: slotRows, error: slotError } = slotRes
@@ -93,11 +114,13 @@ export async function GET(request: Request) {
     }
 
     let timingHint: TimingHint
-    if (timingRes) {
-      timingHint = computeTimingHint((timingRes.data || []) as { published_at: string | null; view_count: number | null }[])
-      if (!timingRes.error) timingCache = { at: Date.now(), value: timingHint }
+    if (timingRows) {
+      timingHint = computeTimingEvidence(timingRows)
+      timingCache = { at: Date.now(), value: timingHint }
+    } else if (timingRows === null && timingCache) {
+      timingHint = timingCache.value
     } else {
-      timingHint = (timingCache as { at: number; value: TimingHint }).value
+      timingHint = computeTimingEvidence([])
     }
 
     const payload: PlannerPayload = { weekStart, days, staff, planned, actual, timingHint }

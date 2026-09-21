@@ -1,6 +1,7 @@
 // 영상 등록 화면(한 개씩 / 여러 개 / 수정)이 함께 쓰는 순수 도우미 모음.
 
-import { authedPostJson } from '@/lib/session/authed-fetch'
+import { authedFetchJson, authedPostJson } from '@/lib/session/authed-fetch'
+import { classifyError, refineServerFailure, type RegisterErrorInfo } from './register-errors'
 
 export type ContentType = 'longform' | 'shortform'
 
@@ -10,44 +11,9 @@ export const CONTENT_TYPE_LABEL: Record<ContentType, string> = { longform: '롱�
 export const DAILY_GOAL = 12
 
 // ---- 주소 정리 ------------------------------------------------------------
-
-const YOUTUBE_URL_RE = /(?:https?:\/\/)?(?:www\.|m\.|music\.)?(?:youtube\.com|youtu\.be)\/[^\s]+/i
-
-// 붙여넣은 글에서 유튜브 주소만 뽑아 정리한다. 앞뒤 공백/줄바꿈 제거, https:// 없으면 붙여 준다.
-export function normalizeUrl(raw: string): string {
-  const text = raw.trim()
-  if (!text) return ''
-  const match = text.match(YOUTUBE_URL_RE)
-  const picked = match ? match[0] : text.split(/\s+/)[0]
-  return /^https?:\/\//i.test(picked) ? picked : `https://${picked}`
-}
-
-export function extractVideoId(url: string): string | null {
-  const m =
-    url.match(/[?&]v=([\w-]{11})/) ||
-    url.match(/youtu\.be\/([\w-]{11})/) ||
-    url.match(/youtube\.com\/(?:shorts|embed|live)\/([\w-]{11})/)
-  return m ? m[1] : null
-}
-
-export function isYoutubeUrl(url: string) {
-  try {
-    const host = new URL(url).hostname.replace(/^(www|m|music)\./, '')
-    return host === 'youtube.com' || host === 'youtu.be'
-  } catch {
-    return false
-  }
-}
-
-export function isShortsUrl(url: string) {
-  return /youtube\.com\/shorts\//i.test(url)
-}
-
-// 서버는 ?v= 형태와 youtu.be 형태만 알아보므로(/shorts/ · /live/ · /embed/ 는 인식 못 함),
-// 서버로 보낼 때는 항상 이 표준 주소로 바꿔서 보낸다.
-export function canonicalWatchUrl(videoId: string) {
-  return `https://www.youtube.com/watch?v=${videoId}`
-}
+// 순수 함수는 youtube-url.ts 로 옮겼다(단독으로 시험 가능). 예전 import 경로가 그대로 동작하도록 다시 내보낸다.
+import { canonicalWatchUrl, describeUrlProblem, extractVideoId, findYoutubeUrl, isShortsUrl, normalizeUrl } from './youtube-url'
+export { canonicalWatchUrl, describeUrlProblem, extractVideoId, isShortsUrl, isYoutubeUrl, normalizeUrl } from './youtube-url'
 
 // ---- 여러 줄 붙여넣기 해석 ----------------------------------------------------
 
@@ -70,22 +36,22 @@ export function parseBulkText(text: string): { lines: ParsedLine[]; duplicates: 
     const raw = rawLine.trim()
     if (!raw) continue
 
-    const match = raw.match(YOUTUBE_URL_RE)
-    if (!match) {
+    const found = findYoutubeUrl(raw)
+    if (!found) {
       lines.push({ raw, videoId: null, canonicalUrl: '', stock: '', type: 'longform', problem: '유튜브 주소를 찾지 못했습니다.' })
       continue
     }
 
-    const url = normalizeUrl(match[0])
+    const url = normalizeUrl(found)
     const videoId = extractVideoId(url)
     const stock = raw
-      .replace(match[0], ' ')
+      .replace(found, ' ')
       .replace(/^[\s,;|/\\\t·•-]+|[\s,;|/\\\t·•-]+$/g, '')
       .replace(/\s+/g, ' ')
       .trim()
 
     if (!videoId) {
-      lines.push({ raw, videoId: null, canonicalUrl: '', stock, type: 'longform', problem: '유효하지 않은 주소입니다.' })
+      lines.push({ raw, videoId: null, canonicalUrl: '', stock, type: 'longform', problem: describeUrlProblem(url) || '유효하지 않은 주소입니다.' })
       continue
     }
 
@@ -130,34 +96,49 @@ export function formatKstWhen(value: string) {
 }
 
 // ---- 오류 문구 -----------------------------------------------------------------
-
-// 서버/네트워크 오류를 비개발자가 읽을 수 있는 한 줄로 바꾼다.
-export function friendlyError(input: unknown, status?: number): string {
-  if (input instanceof TypeError || (input instanceof Error && /failed to fetch|network|load failed/i.test(input.message))) {
-    return '인터넷 연결을 확인해 주세요.'
-  }
-  const message = typeof input === 'string' ? input : input instanceof Error ? input.message : ''
-
-  if (status === 401) return '로그인이 만료되었습니다. 다시 로그인해 주세요.'
-  if ((status === 403 || status === 404) && /[가-힣]/.test(message)) return message.replace(/\s*\(.*\)\s*$/, '')
-  if (/이미 등록/.test(message)) return '이미 등록된 영상입니다.'
-  if (/quota|limit|api\s*key|api 키|apikey|forbidden|rate|한도|비활성|API가|채널 ID/i.test(message)) return '잠시 후 다시 시도해 주세요.'
-  if (/유효|invalid|url|주소/i.test(message)) return '유효하지 않은 주소입니다.'
-  if (/찾을 수 없|not found/i.test(message)) return '영상을 찾을 수 없습니다. 주소를 확인해 주세요.'
-  if (status && status >= 500) return '잠시 후 다시 시도해 주세요.'
-  // 서버가 한글로 준 한 줄 안내는 그대로 쓴다. (개발 환경의 원본 오류가 덧붙은 경우는 잘라낸다)
-  const korean = message.replace(/\s*\(.*\)\s*$/, '').trim()
-  if (korean && /[가-힣]/.test(korean) && korean.length <= 80) return korean
-  return '잠시 후 다시 시도해 주세요.'
-}
+// 문구를 정하는 규칙은 register-errors.ts(순수 함수)에 있다.
+export { classifyError, friendlyError, refineServerFailure } from './register-errors'
+export type { RegisterErrorInfo, RegisterErrorKind } from './register-errors'
 
 // ---- 등록 호출 -----------------------------------------------------------------
 
 export type RegisterInput = { videoId: string; contentType: ContentType; stockName: string; contentCategory?: string }
-export type RegisterResult = { ok: true; id: string; title: string | null } | { ok: false; message: string }
+export type RegisterResult =
+  | { ok: true; id: string; title: string | null }
+  | { ok: false; message: string; error: RegisterErrorInfo }
+
+// 로그인이 유지되는지 가볍게 확인한다(등록 API 는 로그인이 풀려도 401 대신 500 을 주기 때문).
+async function probeAuth(): Promise<{ status: number | null }> {
+  try {
+    const res = await authedFetchJson('/api/v5/my-today')
+    return { status: res.status }
+  } catch {
+    return { status: 0 }
+  }
+}
+
+// 유튜브에 그 영상이 공개로 있는지 물어 본다(오래 걸리거나 브라우저가 막으면 null = 모름).
+async function probeOembed(videoId: string): Promise<{ status: number | null }> {
+  const controller = new AbortController()
+  const timer = window.setTimeout(() => controller.abort(), 4000)
+  try {
+    const res = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(canonicalWatchUrl(videoId))}&format=json`, {
+      signal: controller.signal,
+      cache: 'no-store',
+      referrerPolicy: 'no-referrer'
+    })
+    return { status: res.status }
+  } catch {
+    return { status: null }
+  } finally {
+    window.clearTimeout(timer)
+  }
+}
 
 // 한 개 등록. 예외를 던지지 않고 결과로 돌려주므로 여러 개 등록 중에도 흐름이 끊기지 않는다.
-export async function registerVideo(input: RegisterInput): Promise<RegisterResult> {
+// diagnose=true 면 서버가 원인을 알려 주지 않는 실패에 한해 원인을 한 번 더 확인해 문구를 정확하게 만든다.
+export async function registerVideo(input: RegisterInput, options: { diagnose?: boolean } = {}): Promise<RegisterResult> {
+  let error: RegisterErrorInfo
   try {
     const res = await authedPostJson<{ ok?: boolean; video?: { id: string; title: string | null }; error?: string }>('/api/videos/create', {
       youtubeUrl: canonicalWatchUrl(input.videoId),
@@ -165,9 +146,14 @@ export async function registerVideo(input: RegisterInput): Promise<RegisterResul
       stockName: input.stockName,
       contentCategory: input.contentCategory || undefined
     })
-    if (!res.ok || !res.data.video) return { ok: false, message: friendlyError(res.data?.error || '', res.status) }
-    return { ok: true, id: res.data.video.id, title: res.data.video.title || null }
+    if (res.ok && res.data.video) return { ok: true, id: res.data.video.id, title: res.data.video.title || null }
+    error = classifyError(res.data?.error || '', res.status)
   } catch (e) {
-    return { ok: false, message: friendlyError(e) }
+    error = classifyError(e)
   }
+  if (options.diagnose && error.kind === 'server') {
+    const [probe, oembed] = await Promise.all([probeAuth(), probeOembed(input.videoId)])
+    error = refineServerFailure(error, probe, oembed)
+  }
+  return { ok: false, message: error.message, error }
 }

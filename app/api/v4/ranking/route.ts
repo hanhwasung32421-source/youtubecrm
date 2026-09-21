@@ -4,7 +4,8 @@ import { loadPeriodRows, loadUsersShared } from '@/lib/v4/period-rows'
 import { filterRanked, pageOf, parseRankQuery, sortRanked, summarizeRanked } from '@/lib/v4/ranking-query'
 import { requireV4User, v4ErrorResponse } from '@/lib/v4/server'
 
-// GET /api/v4/ranking?period=&sort=&dir=&limit=&offset=&staffId=&format=&q=
+// GET /api/v4/ranking?period=&sort=&dir=&limit=&offset=&staffId=&format=&q=&dow=&hour=
+// - dow(0=일~6=토)·hour(0~23) 는 "그 요일·시각(한국 시간)에 올린 영상만" 이다. 타이밍 화면의 칸에서 넘어올 때 쓴다.
 // - 새 파라미터를 하나도 안 주면 예전처럼 items 를 돌려주되 최대 500개까지만 (전체 개수는 total).
 // - 새 파라미터를 주면 정렬·필터를 여기서 하고 요청한 쪽(offset~offset+limit)만 내려준다. limit=0 이면 요약만.
 export async function GET(request: Request) {
@@ -35,7 +36,9 @@ export async function GET(request: Request) {
     const staffId = isAdmin && staffOptions.some((s) => s.id === query.staffId) ? query.staffId : ''
 
     const summary = summarizeRanked(all)
-    const filtered = filterRanked(all, { staffId, format: query.format, q: query.q })
+    const filtered = filterRanked(all, { staffId, format: query.format, q: query.q, dow: query.dow, hour: query.hour })
+    // 필터를 걸었을 때 화면 위쪽 숫자도 "걸러진 영상" 기준으로 보여줄 수 있게 따로 계산한다. (필터가 없으면 summary 와 같다)
+    const filteredSummary = filtered === all ? summary : summarizeRanked(filtered)
     const sorted = sortRanked(filtered, query.sort, query.dir)
     // 90일이면 6,000개 이상이라 화면에 안 쓰는 썸네일 주소는 빼고 내려준다 (응답 크기 절감).
     const strip = ({ thumbnailUrl: _thumbnail, ...rest }: RankedVideo) => rest
@@ -56,6 +59,8 @@ export async function GET(request: Request) {
       staffId,
       format: query.format,
       q: query.q,
+      dow: query.dow,
+      hour: query.hour,
       hasMore: query.offset + items.length < sorted.length,
       summary: {
         videoCount: summary.videoCount,
@@ -63,6 +68,13 @@ export async function GET(request: Request) {
         avgViews: summary.avgViews,
         top: summary.top ? strip(summary.top) : null,
         rising: summary.rising ? strip(summary.rising) : null
+      },
+      filteredSummary: {
+        videoCount: filteredSummary.videoCount,
+        totalViews: filteredSummary.totalViews,
+        avgViews: filteredSummary.avgViews,
+        top: filteredSummary.top ? strip(filteredSummary.top) : null,
+        rising: filteredSummary.rising ? strip(filteredSummary.rising) : null
       }
     })
   } catch (e) {

@@ -1,16 +1,22 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import Link from 'next/link'
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { PageHeader } from '@/components/v2/app-shell'
 import { useV2Me } from '@/components/v2/session-context'
 import { KeywordStatusTag, PriorityTag } from '@/components/v2/tags'
 import { Toast, useToast } from '@/components/toast'
 import { Answer, EmptyGuide, FieldError, HowTo, InlineConfirm, Kpi, KpiRow, LoadError, MoreButton, RefreshNote, Req, SampleNote, SkeletonList, SkeletonSummary, Stamp } from '@/lib/v2/analysis-ui'
 import { v2Delete, v2Patch, v2Post } from '@/lib/v2/client'
-import { formatKstStamp } from '@/lib/v2/dates'
+import type { CsvValue } from '@/lib/v2/csv'
+import { formatKstDate, formatKstStamp } from '@/lib/v2/dates'
+import { ActiveFilters, type FilterChip } from '@/lib/v2/filters-ui'
+import { withQuery, type FilterSpec } from '@/lib/v2/filters'
 import { shortText } from '@/lib/v2/format'
+import { Term } from '@/lib/v2/glossary-ui'
+import { ShareBar } from '@/lib/v2/share-ui'
 import { useV2Query } from '@/lib/v2/swr'
-import { useRememberedState } from '@/lib/v2/use-remembered'
+import { useUrlFilters } from '@/lib/v2/use-url-filters'
 import { V2_MISSING_TABLE_MESSAGE } from '@/lib/v2/tables'
 import {
   KEYWORD_STATUS_LABELS,
@@ -26,7 +32,12 @@ type Form = { stockName: string; keyword: string; sourceUrl: string; priority: P
 type FormErrors = { stockName: string; keyword: string; sourceUrl: string }
 type Filter = 'open' | 'waiting' | 'in_progress' | 'done' | 'all'
 
-const FILTERS = ['open', 'waiting', 'in_progress', 'done', 'all'] as const
+// 주소(?filter=waiting&staff=…&priority=high)와 같은 이름이라, 링크로 공유·북마크할 수 있다.
+const FILTER_SPEC = {
+  filter: { default: 'open', allowed: ['open', 'waiting', 'in_progress', 'done', 'all'] },
+  staff: { default: '' },
+  priority: { default: '', allowed: ['', 'high', 'normal', 'low'] }
+} as const satisfies FilterSpec
 const EMPTY: KeywordsPayload = { items: [], recentStocks: [] }
 const isPayload = (data: unknown) => {
   const d = data as { items?: unknown; recentStocks?: unknown } | null
@@ -62,7 +73,7 @@ function sortItems(items: KeywordRadarItem[]) {
   )
 }
 
-export default function KeywordsPage() {
+function KeywordsBody() {
   const me = useV2Me()
   const { toast, showError } = useToast()
   const query = useV2Query<KeywordsPayload>('/api/v2/keywords', { fallback: LOAD_ERROR, validate: isPayload })
@@ -73,7 +84,9 @@ export default function KeywordsPage() {
   const [submitted, setSubmitted] = useState(false)
   const [formError, setFormError] = useState('')
   const [saving, setSaving] = useState(false)
-  const [filter, setFilter] = useRememberedState<Filter>('kw.filter', 'open', FILTERS)
+  const { filters, setFilters, reset, shareHref } = useUrlFilters('keywords', FILTER_SPEC)
+  const filter = filters.filter as Filter
+  const setFilter = (next: Filter) => setFilters({ filter: next })
   const [visible, setVisible] = useState(PAGE_STEP)
   const [busyIds, setBusyIds] = useState<Set<string>>(() => new Set())
   const [deletingId, setDeletingId] = useState<string | null>(null)
@@ -243,14 +256,27 @@ export default function KeywordsPage() {
     setItems((items) => items.filter((i) => i.id !== item.id), item.status === 'done' ? -1 : 0)
   }
 
+  const creators = useMemo(() => [...new Set(payload.items.map((i) => i.created_by_name).filter((n): n is string => Boolean(n)))].sort((a, b) => a.localeCompare(b, 'ko')), [payload.items])
+  const narrowed = Boolean(filters.staff || filters.priority)
+  // 추가한 사람·급한 정도 조건을 먼저 적용한 뒤 탭(할 일/대기/…)으로 나눈다.
+  const scoped = useMemo(
+    () => payload.items.filter((i) => (!filters.staff || i.created_by_name === filters.staff) && (!filters.priority || i.priority === filters.priority)),
+    [payload.items, filters.staff, filters.priority]
+  )
   const counts = useMemo(() => {
     const c = { waiting: 0, in_progress: 0, done: 0 }
-    for (const item of payload.items) c[item.status] += 1
+    for (const item of scoped) c[item.status] += 1
     return c
-  }, [payload.items])
-  const doneCount = Math.max(counts.done, payload.doneTotal ?? 0)
+  }, [scoped])
+  // 완료는 서버가 최근 것만 내려주므로, 조건을 걸지 않았을 때만 전체 완료 수를 쓴다.
+  const doneCount = narrowed ? counts.done : Math.max(counts.done, payload.doneTotal ?? 0)
+  const stockVideos = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const [name, n] of Object.entries(payload.videoCounts ?? {})) map.set(normalize(name), n)
+    return map
+  }, [payload.videoCounts])
 
-  const sorted = useMemo(() => sortItems(payload.items), [payload.items])
+  const sorted = useMemo(() => sortItems(scoped), [scoped])
   const openItems = sorted.filter((i) => i.status !== 'done')
   const items = sorted.filter((i) => (filter === 'all' ? true : filter === 'open' ? i.status !== 'done' : i.status === filter))
   const shown = items.slice(0, visible)
@@ -260,6 +286,22 @@ export default function KeywordsPage() {
     setFilter(next)
     setVisible(PAGE_STEP)
   }
+  const pickFields = (patch: { staff?: string; priority?: string }) => {
+    setFilters(patch)
+    setVisible(PAGE_STEP)
+  }
+  const resetAll = () => {
+    reset()
+    setVisible(PAGE_STEP)
+  }
+  const chips: FilterChip[] = []
+  if (filters.staff) chips.push({ key: 'staff', label: `추가한 사람: ${filters.staff}`, onClear: () => pickFields({ staff: '' }) })
+  if (filters.priority) chips.push({ key: 'priority', label: `급한 정도: ${PRIORITY_LABELS[filters.priority as Priority] ?? filters.priority}`, onClear: () => pickFields({ priority: '' }) })
+  const csvTable = () => ({
+    name: `키워드 모음 ${tabs.find((t) => t.key === filter)?.label ?? ''}`,
+    headers: ['종목', '키워드', '급한 정도', '상태', '추가한 사람', '추가일', '참고 기사 주소'],
+    rows: items.map((i): CsvValue[] => [i.stock_name, i.keyword, PRIORITY_LABELS[i.priority], KEYWORD_STATUS_LABELS[i.status], i.created_by_name || '', formatKstDate(i.created_at), i.source_url || ''])
+  })
 
   const tabs: { key: Filter; label: string; count: number }[] = [
     { key: 'open', label: '할 일', count: counts.waiting + counts.in_progress },
@@ -302,7 +344,7 @@ export default function KeywordsPage() {
         <KpiRow>
           <Kpi label="대기 중" value={counts.waiting.toLocaleString('ko-KR')} unit="개" tone={counts.waiting > 0 ? 'warn' : 'neutral'} hint="아직 아무도 시작하지 않은 키워드예요." />
           <Kpi label="작업중" value={counts.in_progress.toLocaleString('ko-KR')} unit="개" hint="누군가 영상을 만들고 있는 키워드예요." />
-          <Kpi label="최근 7일 다룬 종목" value={payload.recentStocks.length.toLocaleString('ko-KR')} unit="종목" hint="같은 종목이 겹치지 않게 아래에서 확인해요." />
+          <Kpi label={<Term k="recent" />} value={payload.recentStocks.length.toLocaleString('ko-KR')} unit="종목" hint="같은 종목이 겹치지 않게 아래에서 확인해요." href="#kw-recent" linkLabel="종목 보기" />
         </KpiRow>
       ) : null}
 
@@ -430,16 +472,60 @@ export default function KeywordsPage() {
           </div>
         </div>
 
+        <div className="v2a-toolbar" style={{ justifyContent: 'flex-start', gap: 12 }}>
+          {creators.length > 1 ? (
+            <div className="row" style={{ gap: 8 }}>
+              <label className="small muted" htmlFor="kw-filter-staff">
+                추가한 사람
+              </label>
+              <select id="kw-filter-staff" className="select compact" value={creators.includes(filters.staff) ? filters.staff : ''} onChange={(e) => pickFields({ staff: e.target.value })}>
+                <option value="">전체</option>
+                {creators.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
+          <div className="row" style={{ gap: 8 }}>
+            <label className="small muted" htmlFor="kw-filter-prio">
+              급한 정도
+            </label>
+            <select id="kw-filter-prio" className="select compact" value={filters.priority} onChange={(e) => pickFields({ priority: e.target.value })}>
+              <option value="">전체</option>
+              {PRIORITIES.map((p) => (
+                <option key={p} value={p}>
+                  {PRIORITY_LABELS[p]}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <ActiveFilters chips={chips} onReset={resetAll} />
+        <ShareBar getCsv={csvTable} csvDisabledReason={items.length === 0 ? '저장할 키워드가 없어요' : undefined} getLink={shareHref} />
+
         {!loaded ? (
           <SkeletonList rows={3} />
         ) : items.length === 0 ? (
           payload.items.length === 0 ? (
             loadError ? null : (
-              <EmptyGuide title="아직 모아 둔 키워드가 없어요">위 입력칸에 종목과 내용을 적고 ‘키워드 추가’를 누르면 팀 모두가 볼 수 있는 목록이 만들어져요.</EmptyGuide>
+              <EmptyGuide title="아직 모아 둔 키워드가 없어요" action="첫 키워드 추가하러 가기" onAction={() => stockRef.current?.focus()}>
+                다음에 다룰 검색어를 적어 두는 곳이에요. 종목과 내용을 적고 ‘키워드 추가’를 누르면 팀 모두가 볼 수 있는 목록이 만들어져요.
+              </EmptyGuide>
             )
           ) : (
-            <EmptyGuide title="이 목록은 비어 있어요">
-              {filter === 'open' ? '할 일이 모두 끝났어요. ‘완료’ 탭에서 지난 키워드를 볼 수 있어요.' : '다른 탭을 눌러 보세요.'}
+            <EmptyGuide
+              title={narrowed && scoped.length === 0 ? '이 조건에 맞는 키워드가 없어요' : '이 목록은 비어 있어요'}
+              action={narrowed ? '필터 초기화' : filter === 'open' ? '새 키워드 추가하러 가기' : '할 일 탭 보기'}
+              onAction={narrowed ? resetAll : filter === 'open' ? () => stockRef.current?.focus() : () => pickFilter('open')}
+            >
+              {narrowed
+                ? '추가한 사람이나 급한 정도 조건을 바꾸거나 필터를 초기화하면 다시 보여요.'
+                : filter === 'open'
+                  ? '할 일이 모두 끝났어요. ‘완료’ 탭에서 지난 키워드를 볼 수 있고, 위에서 새 키워드를 추가할 수도 있어요.'
+                  : '이 상태의 키워드가 아직 없어요. 할 일 탭에서 진행할 키워드를 골라 보세요.'}
             </EmptyGuide>
           )
         ) : (
@@ -555,6 +641,23 @@ export default function KeywordsPage() {
                             </a>
                           ) : null}
                         </div>
+                        <div className="v2a-kw-links">
+                          {(() => {
+                            const n = stockVideos.get(normalize(item.stock_name)) ?? 0
+                            return n > 0 ? (
+                              <Link className="v2a-inline-link" href={withQuery('/v2/optimization', { stock: item.stock_name, view: 'all' })}>
+                                {item.stock_name} 영상 {n.toLocaleString('ko-KR')}개 보기 →
+                              </Link>
+                            ) : (
+                              <span className="muted">
+                                {item.stock_name} 영상은 아직 없어요.{' '}
+                                <Link className="v2a-inline-link" href="/v2/register">
+                                  영상 등록하러 가기 →
+                                </Link>
+                              </span>
+                            )
+                          })()}
+                        </div>
                       </div>
                       {canEdit ? (
                         <div className="v2-card-actions" style={{ justifyContent: 'flex-end' }}>
@@ -596,10 +699,17 @@ export default function KeywordsPage() {
         <MoreButton shown={shown.length} total={items.length} step={PAGE_STEP} onMore={() => setVisible((v) => v + PAGE_STEP)} />
       </div>
 
-      <div className="panel soft">
-        <div className="v2-section-title">최근 7일 이미 다룬 종목</div>
+      <div className="panel soft" id="kw-recent">
+        <div className="v2-section-title">
+          <Term k="recent" />
+        </div>
         {payload.recentStocks.length === 0 ? (
-          <div className="small muted">최근 7일 동안 등록된 영상이 없어요. 영상이 등록되면 여기에 종목별로 모여요.</div>
+          <div className="small muted">
+            최근 7일 동안 등록된 영상이 없어요. 영상이 등록되면 여기에 종목별로 모여요.{' '}
+            <Link className="v2a-inline-link" href="/v2/register">
+              영상 등록하러 가기 →
+            </Link>
+          </div>
         ) : (
           <>
             <div className="v2-chips">
@@ -629,5 +739,14 @@ export default function KeywordsPage() {
         )}
       </div>
     </>
+  )
+}
+
+export default function KeywordsPage() {
+  // 필터를 주소에서 읽기 때문에 Suspense 로 감싸야 한다 (Next.js 요구사항).
+  return (
+    <Suspense fallback={<SkeletonSummary />}>
+      <KeywordsBody />
+    </Suspense>
   )
 }

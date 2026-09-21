@@ -7,6 +7,8 @@ export type ExperimentItem = {
   id: string
   videoId: string | null
   videoTitle: string
+  // 연결한 영상의 유튜브 주소 (없으면 null/없음). 나중에 추가된 값이라 옛 응답·샘플에는 없을 수 있다.
+  videoUrl?: string | null
   stockName: string
   hypothesis: string
   variantA: string

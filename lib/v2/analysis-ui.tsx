@@ -25,15 +25,20 @@ export function KpiRow({ children }: { children: ReactNode }) {
 }
 
 // 숫자 카드: 이름 + 큰 숫자 + "이게 뭐예요?" 한 줄 설명
-export function Kpi({ label, value, unit, hint, tone = 'neutral' }: { label: string; value: ReactNode; unit?: string; hint: string; tone?: Tone }) {
+export function Kpi({ label, value, unit, hint, tone = 'neutral', href, linkLabel }: { label: ReactNode; value: ReactNode; unit?: string; hint: string; tone?: Tone; href?: string; linkLabel?: string }) {
   return (
-    <div className={`v2a-kpi ${tone}`} title={hint}>
+    <div className={`v2a-kpi ${tone}`}>
       <div className="v2a-kpi-label">{label}</div>
       <div className="v2a-kpi-value">
         {value}
         {unit ? <span className="unit">{unit}</span> : null}
       </div>
       <div className="v2a-kpi-hint">{hint}</div>
+      {href && linkLabel ? (
+        <Link className="v2a-kpi-link" href={href}>
+          {linkLabel} →
+        </Link>
+      ) : null}
     </div>
   )
 }
@@ -49,7 +54,20 @@ export function HowTo({ title = '계산 방법 보기', children }: { title?: st
 }
 
 // 비어 있을 때: 이 화면이 뭔지 + 무엇을 하면 채워지는지 + 바로 갈 버튼
-export function EmptyGuide({ title, children, href, action }: { title: string; children?: ReactNode; href?: string; action?: string }) {
+// href 를 주면 다른 화면으로 가는 링크, onAction 을 주면 그 자리에서 실행하는 버튼(예: 필터 초기화)으로 보여준다.
+export function EmptyGuide({
+  title,
+  children,
+  href,
+  action,
+  onAction
+}: {
+  title: string
+  children?: ReactNode
+  href?: string
+  action?: string
+  onAction?: () => void
+}) {
   return (
     <div className="v2a-empty">
       <div className="v2a-empty-title">{title}</div>
@@ -58,6 +76,10 @@ export function EmptyGuide({ title, children, href, action }: { title: string; c
         <Link className="button xs" href={href}>
           {action}
         </Link>
+      ) : onAction && action ? (
+        <button type="button" className="button xs" onClick={onAction}>
+          {action}
+        </button>
       ) : null}
     </div>
   )

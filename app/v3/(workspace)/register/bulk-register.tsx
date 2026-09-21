@@ -147,7 +147,7 @@ export function BulkRegister({
           if (result.id) okIds.push(result.id)
           onRegistered({ id: result.id, stock: row.stock })
         } else {
-          setResult(row.videoId, { state: 'failed', error: result.message })
+          setResult(row.videoId, { state: 'failed', error: result.short })
         }
       }
     }

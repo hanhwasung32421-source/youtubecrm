@@ -6,6 +6,9 @@ import { registerVideo, type ContentType } from '@/components/v4/register-api'
 import { normalizeStockName } from '@/components/v4/register-utils'
 import { findUrls, toBulkText } from '@/components/v4/paste-detect'
 import { FormatToggle } from '@/components/v4/ui'
+import { AUTH_COPY } from '@/components/v4/register-logic'
+import { loginHrefWithNext } from '@/components/v4/safe-next'
+import { LOGIN_HREF } from '@/lib/v4/menu'
 
 type RowStatus = 'pending' | 'running' | 'done' | 'failed'
 
@@ -200,6 +203,7 @@ export function BulkRegister({
   }
 
   const finished = started && !running && validRows.length > 0
+  const needsLogin = failedRows.some((r) => r.error === AUTH_COPY)
   const allDone = finished && failedRows.length === 0 && needStockRows.length === 0
   const summaryParts = useMemo(() => {
     const parts: string[] = [`${validRows.length}개 중 ${doneRows.length}개 등록됨`]
@@ -404,6 +408,11 @@ export function BulkRegister({
             {summaryParts.join(' · ')}
           </strong>
           {failedRows.length > 0 ? <span className="v4-reg-status-detail"> → 아래 버튼으로 다시 시도할 수 있어요</span> : null}
+          {needsLogin ? (
+            <a className="link v4-relogin" href={loginHrefWithNext(LOGIN_HREF, '/v4/register')} target="_blank" rel="noopener noreferrer">
+              다시 로그인 (새 창)
+            </a>
+          ) : null}
         </div>
       ) : running ? (
         <div className="v4-reg-status" role="status" aria-live="polite">

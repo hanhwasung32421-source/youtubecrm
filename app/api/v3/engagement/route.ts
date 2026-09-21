@@ -5,6 +5,7 @@ import {
   commentRatePct,
   engagementRatePct,
   isoDaysAgo,
+  likeRatePct,
   pctChange,
   timeMs
 } from '@/lib/v3/engagement'
@@ -13,6 +14,8 @@ import { VIDEO_FIELDS_RATES, apiError, authenticate, cachedJson, isUuid, loadSco
 // 참여도 대시보드
 //   참여율(%)      = (좋아요 + 댓글) / 조회수 × 100
 //   댓글 참여율(%) = 댓글 / 조회수 × 100
+// 선택 조건(모두 생략 가능): ?staffId=(관리자만) &format=longform|shortform &days=7|30|90 (등록일 기준. 없으면 전체 기간)
+// 이번 주/지난 주 비교는 기간 조건과 상관없이 늘 최근 2주를 본다.
 // V4의 "좋아요율" 성장 KPI와는 다른, 댓글 활발도 중심의 지표를 함께 계산한다.
 export async function GET(request: Request) {
   const auth = await authenticate(request)
@@ -20,10 +23,15 @@ export async function GET(request: Request) {
   const { supabaseAdmin, profile, isAdmin } = auth
 
   try {
-    const staffParam = new URL(request.url).searchParams.get('staffId')
+    const params = new URL(request.url).searchParams
+    const staffParam = params.get('staffId')
     const staffId = isUuid(staffParam) ? staffParam : null
+    const formatParam = params.get('format')
+    const format = formatParam === 'longform' || formatParam === 'shortform' ? formatParam : null
+    const daysParam = Number(params.get('days'))
+    const days = [7, 30, 90].includes(daysParam) ? daysParam : 0
     // 영상과 직원 목록은 서로 기다릴 필요가 없어 동시에 받는다.
-    const [videos, staff] = await Promise.all([
+    const [allScoped, staff] = await Promise.all([
       loadScopedVideos(supabaseAdmin, {
         isAdmin,
         selfUserId: profile.id,
@@ -34,7 +42,12 @@ export async function GET(request: Request) {
       isAdmin ? loadStaffUsers(supabaseAdmin) : Promise.resolve([])
     ])
 
-    const withViews = videos.filter((v) => Number(v.view_count || 0) > 0)
+    // 형식 조건은 모든 계산에 걸고, 기간 조건은 분포·평균·순위에만 건다(주간 비교는 늘 최근 2주).
+    const videos = format ? allScoped.filter((v) => v.content_type === format) : allScoped
+    const nowForPeriod = new Date()
+    const periodSince = days > 0 ? timeMs(isoDaysAgo(days, nowForPeriod)) : null
+    const periodVideos = periodSince === null ? videos : videos.filter((v) => timeMs(v.created_at) >= periodSince)
+    const withViews = periodVideos.filter((v) => Number(v.view_count || 0) > 0)
     const engagementRates = withViews.map((v) => engagementRatePct(v)).filter((v): v is number => v !== null)
     const commentRates = withViews.map((v) => commentRatePct(v)).filter((v): v is number => v !== null)
 
@@ -69,6 +82,24 @@ export async function GET(request: Request) {
         viewCount: Number(row.video.view_count || 0),
         youtubeUrl: row.video.youtube_url
       }))
+
+    // 영상별 순위표(화면에서 정렬을 바꿔 볼 수 있게 조회수 100회 이상 영상을 한꺼번에 준다. 최대 100개)
+    const videoRows = withViews
+      .filter((v) => Number(v.view_count || 0) >= 100)
+      .map((v) => ({
+        id: v.id,
+        title: v.title || v.stock_name || '(제목 없음)',
+        stockName: v.stock_name,
+        contentType: v.content_type,
+        viewCount: Number(v.view_count || 0),
+        likeRatePct: likeRatePct(v) || 0,
+        commentRatePct: commentRatePct(v) || 0,
+        engagementPct: engagementRatePct(v) || 0,
+        publishedAt: v.published_at || v.created_at,
+        youtubeUrl: v.youtube_url
+      }))
+      .sort((a, b) => b.commentRatePct - a.commentRatePct)
+      .slice(0, 100)
 
     // 이번 주 vs 지난 주(등록일 기준) 참여율 비교. 시각은 문자열이 아니라 밀리초로 비교한다.
     const now = new Date()
@@ -106,6 +137,8 @@ export async function GET(request: Request) {
       distribution,
       scatter,
       topComment,
+      videoRows,
+      filters: { staffId, format, days },
       staffOptions: staff.map((s) => ({ id: s.id, name: s.name })),
       staffIdFilter: staffId || null
     })

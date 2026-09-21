@@ -544,9 +544,120 @@
   .v2-theme .v2a-toolbar { align-items: stretch; }
   .v2-theme .v2a-toolbar > * { min-width: 0; max-width: 100%; }
   .v2-theme .v2a-toolbar .v2-seg { display: flex; flex-wrap: wrap; gap: 1px; width: 100%; background: var(--line-strong); }
-  .v2-theme .v2a-toolbar .v2-seg button { flex: 1 1 auto; min-height: 40px; }
+  .v2-theme .v2a-toolbar .v2-seg button { flex: 1 1 auto; min-height: 44px; }
   .v2-theme .v2a-toolbar .v2-seg button + button { border-left: 0; }
   .v2-theme .v2a-toolbar .select { min-width: 0; }
   .v2-theme .v2a-answer-text { font-size: 15px; }
   .v2-theme .v2a-kpi-value { font-size: 24px; }
+}
+
+/* ================= 라운드 4: 다음 할 일 · 필터 · 공유 · 용어 ================= */
+
+/* ---- 진행 막대 ---- */
+.v2-theme .v2a-progress { padding: 12px 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
+.v2-theme .v2a-progress-text { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 8px; font-size: 14px; }
+.v2-theme .v2a-progress-text b { font-weight: 700; font-variant-numeric: tabular-nums; }
+.v2-theme .v2a-progress-track { height: 8px; overflow: hidden; border-radius: 999px; background: var(--panel-soft); box-shadow: inset 0 0 0 1px var(--line); }
+.v2-theme .v2a-progress-fill { height: 100%; border-radius: 999px; background: #4ade80; transition: width 0.25s; }
+
+/* ---- 영상 카드 안의 "먼저 할 일" ---- */
+.v2-theme .v2a-todo {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-strong);
+  border-left: 4px solid #fbbf24;
+  border-radius: 6px;
+  background: var(--bg-soft);
+}
+
+.v2-theme .v2a-todo.bad { border-left-color: #f87171; }
+.v2-theme .v2a-todo.done { border-left-color: #4ade80; }
+.v2-theme .v2a-todo-label { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; color: var(--muted); }
+.v2-theme .v2a-todo-problem { margin-top: 4px; font-size: 13px; color: var(--muted); }
+.v2-theme .v2a-todo-action { margin: 2px 0 0; font-size: 15px; font-weight: 700; line-height: 1.5; color: var(--text); word-break: keep-all; overflow-wrap: anywhere; }
+.v2-theme .v2a-todo-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: 10px; }
+.v2-theme .v2a-todo-buttons .button { display: inline-flex; align-items: center; gap: 4px; }
+.v2-theme .v2a-todo-note { margin: 8px 0 0; font-size: 12px; line-height: 1.55; color: var(--muted); word-break: keep-all; }
+
+/* 고쳤어요 체크: 손가락으로도 누르기 쉽게 크게 */
+.v2-theme .v2a-done-check { display: inline-flex; align-items: center; gap: 8px; min-height: 32px; padding: 2px 4px; font-size: 14px; font-weight: 600; cursor: pointer; }
+.v2-theme .v2a-done-check input { width: 20px; height: 20px; accent-color: #22c55e; cursor: pointer; }
+.v2-theme .v2a-done-check.pending { opacity: 0.6; cursor: progress; }
+.v2-theme .v2a-done-check.on { color: #4ade80; }
+
+.v2-theme .v2a-more-fixes { margin-top: 10px; font-size: 13px; }
+.v2-theme .v2a-more-fixes summary { cursor: pointer; color: var(--muted); font-weight: 600; }
+.v2-theme .v2a-more-fixes summary:hover { color: var(--primary); }
+.v2-theme .v2a-fix-list { margin: 8px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.v2-theme .v2a-fix-list li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 4px; }
+.v2-theme .v2a-fix-list li.done .v2a-fix-text { color: var(--muted); text-decoration: line-through; }
+.v2-theme .v2a-fix-text { min-width: 0; font-size: 13px; line-height: 1.5; word-break: keep-all; overflow-wrap: anywhere; }
+.v2-theme .v2a-fix-text small { display: block; color: var(--muted); }
+
+/* ---- 성과 요약 · 다음 할 일 목록 ---- */
+.v2-theme .v2a-next-steps { padding: 12px 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
+.v2-theme .v2a-next-steps-title { margin-bottom: 8px; font-size: 13px; font-weight: 700; }
+.v2-theme .v2a-next-steps ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.v2-theme .v2a-next-steps li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.v2-theme .v2a-next-sym { flex: none; width: 16px; text-align: center; }
+.v2-theme .v2a-next-steps li.bad .v2a-next-sym { color: #f87171; }
+.v2-theme .v2a-next-steps li.warn .v2a-next-sym { color: #fbbf24; }
+.v2-theme .v2a-next-steps li.good .v2a-next-sym { color: #4ade80; }
+.v2-theme .v2a-next-text { flex: 1 1 260px; min-width: 0; font-size: 14px; line-height: 1.55; word-break: keep-all; }
+
+/* 숫자 카드 아래 이동 링크 */
+.v2-theme .v2a-kpi-link { display: inline-block; margin-top: 8px; font-size: 12px; font-weight: 600; color: var(--primary); text-decoration: none; }
+.v2-theme .v2a-kpi-link:hover { text-decoration: underline; }
+.v2-theme .v2a-rank-links { margin-top: 3px; font-size: 12px; }
+.v2-theme .v2a-rank-links a { color: var(--primary); text-decoration: none; font-weight: 600; }
+.v2-theme .v2a-rank-links a:hover { text-decoration: underline; }
+.v2-theme .v2a-inline-link { color: var(--primary); text-decoration: none; font-weight: 600; }
+.v2-theme .v2a-inline-link:hover { text-decoration: underline; }
+
+/* ---- 적용된 필터 칩 ---- */
+.v2-theme .v2a-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 0 0 12px; }
+.v2-theme .v2a-chips-label { font-size: 12px; font-weight: 700; color: var(--muted); }
+.v2-theme .v2a-chip { display: inline-flex; align-items: center; gap: 2px; padding: 3px 4px 3px 10px; border: 1px solid var(--primary); border-radius: 999px; background: var(--primary-soft); font-size: 12px; font-weight: 600; max-width: 100%; overflow-wrap: anywhere; }
+.v2-theme .v2a-chip-x { flex: none; width: 28px; height: 28px; padding: 0; border: none; border-radius: 50%; background: none; color: var(--muted); font-size: 16px; line-height: 1; cursor: pointer; }
+.v2-theme .v2a-chip-x:hover { background: var(--panel-soft); color: var(--text); }
+.v2-theme .v2a-chip-x:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+
+/* ---- 저장·공유 줄 ---- */
+.v2-theme .v2a-share { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 0 0 12px; }
+.v2-theme .v2a-share-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+.v2-theme .v2a-share-msg { min-width: 0; font-size: 12px; color: #4ade80; overflow-wrap: anywhere; }
+.v2-theme .v2a-share-link { flex: 1 1 100%; max-width: 560px; }
+
+/* ---- 용어 풀이 ---- */
+.v2-theme .v2a-term { text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; }
+.v2-theme .v2a-gloss-list { margin: 8px 0 0; }
+.v2-theme .v2a-gloss-item { margin: 0 0 8px; }
+.v2-theme .v2a-gloss-item dt { font-weight: 700; color: var(--text); }
+.v2-theme .v2a-gloss-item dd { margin: 2px 0 0; }
+
+/* ---- 추천 업로드 시간 카드 ---- */
+.v2-theme .v2a-best { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; border: 1px solid var(--line); border-left: 4px solid var(--primary); border-radius: 6px; background: var(--panel); }
+.v2-theme .v2a-best-label { font-size: 12px; font-weight: 700; color: var(--muted); }
+.v2-theme .v2a-best-slot { font-size: 22px; font-weight: 800; line-height: 1.25; }
+.v2-theme .v2a-best-evidence { margin: 0; font-size: 14px; line-height: 1.6; word-break: keep-all; }
+.v2-theme .v2a-best-compare { margin: 0; font-size: 13px; color: #4ade80; }
+.v2-theme .v2a-best-others { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--muted); }
+.v2-theme .v2a-behind { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 0; padding: 0; list-style: none; font-size: 13px; }
+.v2-theme .v2a-behind li { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+
+/* 키워드 카드: 그 종목 영상으로 이동 */
+.v2-theme .v2a-kw-links { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; font-size: 12px; }
+
+@media (max-width: 560px) {
+  .v2-theme .v2a-todo-action { font-size: 14px; }
+  .v2-theme .v2a-todo-buttons { flex-direction: column; align-items: stretch; }
+  .v2-theme .v2a-todo-buttons .button { justify-content: center; }
+  .v2-theme .v2a-share-buttons { width: 100%; }
+  .v2-theme .v2a-share-buttons .button { flex: 1 1 auto; }
+  .v2-theme .v2a-best-slot { font-size: 19px; }
+  .v2-theme .v2a-next-steps li .button { width: 100%; justify-content: center; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .v2-theme .v2a-progress-fill { transition: none; }
 }

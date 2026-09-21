@@ -7,6 +7,7 @@ import { createSupabaseBrowserClient } from '@/lib/supabase/browser-client'
 import { fetchMe } from '@/lib/session/me-client'
 import { getHomeHref } from '@/lib/v3/menu'
 import { PasswordField } from '@/components/v3/password-field'
+import { safeNextPath } from '@/components/v3/safe-next'
 import { LAST_LOGIN_ID_KEY, readSafe, writeSafe } from '@/components/v3/safe-storage'
 
 export default function LoginPage() {
@@ -17,12 +18,14 @@ export default function LoginPage() {
   const [errorField, setErrorField] = useState<'id' | 'pw' | null>(null)
   const [remembered, setRemembered] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [returning, setReturning] = useState(false) // 로그인이 끊겨 하던 화면에서 넘어온 경우
   const busy = useRef(false) // Enter와 클릭이 겹쳐도 한 번만 로그인 요청
   const idRef = useRef<HTMLInputElement | null>(null)
   const pwRef = useRef<HTMLInputElement | null>(null)
 
   // 지난번에 쓴 아이디를 채워 두고(비밀번호는 저장하지 않는다), 커서는 비어 있는 쪽으로
   useEffect(() => {
+    setReturning(!!safeNextPath(new URLSearchParams(window.location.search).get('next')))
     const saved = readSafe(LAST_LOGIN_ID_KEY)
     if (saved) {
       setEmail(saved)
@@ -91,7 +94,9 @@ export default function LoginPage() {
 
       const me = await fetchMe(data.session.access_token)
       leaving = true // 화면이 넘어가는 동안 버튼을 다시 열지 않는다(중복 로그인 방지)
-      router.push(getHomeHref(me.roleType))
+      // 로그인이 끊겨 넘어온 경우 하던 화면으로 돌아간다. 우리 화면(/v3/…)의 경로만 허용한다.
+      const next = safeNextPath(new URLSearchParams(window.location.search).get('next'))
+      router.push(next || getHomeHref(me.roleType))
     } catch (e: any) {
       fail(e?.message || '로그인 중 오류가 발생했습니다.', 'pw')
     } finally {
@@ -117,6 +122,11 @@ export default function LoginPage() {
           <img className="auth-logo" src="/logo-ant.png" alt="" width={56} height={56} />
           <h1 className="auth-title">여왕개미미디어 CRM</h1>
           <p className="auth-subtitle">영상 등록과 시청자 반응 확인을 한 곳에서</p>
+          {returning ? (
+            <div className="v3-return-note" role="status">
+              로그인이 끊겼어요. 다시 로그인하면 하던 화면으로 돌아가고, 입력하던 내용도 그대로 남아 있어요.
+            </div>
+          ) : null}
           <div className="field">
             <label className="label" htmlFor="v3-login-id">아이디</label>
             <input

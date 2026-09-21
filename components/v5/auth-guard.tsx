@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { getAccessToken } from '@/lib/session/authed-fetch'
 import { fetchMe } from '@/lib/session/me-client'
 import { canAccessPath, getHomeHref, isAdminRoleType } from '@/lib/v5/menu'
+import { loginHref } from '@/components/v5/register-logic'
 
 // V5(성장 실험 · 알고리즘 최적화 캔버스)는 메뉴 권한 테이블을 보지 않고 역할(role_type)만으로 접근을 가른다.
 // super_admin/admin = 관리자, 그 외 = 직원. 로그인 안 된 사용자는 /v5/login 으로.
@@ -55,8 +56,10 @@ export function V5SessionProvider({ children }: { children: React.ReactNode }) {
     setState({ status: 'loading', me: null })
     try {
       const accessToken = await getAccessToken()
+      // 로그인 뒤 지금 보던 화면으로 돌아올 수 있게 ?next= 를 붙인다(안전한 V5 주소만 붙는다).
+      const here = `${window.location.pathname}${window.location.search}`
       if (!accessToken) {
-        router.replace('/v5/login')
+        router.replace(loginHref(here))
         return
       }
       const data = await fetchMe(accessToken)
@@ -75,7 +78,7 @@ export function V5SessionProvider({ children }: { children: React.ReactNode }) {
       if (e instanceof TypeError) {
         setState({ status: 'error', me: null, message: '인터넷 연결을 확인한 뒤 다시 시도해 주세요.' })
       } else {
-        router.replace('/v5/login')
+        router.replace(loginHref(`${window.location.pathname}${window.location.search}`))
       }
     }
   }, [router])

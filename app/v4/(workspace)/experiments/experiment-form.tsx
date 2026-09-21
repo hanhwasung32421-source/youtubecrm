@@ -7,6 +7,7 @@ import { v4Json } from '@/lib/v4/client'
 import { DEFAULT_METRIC } from '@/lib/v4/experiment-consts'
 import type { VideoOption } from '@/lib/v4/experiments'
 import { fmtDateKst } from '@/lib/v4/format'
+import { validateExperiment } from '@/lib/v4/experiment-view'
 import { FormError } from '@/lib/v4/analysis-ui'
 import type { ExperimentItem } from '@/lib/v4/sample-data'
 import { Field } from './field'
@@ -64,12 +65,8 @@ export function ExperimentForm({
     firstRef.current?.focus()
   }, [])
 
-  const errors: Partial<Record<FieldKey, string>> = {}
-  if (!form.hypothesis.trim()) errors.hypothesis = '무엇을 확인하고 싶은지 적어 주세요.'
-  if (!form.variantA.trim()) errors.variantA = '지금 하던 방식(A)을 적어 주세요.'
-  if (!form.variantB.trim()) errors.variantB = '새로 해볼 방식(B)을 적어 주세요.'
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(form.startedOn)) errors.startedOn = '시작일을 선택해 주세요.'
-  else if (editing?.endedOn && form.startedOn > editing.endedOn) errors.startedOn = '시작일이 끝난 날보다 늦을 수 없어요.'
+  // 검사 문구는 순수 함수(lib/v4/experiment-view)에서 만든다. 쉬운 말 + 예시를 함께 보여준다.
+  const errors = validateExperiment(form, editing?.endedOn)
 
   const showErr = (key: FieldKey) => (submitted || touched[key] ? errors[key] : undefined)
   const touch = (key: FieldKey) => setTouched((prev) => ({ ...prev, [key]: true }))

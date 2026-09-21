@@ -215,7 +215,7 @@ function Tooltip({ left, top, children }: { left: number; top: number; children:
   )
 }
 
-// ── 반응률 구간별 영상 수(가로 막대) ─────────────────────────────
+// ── 참여율 구간별 영상 수(가로 막대) ─────────────────────────────
 export type HistBucket = { key: string; label: string; count: number }
 
 export function HistogramChart({ buckets }: { buckets: HistBucket[] }) {
@@ -229,7 +229,7 @@ export function HistogramChart({ buckets }: { buckets: HistBucket[] }) {
 
   return (
     <figure className="v3a-figure">
-      <ul className="v3a-hist" aria-label={`반응률 구간별 영상 수. 전체 ${formatNumber(total)}개. ${summary}`}>
+      <ul className="v3a-hist" aria-label={`참여율 구간별 영상 수. 전체 ${formatNumber(total)}개. ${summary}`}>
         {buckets.map((b) => {
           const pct = total > 0 ? (b.count / total) * 100 : 0
           const isTop = b.key === topKey
@@ -252,7 +252,7 @@ export function HistogramChart({ buckets }: { buckets: HistBucket[] }) {
           <i className="v3a-key bar" aria-hidden /> 막대 길이 = 영상 수(개)
         </span>
         <span>진한 막대 = 영상이 가장 많이 모인 구간</span>
-        <span>반응률 = (좋아요 + 댓글) ÷ 조회수</span>
+        <span>참여율 = (좋아요 + 댓글) ÷ 조회수</span>
       </figcaption>
     </figure>
   )

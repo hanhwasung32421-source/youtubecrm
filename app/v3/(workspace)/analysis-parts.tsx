@@ -50,7 +50,7 @@ export function StatCard({
   delta,
   tone = 'neutral'
 }: {
-  label: string
+  label: ReactNode
   value: ReactNode
   hint: string
   delta?: ReactNode
@@ -255,32 +255,58 @@ export function RefreshFailed({ message, status, onRetry, busy }: { message: str
   )
 }
 
+// 빈 화면: 왜 비었는지(children)와, 지금 할 수 있는 일 하나(action)를 꼭 함께 보여 준다.
+// secondary 는 "필터 초기화" 같은 보조 행동 하나까지만.
 export function EmptyBlock({
   title,
   children,
   actionHref,
   actionLabel,
-  onAction
+  onAction,
+  secondaryLabel,
+  secondaryHref,
+  onSecondary,
+  compact
 }: {
   title: string
   children?: ReactNode
   actionHref?: string
   actionLabel?: string
   onAction?: () => void
+  secondaryLabel?: string
+  secondaryHref?: string
+  onSecondary?: () => void
+  compact?: boolean
 }) {
+  const primary =
+    actionLabel && actionHref ? (
+      <Link className="button" href={actionHref}>
+        {actionLabel}
+      </Link>
+    ) : actionLabel && onAction ? (
+      <button type="button" className="button" onClick={onAction}>
+        {actionLabel}
+      </button>
+    ) : null
+  const secondary =
+    secondaryLabel && secondaryHref ? (
+      <Link className="button secondary" href={secondaryHref}>
+        {secondaryLabel}
+      </Link>
+    ) : secondaryLabel && onSecondary ? (
+      <button type="button" className="button secondary" onClick={onSecondary}>
+        {secondaryLabel}
+      </button>
+    ) : null
   return (
-    <div className="v3a-empty">
+    <div className={`v3a-empty ${compact ? 'compact' : ''}`}>
       <div className="v3a-empty-title">{title}</div>
       {children ? <p className="v3a-empty-text">{children}</p> : null}
-      {actionLabel && actionHref ? (
-        <Link className="button" href={actionHref}>
-          {actionLabel}
-        </Link>
-      ) : null}
-      {actionLabel && !actionHref && onAction ? (
-        <button type="button" className="button" onClick={onAction}>
-          {actionLabel}
-        </button>
+      {primary || secondary ? (
+        <div className="v3a-empty-actions">
+          {primary}
+          {secondary}
+        </div>
       ) : null}
     </div>
   )

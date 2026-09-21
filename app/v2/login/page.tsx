@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { PasswordField } from '@/components/v2/password-field'
+import { safeNextPath } from '@/components/v2/register-flow'
 import { setCachedV2Me } from '@/components/v2/session-context'
 import { createSupabaseBrowserClient } from '@/lib/supabase/browser-client'
 import { clearMeCache, fetchMe } from '@/lib/session/me-client'
@@ -30,6 +31,14 @@ function writeStored(key: string, value: string | null) {
   }
 }
 
+function readNextPath(): string | null {
+  try {
+    return safeNextPath(new URLSearchParams(window.location.search).get('next'))
+  } catch {
+    return null
+  }
+}
+
 type ErrorField = 'id' | 'pw' | null
 
 export default function LoginPage() {
@@ -43,11 +52,14 @@ export default function LoginPage() {
   const idRef = useRef<HTMLInputElement | null>(null)
   const pwRef = useRef<HTMLInputElement | null>(null)
   const busyRef = useRef(false)
+  // 로그인이 끊겨서 온 경우(?next=/v2/...) 로그인 뒤 하던 화면으로 돌려보낸다. 같은 사이트의 /v2/ 아래 주소만 받는다.
+  const [returning, setReturning] = useState(false)
 
   // 로그인 화면에 들어오면 이전 사용자의 메모리 캐시는 항상 비운다.
   useEffect(() => {
     clearMeCache()
     setCachedV2Me(null)
+    setReturning(readNextPath() !== null)
     const remember = readStored(REMEMBER_KEY) !== '0'
     setRememberId(remember)
     const last = remember ? readStored(LAST_ID_KEY) : ''
@@ -128,7 +140,7 @@ export default function LoginPage() {
       // 관리자는 성과 요약, 직원은 영상 등록 화면에서 시작한다.
       const me = await fetchMe(data.session.access_token)
       navigating = true
-      router.push(getHomeHref(isAdminRoleType(me.roleType)))
+      router.push(readNextPath() ?? getHomeHref(isAdminRoleType(me.roleType)))
     } catch (err: unknown) {
       fail(err instanceof Error && err.message ? err.message : '로그인 중 오류가 발생했어요. 잠시 후 다시 시도해 주세요.', null)
     } finally {
@@ -148,6 +160,11 @@ export default function LoginPage() {
           <img className="auth-logo" src="/logo-ant.png" alt="" width={56} height={56} />
           <h1 className="auth-title">여왕개미미디어 CRM</h1>
           <p className="auth-subtitle">검색에 잘 걸리는 영상 관리</p>
+          {returning ? (
+            <div className="v2-return-note small" role="status">
+              로그인하면 하던 화면으로 바로 돌아가요.
+            </div>
+          ) : null}
 
           <div className="field">
             <label className="label" htmlFor="v2-login-id">

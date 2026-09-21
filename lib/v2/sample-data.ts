@@ -1,7 +1,8 @@
 // SQL(supabase/sql/v2/100_v2_seo.sql)을 아직 실행하지 않았을 때 API가 돌려주는 샘플.
 // 실제 운영과 비슷한 종목/직원/시각으로 채워 화면 구성과 흐름을 미리 볼 수 있게 한다.
 import { addDays, kstIsoAt, kstYmd, lastNDays, weekStartMonday } from './dates'
-import { computeDiscoverability, computeTimingHint } from './server'
+import { computeDiscoverability } from './server'
+import { computeTimingEvidence } from './timing'
 import {
   type ContentType,
   type DiscoverabilityRow,
@@ -194,7 +195,9 @@ export function sampleKeywordsPayload(now = new Date()): KeywordsPayload {
     created_at: at(addDays(today, dayOffset), hour),
     updated_at: at(addDays(today, dayOffset), hour)
   }))
-  return { items, recentStocks: sampleRecentStocks(now), sample: true }
+  const videoCounts: Record<string, number> = {}
+  for (const video of sampleVideos(now)) videoCounts[video.stock_name] = (videoCounts[video.stock_name] || 0) + 1
+  return { items, recentStocks: sampleRecentStocks(now), videoCounts, sample: true }
 }
 
 export function samplePlannerPayload(weekStartYmd?: string): PlannerPayload {
@@ -220,7 +223,7 @@ export function samplePlannerPayload(weekStartYmd?: string): PlannerPayload {
       actual[s.id][day] = Math.max(0, slotCount - ((staffIndex + dayIndex) % 2))
     })
   })
-  const timingHint = computeTimingHint(sampleVideos())
+  const timingHint = computeTimingEvidence(sampleVideos())
   return { weekStart, days, staff, planned, actual, timingHint, sample: true }
 }
 

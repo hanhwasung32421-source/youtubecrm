@@ -8,9 +8,15 @@ import { ProgressRing, ShareBar, TimelineChart } from '@/components/v4/charts'
 import { EmptyState, KpiCard, PeriodToggle, SampleBanner } from '@/components/v4/ui'
 import { ChartSkeleton, HeroSkeleton, KpiSkeleton, ListSkeleton } from '@/components/v4/skeleton'
 import { clearDashboardCache, dashboardCache, dashboardKey } from '@/components/v4/dashboard-cache'
+import { NextActionsPanel } from '@/components/v4/next-actions-panel'
+import { deriveNextActions, setupChecklist } from '@/components/v4/next-actions'
+import { loginHrefWithNext } from '@/components/v4/safe-next'
+import { todayKst } from '@/components/v4/register-utils'
 import { computeDelta } from '@/components/v4/delta'
 import { Toast, useToast } from '@/components/toast'
 import { authedFetchJson, authedPostJson } from '@/lib/session/authed-fetch'
+import { LOGIN_HREF } from '@/lib/v4/menu'
+import { useV4Query } from '@/lib/v4/use-v4-query'
 import type { DailyPoint, Kpis, PeriodDays } from '@/lib/v4/analytics'
 import { fmtCompact, fmtNumber, fmtPercent, fmtRelative } from '@/lib/v4/format'
 import { buildInsight } from './insight'
@@ -53,6 +59,10 @@ type DashboardResponse = {
   error?: string
 }
 
+// 다음 할 일 카드에 쓰는 보조 응답 (기존 API 그대로 읽기만 한다)
+type StaffWeekResponse = { range: { start: string; end: string }; rows: Array<{ userId: string; name: string; sparkline: number[] }> }
+type TopWeekResponse = { summary?: { top: { title: string; stockName: string; viewCount: number } | null } }
+
 const GOAL_SCOPE_LABEL: Record<DashboardResponse['goal']['scope'], string> = {
   team: '팀 목표',
   user: '개인 목표',
@@ -70,6 +80,7 @@ export default function GrowthDashboardPage() {
   const [data, setData] = useState<DashboardResponse | null>(null)
   const [fetching, setFetching] = useState(false)
   const [loadError, setLoadError] = useState('')
+  const [loadAuth, setLoadAuth] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [goalVideos, setGoalVideos] = useState('')
   const [goalViews, setGoalViews] = useState('')
@@ -111,20 +122,25 @@ export default function GrowthDashboardPage() {
       setFetching(true)
       setLoadError('')
       try {
-        const { ok, data: res } = await authedFetchJson<DashboardResponse>(`/api/v4/dashboard?period=${days}`, { signal: controller.signal })
+        const { ok, status, data: res } = await authedFetchJson<DashboardResponse>(`/api/v4/dashboard?period=${days}`, { signal: controller.signal })
         if (requestId !== requestRef.current) return
         if (!ok || res?.error) {
-          const message = res?.error || '성장 현황을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.'
-          if (!cached) setLoadError(message)
+          const expired = status === 401
+          const message = expired ? '로그인이 풀렸어요. "다시 로그인"을 누른 뒤 돌아와서 "다시 불러오기"를 눌러 주세요.' : `${res?.error || '성장 현황을 불러오지 못했어요.'} 잠시 후 "다시 불러오기"를 눌러 주세요.`
+          if (!cached) {
+            setLoadError(message)
+            setLoadAuth(expired)
+          }
           showError(message)
           return
         }
+        setLoadAuth(false)
         dashboardCache.set(key, res)
         setData(res)
         applyGoalInputs(res)
       } catch (e: any) {
         if (e?.name === 'AbortError' || requestId !== requestRef.current) return
-        const message = '인터넷 연결을 확인하고 다시 시도해 주세요.'
+        const message = '인터넷 연결이 끊긴 것 같아요. 연결을 확인하고 "다시 불러오기"를 눌러 주세요.'
         if (!cached) setLoadError(message)
         showError(message)
       } finally {
@@ -152,12 +168,13 @@ export default function GrowthDashboardPage() {
     const { ok, data: res } = await authedPostJson<{ updated: number; failed: number; total: number; error?: string }>('/api/v4/sync-stats', {})
     setSyncing(false)
     if (!ok || res?.error) {
-      showError(res?.error || '조회수를 새로 받지 못했어요. 잠시 후 다시 시도해 주세요.')
+      showError(res?.error ? `${res.error} 잠시 후 다시 눌러 주세요.` : '조회수를 새로 받지 못했어요. 잠시 후 "새로 받기"를 다시 눌러 주세요.')
       return
     }
     showSuccess(`영상 ${fmtNumber(res.total)}개 중 ${fmtNumber(res.updated)}개의 조회수를 새로 받았어요.${res.failed ? ` (실패 ${res.failed}개)` : ''}`)
     clearDashboardCache(userId)
     void load(period, true)
+    topQ.reload() // 조회수가 바뀌었으니 "최근 7일 상위 영상"도 새로 읽는다
   }
 
   const saveGoal = async () => {
@@ -171,7 +188,7 @@ export default function GrowthDashboardPage() {
     })
     setSavingGoal(false)
     if (!ok || res?.error) {
-      showError(res?.error || '목표를 저장하지 못했어요. 잠시 후 다시 시도해 주세요.')
+      showError(res?.error ? `${res.error} 입력한 숫자는 그대로예요. 다시 저장해 주세요.` : '목표를 저장하지 못했어요. 입력한 숫자는 그대로예요. 잠시 후 다시 저장해 주세요.')
       return
     }
     goalDirtyRef.current = false
@@ -187,6 +204,46 @@ export default function GrowthDashboardPage() {
   const viewRatio = goal && goal.targetViews > 0 ? goal.actualViews / goal.targetViews : 0
   const perDay = view && kpis ? kpis.videoCount / view.period : 0
   const insight = view && kpis ? buildInsight({ days: view.period, scope: view.scope, kpis, daily: view.daily, targetPerDay: view.targetPerDay, previousKpis: view.previousKpis }) : null
+
+  // ---- 다음 할 일: 이미 있는 응답만 읽는다 (담당자 7일 표 · 7일 상위 영상). 같은 요청은 캐시를 함께 쓴다.
+  const staffQ = useV4Query<StaffWeekResponse>(isAdmin ? '/api/v4/staff?period=7' : null, { fallback: '담당자별 오늘 등록 수를 불러오지 못했어요.' })
+  const topQ = useV4Query<TopWeekResponse>('/api/v4/ranking?period=7&limit=0', { fallback: '최근 7일 상위 영상을 불러오지 못했어요.' })
+  const nextReady = Boolean(view) && (!isAdmin || !staffQ.loading) && !topQ.loading
+  const hasVideos = Boolean(view && kpis && (kpis.videoCount > 0 || view.feed.length > 0))
+  const staffData = staffQ.data
+  const topData = topQ.data
+  const nextCards = useMemo(() => {
+    if (!view) return []
+    const last = view.daily[view.daily.length - 1]
+    const today = todayKst()
+    // 담당자 표의 마지막 칸이 "오늘"이 맞을 때만 쓴다 (날짜가 바뀐 옛 응답이면 무시)
+    const staffToday =
+      isAdmin && staffData && staffData.range?.end === today
+        ? staffData.rows.map((r) => ({ userId: r.userId, name: r.name, today: r.sparkline[r.sparkline.length - 1] ?? 0 }))
+        : null
+    return deriveNextActions({
+      scope: view.scope,
+      nowMs: Date.now(),
+      hasVideos,
+      lastSyncedAt: view.lastSyncedAt,
+      goalScope: view.goal.scope,
+      goalSample: view.goal.sample,
+      targetPerDay: view.targetPerDay,
+      staffCount: view.staffCount,
+      todayUploads: last && last.ymd === today ? last.uploads : null,
+      staffToday,
+      top: topData?.summary?.top || null
+    })
+  }, [view, isAdmin, staffData, topData, hasVideos])
+  const checklist = view && isAdmin && !hasVideos ? setupChecklist({ hasVideos, lastSyncedAt: view.lastSyncedAt, goalScope: view.goal.scope, goalSample: view.goal.sample }) : null
+  const goalSuggest = view ? Math.round(view.targetPerDay * 20) : 0
+
+  const onNextGoalSaved = () => {
+    goalDirtyRef.current = false
+    showSuccess('이번 달 팀 목표를 저장했어요.')
+    clearDashboardCache(userId)
+    void load(period, true)
+  }
 
   // 지난 기간 대비 칩: 지난 기간 값이 없으면 칩을 아예 보이지 않는다.
   const deltas = useMemo(() => {
@@ -229,12 +286,6 @@ export default function GrowthDashboardPage() {
             <div className="v4-hero-kicker">한눈에 요약</div>
             <p className="v4-hero-headline">{insight.headline}</p>
             {insight.detail ? <p className="v4-hero-detail">{insight.detail}</p> : null}
-            <div className="v4-hero-next">
-              <Link className="button" href={insight.next.href}>
-                {insight.next.label}
-              </Link>
-              <span className="v4-hero-why">{insight.next.why}</span>
-            </div>
           </>
         ) : loadError ? (
           <>
@@ -246,6 +297,11 @@ export default function GrowthDashboardPage() {
               <button type="button" className="button secondary" onClick={() => void load(period, true)}>
                 다시 불러오기
               </button>
+              {loadAuth ? (
+                <a className="button secondary" href={loginHrefWithNext(LOGIN_HREF, '/v4/dashboard')} target="_blank" rel="noopener noreferrer">
+                  다시 로그인 (새 창)
+                </a>
+              ) : null}
             </div>
           </>
         ) : (
@@ -267,6 +323,21 @@ export default function GrowthDashboardPage() {
           </div>
         ) : null}
       </section>
+
+      {/* 1-2) 다음 할 일 (우선순위 카드 최대 3개 / 영상이 없으면 시작하기 3단계) */}
+      {view ? (
+        <NextActionsPanel
+          loading={!nextReady}
+          cards={nextCards}
+          checklist={checklist}
+          isAdmin={isAdmin}
+          syncing={syncing}
+          onSync={syncStats}
+          goalMonth={view.goal.month}
+          goalSuggest={goalSuggest}
+          onGoalSaved={onNextGoalSaved}
+        />
+      ) : null}
 
       {/* 2) 핵심 숫자 4개 — 각각 "그래서 무슨 뜻인지" 한 줄 + 지난 기간 대비 */}
       {view && kpis ? (

@@ -2205,3 +2205,491 @@ body:has(.v3-theme) {
     display: none !important;
   }
 }
+
+/* ─────────────────────────────────────────────────────────────
+   라운드 4 · 등록 흐름(하루 10~15번 반복): 오늘 진행, 붙여넣기, 확인 카드, 고정 높이 결과 칸, 키보드 안내
+   (모두 .v3-theme 안에서만. 아래 좁은 화면 규칙은 같은 선택자 세기라 뒤에 두어 이긴다.)
+   ───────────────────────────────────────────────────────────── */
+
+/* 오늘 진행 막대 */
+.v3-theme .v3-progress {
+  display: grid;
+  gap: 10px;
+  max-width: 720px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-soft);
+}
+
+.v3-theme .v3-progress-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+}
+
+.v3-theme .v3-progress-num {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 14px;
+}
+
+.v3-theme .v3-progress-num strong {
+  font-size: 22px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.v3-theme .v3-progress-label,
+.v3-theme .v3-progress-goal {
+  color: var(--muted);
+}
+
+.v3-theme .v3-progress-copy {
+  flex: 1 1 160px;
+  min-width: 0;
+  min-height: 20px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.v3-theme .v3-progress-change {
+  margin-left: auto;
+}
+
+.v3-theme .v3-progress-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.v3-theme .v3-progress-edit-label,
+.v3-theme .v3-progress-edit-unit {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.v3-theme .v3-progress-edit .input {
+  width: 72px;
+  padding: 6px 8px;
+  font-size: 14px;
+}
+
+.v3-theme .v3-progress-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: #dedcd7;
+  overflow: hidden;
+}
+
+.v3-theme .v3-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--primary);
+  transition: width 0.4s ease;
+}
+
+.v3-theme .v3-progress-bar.done .v3-progress-fill {
+  background: #1f7a52;
+}
+
+.v3-theme .v3-progress-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.v3-theme .v3-progress-groups li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  font-size: 12px;
+}
+
+.v3-theme .v3-progress-n {
+  font-weight: 700;
+  color: var(--primary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 주소 칸 + 붙여넣기 버튼 */
+.v3-theme .v3-reg-urlrow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.v3-theme .v3-reg-paste {
+  white-space: nowrap;
+  min-height: 44px;
+}
+
+/* 종목 칸 안쪽의 "×"(종목 지우기) */
+.v3-theme .v3-reg-stockwrap {
+  position: relative;
+}
+
+.v3-theme .v3-reg-stockwrap .input {
+  padding-right: 58px;
+}
+
+.v3-theme .v3-reg-clearx {
+  position: absolute;
+  top: 50%;
+  right: 24px;
+  width: 32px;
+  height: 32px;
+  transform: translateY(-50%);
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.v3-theme .v3-reg-clearx:hover {
+  background: var(--bg-soft);
+  color: var(--text);
+}
+
+.v3-theme .v3-reg-clearx:focus-visible {
+  outline: 2px solid var(--focus);
+}
+
+.v3-theme .v3-reg-clearx.off {
+  visibility: hidden;
+}
+
+/* "이 영상이 맞나요?" 확인 카드: 비어 있을 때도 같은 높이를 잡아 둔다 */
+.v3-theme .v3-reg-confirm {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  min-height: 62px;
+  padding: 8px 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 10px;
+}
+
+.v3-theme .v3-reg-confirm-empty {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.v3-theme .v3-reg-confirm-video {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+}
+
+.v3-theme .v3-reg-confirm-video img {
+  flex-shrink: 0;
+  width: 64px;
+  height: 36px;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+}
+
+.v3-theme .v3-reg-thumb-empty {
+  flex-shrink: 0;
+  width: 64px;
+  height: 36px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: var(--bg-soft);
+}
+
+.v3-theme .v3-reg-confirm-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.v3-theme .v3-reg-confirm-title {
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.v3-theme .v3-reg-confirm-sub {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.v3-theme .v3-reg-confirm-sub.warn {
+  color: #8a4f12;
+}
+
+.v3-theme .v3-reg-dup {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(217, 130, 43, 0.12);
+  color: #6f400e;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.v3-theme .v3-reg-dup.warn {
+  background: rgba(192, 57, 43, 0.08);
+  color: #8a2b21;
+}
+
+.v3-theme .v3-reg-dup-note {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* 등록 결과 칸: 성공·되돌리기·실패·대기가 모두 이 자리에서 바뀐다(높이 고정 → 화면이 밀리지 않음) */
+.v3-theme .v3-reg-slot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 72px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: var(--bg-soft);
+}
+
+.v3-theme .v3-reg-slot.ok {
+  background: rgba(47, 158, 110, 0.1);
+}
+
+.v3-theme .v3-reg-slot.error {
+  background: rgba(217, 130, 43, 0.12);
+}
+
+.v3-theme .v3-reg-slot-text {
+  display: grid;
+  gap: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+.v3-theme .v3-reg-slot-main {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.v3-theme .v3-reg-slot.ok .v3-reg-slot-main {
+  color: #1a6543;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.v3-theme .v3-reg-slot.error .v3-reg-slot-main {
+  color: #6f400e;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.v3-theme .v3-reg-slot-sub:empty {
+  display: none;
+}
+
+.v3-theme .v3-reg-slot-sub {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.v3-theme .v3-reg-slot.ok .v3-reg-slot-sub {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.v3-theme .v3-reg-slot-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+}
+
+.v3-theme a.button.xs {
+  text-decoration: none;
+  color: #fff;
+}
+
+/* 키보드 안내(터치 화면에서는 숨김) · 바로 등록 스위치 */
+.v3-theme .v3-reg-keys {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.v3-theme .v3-reg-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.v3-theme .v3-reg-toggle input {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin: 3px 0 0;
+}
+
+.v3-theme .v3-reg-toggle-help {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* 가장 최근 줄의 종목 바로 고치기 */
+.v3-theme .v3-stock-fix {
+  margin: 0;
+  padding: 0 2px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  font: inherit;
+  color: var(--primary);
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: rgba(44, 88, 200, 0.4);
+  text-underline-offset: 3px;
+}
+
+.v3-theme .v3-stock-fix:hover {
+  background: var(--primary-soft);
+}
+
+.v3-theme .v3-cell-sub:has(.v3-quickfix-form) {
+  overflow: visible;
+  white-space: normal;
+}
+
+.v3-theme .v3-quickfix-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0;
+}
+
+.v3-theme .v3-quickfix-input {
+  width: min(200px, 100%);
+  padding: 4px 8px;
+  font-size: 13px;
+}
+
+/* 로그인이 끊겨 넘어온 경우 안내 */
+.v3-theme .v3-return-note {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(217, 130, 43, 0.12);
+  color: #6f400e;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* 좁은 화면: 눌러야 하는 것은 44px, 입력 글자는 16px(확대 방지) */
+@media (max-width: 720px) {
+  .v3-theme .v3-progress {
+    padding: 10px 12px;
+  }
+
+  .v3-theme .v3-progress-edit .input {
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  .v3-theme .v3-progress-edit .button {
+    min-height: 44px;
+  }
+
+  .v3-theme .v3-reg-clearx {
+    width: 40px;
+    height: 40px;
+    right: 6px;
+  }
+
+  .v3-theme .v3-reg-stockwrap .input {
+    padding-right: 52px;
+  }
+
+  .v3-theme .v3-reg-slot.error {
+    flex-wrap: wrap;
+  }
+
+  .v3-theme .v3-reg-toggle {
+    align-items: center;
+    min-height: 44px;
+  }
+
+  .v3-theme .v3-reg-toggle input {
+    width: 22px;
+    height: 22px;
+    margin: 0;
+  }
+
+  .v3-theme .v3-stock-fix {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0 6px;
+  }
+
+  .v3-theme .v3-quickfix-input {
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  .v3-theme .v3-quickfix-form .button {
+    min-height: 44px;
+  }
+}
+
+/* 터치 화면(마우스·키보드가 없는 기기)에서는 키보드 안내를 숨긴다. 위 기본 규칙과 선택자 세기가 같아 뒤에 두었다. */
+@media (hover: none) {
+  .v3-theme .v3-reg-keys {
+    display: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .v3-theme .v3-progress-bar {
+    border: 1px solid CanvasText;
+  }
+
+  .v3-theme .v3-progress-fill {
+    background: Highlight;
+    forced-color-adjust: none;
+  }
+}

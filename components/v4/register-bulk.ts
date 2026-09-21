@@ -2,6 +2,7 @@
 // 한 줄에 `주소 [종목명]` — 종목이 앞에 오든 뒤에 오든, 쉼표·탭으로 구분되든 알아서 나눈다.
 
 import { extractVideoId, isShortsUrl, isYoutubeUrl, normalizeStockName, normalizeYoutubeUrl } from '@/components/v4/register-utils'
+import { diagnoseYoutubeUrl } from '@/components/v4/register-logic'
 
 export type ParsedLine = {
   key: string // 영상 ID (주소가 이상한 줄은 line-번호)
@@ -41,7 +42,9 @@ function parseLine(line: string, lineNo: number): ParsedLine {
   }
   const videoId = extractVideoId(url)
   if (!videoId) {
-    return { key: `line-${lineNo}`, lineNo, url, videoId: '', valid: false, problem: '영상 주소가 아니에요', stock, shorts: false }
+    const kind = diagnoseYoutubeUrl(url)
+    const problem = !kind.ok && kind.kind === 'playlist' ? '재생목록 주소예요 (영상 주소를 넣어 주세요)' : !kind.ok && kind.kind === 'channel' ? '채널 주소예요 (영상 주소를 넣어 주세요)' : '영상 주소가 아니에요'
+    return { key: `line-${lineNo}`, lineNo, url, videoId: '', valid: false, problem, stock, shorts: false }
   }
   return { key: videoId, lineNo, url, videoId, valid: true, problem: '', stock, shorts: isShortsUrl(url) }
 }

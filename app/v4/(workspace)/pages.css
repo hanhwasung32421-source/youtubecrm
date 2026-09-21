@@ -1502,3 +1502,461 @@
     font-size: 18px;
   }
 }
+
+/* ================================================================ Round 4: 다음 할 일 · 기억하는 필터 · 저장/공유 · 용어 설명
+   (같은 클래스를 다시 쓰는 곳은 이 아래에 둬서 위쪽 규칙을 이기게 한다) */
+
+/* 작은 도구 버튼 (링크 복사 / CSV 저장). theme.css 의 .button.secondary 보다 앞서도록 요소 이름까지 붙인다. */
+.v4-theme button.button.v4p-tool-btn {
+  padding: 8px 12px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.v4-theme .v4p-csv {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.v4-theme .v4p-csv-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--primary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- 지금 걸려 있는 필터 요약 */
+.v4-theme .v4p-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  align-items: center;
+  margin: -2px 0 12px;
+}
+
+.v4-theme .v4p-chips-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.v4-theme .v4p-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 4px 4px 4px 10px;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--p-info);
+  font-size: 12.5px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.v4-theme .v4p-chip-x {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.v4-theme .v4p-chip-x:hover {
+  background: rgba(79, 70, 229, 0.18);
+}
+
+/* ---- 용어 설명 ("이게 뭐예요?") : 본문 안에서 펼쳐져서 잘리지 않는다 */
+.v4-theme .v4p-gloss {
+  display: inline;
+  margin-left: 4px;
+  font-weight: 500;
+}
+
+.v4-theme button.v4p-gloss-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.v4-theme button.v4p-gloss-btn:hover,
+.v4-theme button.v4p-gloss-btn[aria-expanded='true'] {
+  color: var(--primary);
+  border-color: var(--primary);
+}
+
+.v4-theme .v4p-gloss-body {
+  display: block;
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg-soft);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.6;
+  text-align: left;
+  word-break: keep-all;
+}
+
+.v4-theme .v4p-termlabel {
+  display: inline;
+}
+
+/* ---- 표/타일 안의 눌러서 이동하는 것들 */
+.v4-theme .v4p-cell-btn {
+  display: inline;
+  max-width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  border-bottom: 1px dotted var(--muted);
+}
+
+.v4-theme .v4p-cell-btn:hover {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+
+/* 타일 전체가 링크다: li 의 안쪽 여백을 링크로 옮긴다 (.v4p-tile 보다 뒤에 있어 padding 을 덮는다) */
+.v4-theme .v4p-tile:has(.v4p-tile-link) {
+  padding: 0;
+}
+
+.v4-theme .v4p-tile-link {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  height: 100%;
+  min-width: 0;
+  padding: 10px 12px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.v4-theme .v4p-tile-link:hover {
+  filter: brightness(1.06);
+}
+
+.v4-theme .v4p-tile-link:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: -4px;
+  border-radius: 12px;
+}
+
+.v4-theme a.v4p-top3-name {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.v4-theme a.v4p-top3-name:hover {
+  color: var(--primary);
+  text-decoration: underline;
+}
+
+.v4-theme .v4p-mult {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* 강점 한 문장: 줄바꿈 허용 (v4p-sub 는 한 줄 말줄임) */
+.v4-theme .v4p-strength {
+  margin-top: 3px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--muted);
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+/* ---- 종목: 더 올려 보세요 / 접어도 좋아요 */
+.v4-theme .v4p-advice {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.v4-theme .v4p-advice-col {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 14px;
+  min-width: 0;
+}
+
+.v4-theme .v4p-advice-title {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.v4-theme .v4p-advice-title.good {
+  color: var(--p-good);
+}
+
+.v4-theme .v4p-advice-title.warn {
+  color: var(--p-warn);
+}
+
+.v4-theme .v4p-advice-list {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13.5px;
+  line-height: 1.65;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+.v4-theme .v4p-advice-list a {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* ---- 담당자: 오늘 등록 현황 */
+.v4-theme .v4p-today-sum {
+  font-size: 13.5px;
+  color: var(--muted);
+  margin-bottom: 10px;
+  word-break: keep-all;
+}
+
+.v4-theme .v4p-today-sum strong {
+  color: var(--text);
+}
+
+.v4-theme .v4p-today-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.v4-theme .v4p-today-item {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.9fr) minmax(90px, 1fr) minmax(0, 2.2fr);
+  gap: 6px 14px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  min-width: 0;
+}
+
+.v4-theme .v4p-today-item.behind {
+  border-color: rgba(245, 158, 11, 0.55);
+  background: var(--p-warn-bg);
+}
+
+.v4-theme .v4p-today-item.done {
+  border-color: rgba(16, 185, 129, 0.4);
+}
+
+.v4-theme .v4p-today-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-weight: 800;
+  min-width: 0;
+}
+
+.v4-theme .v4p-today-name a {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.v4-theme .v4p-today-name a:hover {
+  color: var(--primary);
+  text-decoration: underline;
+}
+
+.v4-theme .v4p-today-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--bg-soft);
+  overflow: hidden;
+}
+
+.v4-theme .v4p-today-item.behind .v4p-today-bar {
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.v4-theme .v4p-today-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--primary);
+  border-radius: inherit;
+}
+
+.v4-theme .v4p-today-item.done .v4p-today-bar > span {
+  background: var(--p-good);
+}
+
+.v4-theme .v4p-today-item.behind .v4p-today-bar > span {
+  background: var(--p-warn);
+}
+
+.v4-theme .v4p-today-text {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+  word-break: keep-all;
+}
+
+/* ---- 실험: 진행 단계 / 확인 상자 */
+.v4-theme .v4p-stepper-wrap {
+  margin-top: 10px;
+}
+
+.v4-theme .v4p-stepper {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.v4-theme .v4p-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.v4-theme .v4p-step + .v4p-step::before {
+  content: '';
+  width: 22px;
+  height: 2px;
+  margin-right: 4px;
+  border-radius: 2px;
+  background: var(--line);
+}
+
+.v4-theme .v4p-step.done + .v4p-step::before {
+  background: var(--p-good);
+}
+
+.v4-theme .v4p-step-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+  background: var(--panel);
+  font-size: 11.5px;
+  font-weight: 800;
+}
+
+.v4-theme .v4p-step.done {
+  color: var(--p-good);
+}
+
+.v4-theme .v4p-step.done .v4p-step-dot {
+  background: var(--p-good);
+  border-color: var(--p-good);
+  color: #fff;
+}
+
+.v4-theme .v4p-step.current {
+  color: var(--primary);
+}
+
+.v4-theme .v4p-step.current .v4p-step-dot {
+  border-color: var(--primary);
+  color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-soft);
+}
+
+.v4-theme .v4p-step-hint {
+  margin-top: 6px;
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.v4-theme .v4p-exp.pending {
+  opacity: 0.75;
+}
+
+.v4-theme .v4p-confirm {
+  margin-top: 10px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(244, 63, 94, 0.45);
+  background: var(--p-bad-bg);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.v4-theme .v4p-confirm p {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--text);
+  word-break: keep-all;
+}
+
+@media (max-width: 900px) {
+  .v4-theme .v4p-advice {
+    grid-template-columns: 1fr;
+  }
+  .v4-theme .v4p-today-item {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* globals.css 의 a { color: inherit } 때문에 링크가 글자처럼 보이지 않도록 */
+.v4-theme .v4p-advice-list a,
+.v4-theme .v4p-exp-link a,
+.v4-theme .v4p-heat-readout a {
+  color: var(--primary);
+  font-weight: 700;
+}
+
+.v4-theme .v4p-advice-list a:hover,
+.v4-theme .v4p-exp-link a:hover,
+.v4-theme .v4p-heat-readout a:hover {
+  text-decoration: underline;
+}

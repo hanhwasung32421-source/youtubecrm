@@ -2,7 +2,7 @@
 
 import { z } from 'zod'
 import { DEFAULT_METRIC } from '@/lib/v4/experiment-consts'
-import { stockKey, videoTitle, type VideoRow } from '@/lib/v4/analytics'
+import { stockKey, videoTitle, videoUrl, type VideoRow } from '@/lib/v4/analytics'
 import type { ExperimentItem } from '@/lib/v4/sample-data'
 import { V4HttpError, dbError, loadUsers, type V4Context } from '@/lib/v4/server'
 import { V4_TABLES } from '@/lib/v4/tables'
@@ -10,11 +10,11 @@ import { V4_TABLES } from '@/lib/v4/tables'
 // 실제로 있는 날짜인지까지 확인한다 (2026-02-31 같은 값은 DB 가 형식 오류로 거절한다).
 const ymd = z
   .string({ error: '날짜를 선택해 주세요.' })
-  .regex(/^\d{4}-\d{2}-\d{2}$/, '날짜는 YYYY-MM-DD 형식이어야 합니다.')
+  .regex(/^\d{4}-\d{2}-\d{2}$/, '날짜를 달력에서 다시 골라 주세요.')
   .refine((v) => {
     const d = new Date(`${v}T00:00:00Z`)
     return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === v
-  }, '존재하지 않는 날짜예요. 날짜를 다시 확인해 주세요.')
+  }, '없는 날짜예요(예: 2월 31일). 달력에서 다시 골라 주세요.')
 
 export { DEFAULT_METRIC }
 
@@ -88,7 +88,7 @@ export async function mapExperiments(ctx: V4Context, rows: ExperimentRow[]): Pro
       if (videoIds.length === 0) return new Map<string, VideoRow>()
       const { data, error } = await ctx.supabaseAdmin
         .from(V4_TABLES.videos)
-        .select('id, title, title_override, youtube_video_id, stock_name')
+        .select('id, title, title_override, youtube_video_id, youtube_url, stock_name')
         .in('id', videoIds)
       if (error) throw dbError(error)
       return new Map(((data || []) as VideoRow[]).map((v) => [v.id, v]))
@@ -100,6 +100,7 @@ export async function mapExperiments(ctx: V4Context, rows: ExperimentRow[]): Pro
       id: r.id,
       videoId: r.video_id,
       videoTitle: video ? videoTitle(video) : '(영상 미연결)',
+      videoUrl: video ? videoUrl(video) || null : null,
       stockName: video ? stockKey(video) : '-',
       hypothesis: r.hypothesis,
       variantA: r.variant_a,
