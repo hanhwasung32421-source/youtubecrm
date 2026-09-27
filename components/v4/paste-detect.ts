@@ -52,9 +52,3 @@ export function toBulkText(raw: string): string {
   }
   return out.join('\n')
 }
-
-// 종목명 칸에 넣어 볼 만한 짧은 글인지 (제목처럼 긴 글은 제외)
-export function looksLikeStockName(text: string) {
-  const t = collapse(text)
-  return t.length >= 1 && t.length <= 12 && !/[!?:|]/.test(t)
-}

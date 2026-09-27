@@ -137,13 +137,17 @@ export type LastEntry = {
   videoId: string
   url: string // 되돌리면 주소 칸에 다시 채워 줄 주소
   stock: string
+  // 서버가 실제 영상 길이로 정한 형식(화면에 보여 주기만 한다 — 되돌리기 대상이 아니다)
   type: EntryType
   nth: number // 오늘 몇 번째인지
   origin: EntryOrigin
-  // 이미 있던 내 영상의 종목만 바꾼 경우: 되돌리면 삭제가 아니라 이 값으로 복원한다(영상 자체는 지우지 않는다)
-  updatedFrom: { stock: string; type: EntryType } | null
+  // 이미 있던 내 영상의 종목만 바꾼 경우: 되돌리면 삭제가 아니라 이 종목으로 복원한다(영상 자체는 지우지 않는다).
+  // 형식은 영상 길이로만 정해지고 이 흐름에서 바뀌지 않으므로 복원 대상에 넣지 않는다.
+  updatedFrom: { stock: string } | null
   // 새로 만든 영상을 되돌릴 때 서버가 "이 시각 이후에 만든 영상만" 지우도록 확인하는 기준(서버 시각)
   guard: string | null
+  // 이번 등록에서 종목명이 어디서 왔는지(서버가 알려 준 값) — 확인 화면에 안내 문구를 보여줄 때 쓴다.
+  stockSource: 'input' | 'kept' | 'title' | 'placeholder'
 }
 
 // 되돌리기 방식: 새로 만든 것을 확인했을 때만 삭제('delete'), 이미 있던 내 영상은 이전 값으로 복원('restore'),
@@ -197,7 +201,8 @@ export function undoReducer(state: UndoState, action: UndoAction): UndoState {
       return { ...state, phase: action.now < state.expiresAt ? 'open' : 'closed', error: action.error }
     case 'stock_fixed':
       if (!state.entry || state.entry.videoId !== action.videoId) return state
-      return { ...state, entry: { ...state.entry, stock: action.stock } }
+      // 목록의 「수정」으로 종목을 직접 고친 경우: 자동 추출 안내 문구는 더 이상 맞지 않으므로 끈다.
+      return { ...state, entry: { ...state.entry, stock: action.stock, stockSource: 'kept' } }
     case 'clear':
       return UNDO_INITIAL
     default:
@@ -211,11 +216,12 @@ export function undoSecondsLeft(expiresAt: number, now: number): number {
 }
 
 // ---- 로그인이 끊겼을 때 입력 내용을 잠시 보관(같은 탭 sessionStorage) ----
-export type Draft = { url: string; stock: string; note: string; type: EntryType }
+// 형식은 서버가 영상 길이로 정하고, 종목명도 서버가 제목에서 읽어내므로 여기서는 저장하지 않는다.
+export type Draft = { url: string; note: string }
 export const DRAFT_MAX_AGE_MS = 30 * 60 * 1000
 
 export function serializeDraft(draft: Draft, now: number): string {
-  return JSON.stringify({ v: 1, at: now, url: draft.url, stock: draft.stock, note: draft.note, type: draft.type })
+  return JSON.stringify({ v: 1, at: now, url: draft.url, note: draft.note })
 }
 
 export function parseDraft(raw: string | null | undefined, now: number): Draft | null {
@@ -226,10 +232,9 @@ export function parseDraft(raw: string | null | undefined, now: number): Draft |
     if (typeof o.at !== 'number' || now - o.at > DRAFT_MAX_AGE_MS || now < o.at - 60_000) return null
     const str = (x: unknown, max: number) => (typeof x === 'string' ? x.slice(0, max) : '')
     const url = str(o.url, 500)
-    const stock = str(o.stock, 100)
     const note = str(o.note, 300)
-    if (!url && !stock && !note) return null
-    return { url, stock, note, type: o.type === 'shortform' ? 'shortform' : 'longform' }
+    if (!url && !note) return null
+    return { url, note }
   } catch {
     return null
   }

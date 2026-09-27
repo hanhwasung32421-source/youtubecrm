@@ -2,10 +2,9 @@
 
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { MAX_BULK_ROWS, parseBulkText, removeLine, type ParsedLine } from '@/components/v4/register-bulk'
-import { registerVideo, type ContentType } from '@/components/v4/register-api'
-import { normalizeStockName } from '@/components/v4/register-utils'
+import { registerVideo, type ContentType, type StockNameSource } from '@/components/v4/register-api'
 import { findUrls, toBulkText } from '@/components/v4/paste-detect'
-import { FormatToggle } from '@/components/v4/ui'
+import { FormatPill, StockLabel } from '@/components/v4/ui'
 import { AUTH_COPY } from '@/components/v4/register-logic'
 import { loginHrefWithNext } from '@/components/v4/safe-next'
 import { LOGIN_HREF } from '@/lib/v4/menu'
@@ -13,44 +12,31 @@ import { LOGIN_HREF } from '@/lib/v4/menu'
 type RowStatus = 'pending' | 'running' | 'done' | 'failed'
 
 type Row = ParsedLine & {
-  stockEdited: boolean
-  formatOverride: ContentType | null
   status: RowStatus
   error: string
+  resultType: ContentType | null // 등록이 끝난 뒤 서버가 정한 실제 형식 (등록 전에는 알 수 없다)
+  resultStock: string | null // 등록이 끝난 뒤 서버가 정한 실제 종목명 (등록 전에는 알 수 없다)
+  resultStockSource: StockNameSource | null
 }
 
 const CONCURRENCY = 2 // 유튜브 호출 한도를 아끼려고 동시에 2개까지만
 
-const PLACEHOLDER = ['https://youtu.be/AbC123xyz 삼성전자', 'https://www.youtube.com/shorts/DeF456uvw 에코프로', 'https://youtu.be/GhI789rst   (종목을 안 적으면 위의 공통 종목이 쓰여요)'].join('\n')
+const PLACEHOLDER = ['https://youtu.be/AbC123xyz', 'https://www.youtube.com/shorts/DeF456uvw', 'https://youtu.be/GhI789rst'].join('\n')
 
 function shortUrl(url: string) {
   return url.replace(/^https?:\/\/(www\.|m\.)?/i, '')
 }
 
-function effectiveStock(row: Row, common: string) {
-  return normalizeStockName(row.stock) || normalizeStockName(common)
-}
-
-function effectiveFormat(row: Row, fallback: ContentType): ContentType {
-  if (row.formatOverride) return row.formatOverride
-  return row.shorts ? 'shortform' : fallback
-}
-
 export const BulkRegister = memo(function BulkRegister({
   seed,
-  defaultFormat,
-  stockChoices,
   existingIds,
   onFinished
 }: {
   seed?: { id: number; text: string } | null
-  defaultFormat: ContentType
-  stockChoices: string[]
   existingIds: Set<string>
-  onFinished: (result: { ids: string[]; stocks: string[] }) => void
+  onFinished: (result: { ids: string[] }) => void
 }) {
   const textRef = useRef<HTMLTextAreaElement>(null)
-  const tableRef = useRef<HTMLDivElement>(null)
   const rowsRef = useRef<Row[]>([])
   const runningRef = useRef(false)
 
@@ -58,8 +44,6 @@ export const BulkRegister = memo(function BulkRegister({
   const [rows, setRows] = useState<Row[]>([])
   const [dupes, setDupes] = useState(0)
   const [overflow, setOverflow] = useState(0)
-  const [commonStock, setCommonStock] = useState('')
-  const [format, setFormat] = useState<ContentType>(defaultFormat)
   const [running, setRunning] = useState(false)
   const [started, setStarted] = useState(false)
 
@@ -85,20 +69,7 @@ export const BulkRegister = memo(function BulkRegister({
     setDupes(parsed.duplicates)
     setOverflow(Math.max(0, parsed.rows.length - MAX_BULK_ROWS))
     const limited = parsed.rows.slice(0, MAX_BULK_ROWS)
-    setRows((prev) => {
-      const old = new Map(prev.map((r) => [r.key, r]))
-      return limited.map<Row>((p) => {
-        const before = p.valid ? old.get(p.key) : undefined
-        return {
-          ...p,
-          stock: before?.stockEdited ? before.stock : p.stock,
-          stockEdited: before?.stockEdited || false,
-          formatOverride: before?.formatOverride || null,
-          status: 'pending',
-          error: ''
-        }
-      })
-    })
+    setRows(limited.map<Row>((p) => ({ ...p, status: 'pending', error: '', resultType: null, resultStock: null, resultStockSource: null })))
   }
 
   // 하나씩 등록 화면에서 "여러 개 붙여넣기로 바꾸기"를 눌렀을 때 넘어온 글을 채운다.
@@ -113,7 +84,7 @@ export const BulkRegister = memo(function BulkRegister({
   // 여러 줄을 붙여넣을 때 제목 줄(주소가 없는 줄)은 빼고, 한 줄에 주소가 여러 개면 나눠서 넣는다.
   const onPasteText = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const pasted = e.clipboardData.getData('text')
-    if (!pasted || !/\r?\n/.test(pasted.trim()) && findUrls(pasted).length <= 1) return
+    if (!pasted || (!/\r?\n/.test(pasted.trim()) && findUrls(pasted).length <= 1)) return
     const cleaned = toBulkText(pasted)
     if (!cleaned || cleaned === pasted.trim()) return
     e.preventDefault()
@@ -150,13 +121,12 @@ export const BulkRegister = memo(function BulkRegister({
     window.setTimeout(() => textRef.current?.focus(), 0)
   }
 
-  const isReady = (row: Row) => row.valid && (row.status === 'pending' || row.status === 'failed') && Boolean(effectiveStock(row, commonStock))
+  const isReady = (row: Row) => row.valid && (row.status === 'pending' || row.status === 'failed')
 
   const validRows = rows.filter((r) => r.valid)
-  const readyRows = rows.filter((r) => r.valid && r.status === 'pending' && effectiveStock(r, commonStock))
+  const readyRows = rows.filter((r) => r.valid && r.status === 'pending')
   const failedRows = rows.filter((r) => r.status === 'failed')
   const doneRows = rows.filter((r) => r.status === 'done')
-  const needStockRows = rows.filter((r) => r.valid && r.status === 'pending' && !effectiveStock(r, commonStock))
   const invalidRows = rows.filter((r) => !r.valid)
 
   const run = async (target: 'ready' | 'failed') => {
@@ -164,23 +134,29 @@ export const BulkRegister = memo(function BulkRegister({
     const pool = rowsRef.current.filter((r) => isReady(r) && (target === 'failed' ? r.status === 'failed' : r.status === 'pending'))
     if (pool.length === 0) return
 
-    const jobs = pool.map((r) => ({ key: r.key, url: r.url, contentType: effectiveFormat(r, format), stockName: effectiveStock(r, commonStock) }))
+    const jobs = pool.map((r) => ({ key: r.key, url: r.url }))
     runningRef.current = true
     setRunning(true)
     setStarted(true)
     setRows((prev) => prev.map((r) => (jobs.some((j) => j.key === r.key) ? { ...r, status: 'pending', error: '' } : r)))
 
-    const registered: { id: string | null; stock: string }[] = []
+    const registeredIds: string[] = []
     const queue = [...jobs]
     const worker = async () => {
       while (queue.length > 0) {
         const job = queue.shift()
         if (!job) break
         patchRow(job.key, { status: 'running', error: '' })
-        const result = await registerVideo({ youtubeUrl: job.url, contentType: job.contentType, stockName: job.stockName })
+        const result = await registerVideo({ youtubeUrl: job.url })
         if (result.ok) {
-          registered.push({ id: result.video?.id || null, stock: job.stockName })
-          patchRow(job.key, { status: 'done', error: '' })
+          if (result.video?.id) registeredIds.push(result.video.id)
+          patchRow(job.key, {
+            status: 'done',
+            error: '',
+            resultType: result.video?.content_type ?? null,
+            resultStock: result.video?.stock_name ?? null,
+            resultStockSource: result.stockNameSource
+          })
         } else {
           patchRow(job.key, { status: 'failed', error: result.message })
         }
@@ -191,26 +167,18 @@ export const BulkRegister = memo(function BulkRegister({
     } finally {
       runningRef.current = false
       setRunning(false)
-      onFinished({ ids: registered.map((r) => r.id).filter((id): id is string => Boolean(id)), stocks: registered.map((r) => r.stock) })
+      onFinished({ ids: registeredIds })
     }
-  }
-
-  const focusNextStock = (from: HTMLInputElement) => {
-    const inputs = Array.from(tableRef.current?.querySelectorAll<HTMLInputElement>('input.v4-bulk-stock:not(:disabled)') || [])
-    const next = inputs[inputs.indexOf(from) + 1]
-    if (next) next.focus()
-    else if (readyRows.length > 0) (tableRef.current?.closest('.v4-bulk')?.querySelector('button.v4-reg-submit') as HTMLButtonElement | null)?.focus()
   }
 
   const finished = started && !running && validRows.length > 0
   const needsLogin = failedRows.some((r) => r.error === AUTH_COPY)
-  const allDone = finished && failedRows.length === 0 && needStockRows.length === 0
+  const allDone = finished && failedRows.length === 0
   const summaryParts = useMemo(() => {
     const parts: string[] = [`${validRows.length}개 중 ${doneRows.length}개 등록됨`]
     if (failedRows.length > 0) parts.push(`${failedRows.length}개 실패`)
-    if (needStockRows.length > 0) parts.push(`${needStockRows.length}개는 종목명이 없어 아직 등록 전`)
     return parts
-  }, [validRows.length, doneRows.length, failedRows.length, needStockRows.length])
+  }, [validRows.length, doneRows.length, failedRows.length])
 
   return (
     <div className="panel v4-reg-form v4-bulk">
@@ -246,45 +214,11 @@ export const BulkRegister = memo(function BulkRegister({
           />
           <div className="v4-hint-slot" id="v4-bulk-help">
             <span className="v4-hint">
-              한 줄에 <strong>주소 종목명</strong> 형태로 적어 주세요. 종목명을 빼면 아래 공통 종목이 쓰여요. 쇼츠 주소는 숏폼으로 자동 표시돼요.
+              한 줄에 유튜브 주소를 하나씩 붙여넣어 주세요. 종목명은 제목에서 자동으로 채워지고, 형식(롱폼/숏폼)은 영상 길이로 자동 정해져요.
             </span>
           </div>
         </div>
       ) : null}
-
-      {!started ? (
-        <div className="v4-bulk-common">
-          <div className="field v4-reg-stock">
-            <label className="label" htmlFor="v4-bulk-common">
-              공통 종목 (선택)
-            </label>
-            <input
-              id="v4-bulk-common"
-              className="input"
-              list="v4-bulk-stock-list"
-              autoComplete="off"
-              autoCorrect="off"
-              spellCheck={false}
-              placeholder="종목명을 안 적은 줄에 쓰여요"
-              value={commonStock}
-              disabled={running}
-              onChange={(e) => setCommonStock(e.target.value)}
-            />
-          </div>
-          <div className="field">
-            <span className="label" id="v4-bulk-format-label">
-              기본 형식
-            </span>
-            <FormatToggle value={format} onChange={setFormat} disabled={running} labelledBy="v4-bulk-format-label" />
-          </div>
-        </div>
-      ) : null}
-
-      <datalist id="v4-bulk-stock-list">
-        {stockChoices.map((name) => (
-          <option key={name} value={name} />
-        ))}
-      </datalist>
 
       {dupes > 0 || overflow > 0 || invalidRows.length > 0 ? (
         <div className="v4-bulk-notes">
@@ -295,7 +229,7 @@ export const BulkRegister = memo(function BulkRegister({
       ) : null}
 
       {rows.length > 0 ? (
-        <div className="v4-bulk-table-wrap" ref={tableRef}>
+        <div className="v4-bulk-table-wrap">
           <table className="v4-bulk-table">
             <caption className="v4-sr">붙여넣은 영상 미리보기</caption>
             <thead>
@@ -304,7 +238,7 @@ export const BulkRegister = memo(function BulkRegister({
                   #
                 </th>
                 <th scope="col">정리된 주소</th>
-                <th scope="col">종목명</th>
+                <th scope="col">종목</th>
                 <th scope="col">형식</th>
                 <th scope="col">상태</th>
                 <th scope="col">
@@ -314,11 +248,7 @@ export const BulkRegister = memo(function BulkRegister({
             </thead>
             <tbody>
               {rows.map((row, index) => {
-                const stock = effectiveStock(row, commonStock)
-                const editable = row.valid && !running && (row.status === 'pending' || row.status === 'failed')
-                const missingStock = row.valid && row.status === 'pending' && !stock
                 const alreadyRegistered = row.valid && row.status === 'pending' && existingIds.has(row.videoId)
-                const rowFormat = effectiveFormat(row, format)
                 return (
                   <tr key={row.key} className={`v4-bulk-row ${row.status} ${!row.valid ? 'invalid' : ''}`}>
                     <td className="num">{index + 1}</td>
@@ -326,43 +256,21 @@ export const BulkRegister = memo(function BulkRegister({
                       {shortUrl(row.url)}
                     </td>
                     <td className="stock">
-                      {row.valid ? (
-                        <input
-                          className="input v4-bulk-stock"
-                          list="v4-bulk-stock-list"
-                          autoComplete="off"
-                          spellCheck={false}
-                          aria-label={`${index + 1}번 종목명`}
-                          aria-invalid={missingStock ? true : undefined}
-                          placeholder={normalizeStockName(commonStock) || '종목명 입력'}
-                          value={row.stock}
-                          disabled={!editable}
-                          onChange={(e) => patchRow(row.key, { stock: e.target.value, stockEdited: true })}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' && !e.nativeEvent.isComposing && e.keyCode !== 229) {
-                              e.preventDefault()
-                              focusNextStock(e.currentTarget)
-                            }
-                          }}
-                        />
-                      ) : (
+                      {!row.valid ? (
                         <span className="muted small">-</span>
+                      ) : row.status === 'done' ? (
+                        <StockLabel name={row.resultStock} />
+                      ) : (
+                        <span className="muted small">자동</span>
                       )}
                     </td>
                     <td className="fmt">
-                      {row.valid ? (
-                        <select
-                          className="input v4-bulk-select"
-                          aria-label={`${index + 1}번 형식`}
-                          value={rowFormat}
-                          disabled={!editable}
-                          onChange={(e) => patchRow(row.key, { formatOverride: e.target.value as ContentType })}
-                        >
-                          <option value="longform">롱폼</option>
-                          <option value="shortform">숏폼</option>
-                        </select>
-                      ) : (
+                      {!row.valid ? (
                         <span className="muted small">-</span>
+                      ) : row.resultType ? (
+                        <FormatPill contentType={row.resultType} />
+                      ) : (
+                        <span className="muted small">자동</span>
                       )}
                     </td>
                     <td className="status">
@@ -376,10 +284,8 @@ export const BulkRegister = memo(function BulkRegister({
                         <span className="v4-bulk-badge bad" title={row.error}>
                           실패 · {row.error}
                         </span>
-                      ) : missingStock ? (
-                        <span className="v4-bulk-badge warn">종목명 필요</span>
                       ) : alreadyRegistered ? (
-                        <span className="v4-bulk-badge wait" title="이미 등록된 영상이에요. 등록하면 종목·형식이 지금 값으로 바뀝니다.">
+                        <span className="v4-bulk-badge wait" title="이미 등록된 영상이에요. 다시 등록하면 조회수만 새로 가져오고 종목은 그대로 둬요.">
                           대기 · 이미 등록됨
                         </span>
                       ) : (
@@ -424,10 +330,6 @@ export const BulkRegister = memo(function BulkRegister({
       ) : rows.length === 0 ? (
         <div className="v4-reg-status" role="status" aria-live="polite">
           <span className="muted">주소를 붙여넣으면 여기서 미리 확인한 뒤 한 번에 등록할 수 있어요. (Ctrl+Enter 로 바로 등록)</span>
-        </div>
-      ) : needStockRows.length > 0 ? (
-        <div className="v4-reg-status" role="status" aria-live="polite">
-          <span className="muted">종목명이 비어 있는 {needStockRows.length}개는 종목명을 채우면 함께 등록돼요.</span>
         </div>
       ) : null}
 

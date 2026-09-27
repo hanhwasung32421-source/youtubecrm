@@ -2,7 +2,7 @@
 // 이 파일은 ./youtube-url 과 ./paste-detect 만 가져온다.
 
 import { analyzePaste, type PasteInfo } from './paste-detect'
-import { describeUrlProblem, extractVideoId, isShortsUrl, isYoutubeUrl, normalizeUrl } from './youtube-url'
+import { describeUrlProblem, extractVideoId, isYoutubeUrl, normalizeUrl } from './youtube-url'
 
 export type ContentTypeValue = 'longform' | 'shortform'
 
@@ -45,24 +45,24 @@ export function readNextFromSearch(search: string): string | null {
 
 // ---- 로그인이 풀렸을 때 입력 임시 보관 -------------------------------------------------------
 
-export type RegisterDraft = { url: string; stock: string; type: ContentTypeValue; savedAt: number }
+export type RegisterDraft = { url: string; savedAt: number }
 
 export const DRAFT_MAX_AGE_MS = 30 * 60 * 1000
 
 export function serializeDraft(d: RegisterDraft): string {
-  return JSON.stringify({ url: d.url, stock: d.stock, type: d.type, savedAt: d.savedAt })
+  return JSON.stringify({ url: d.url, savedAt: d.savedAt })
 }
 
+// 예전에 저장된 글({stock}이 함께 들어 있던 시절 것)도 그대로 읽는다. url·savedAt 만 있으면 된다.
 export function parseDraft(raw: string | null | undefined, now: number, maxAgeMs = DRAFT_MAX_AGE_MS): RegisterDraft | null {
   if (!raw) return null
   try {
     const v = JSON.parse(raw) as Partial<RegisterDraft> | null
     if (!v || typeof v !== 'object') return null
-    if (typeof v.url !== 'string' || typeof v.stock !== 'string' || typeof v.savedAt !== 'number') return null
-    if (v.type !== 'longform' && v.type !== 'shortform') return null
+    if (typeof v.url !== 'string' || typeof v.savedAt !== 'number') return null
     if (now - v.savedAt > maxAgeMs || v.savedAt > now + 60_000) return null
-    if (!v.url.trim() && !v.stock.trim()) return null
-    return { url: v.url.slice(0, 500), stock: v.stock.slice(0, 100), type: v.type, savedAt: v.savedAt }
+    if (!v.url.trim()) return null
+    return { url: v.url.slice(0, 500), savedAt: v.savedAt }
   } catch {
     return null
   }
@@ -75,7 +75,7 @@ export type ClipboardOutcome =
   | { kind: 'none' } // 유튜브 주소가 없음
   | { kind: 'multi'; count: number } // 서로 다른 영상 여러 개
   | { kind: 'bad'; url: string; problem: string } // 유튜브 주소지만 영상이 아님(재생목록·채널 등)
-  | { kind: 'ok'; url: string; videoId: string; shorts: boolean; info: PasteInfo }
+  | { kind: 'ok'; url: string; videoId: string; info: PasteInfo }
 
 export function interpretClipboard(text: string): ClipboardOutcome {
   if (!text || !text.trim()) return { kind: 'empty' }
@@ -89,12 +89,12 @@ export function interpretClipboard(text: string): ClipboardOutcome {
   }
   const videoId = extractVideoId(url)
   if (!videoId) return { kind: 'bad', url, problem: describeUrlProblem(url) }
-  return { kind: 'ok', url, videoId, shorts: isShortsUrl(url), info }
+  return { kind: 'ok', url, videoId, info }
 }
 
-// "주소만 붙이면 바로 등록"을 지금 실행해도 되는가.
-export function shouldAutoSubmit(opts: { enabled: boolean; stock: string; outcome: ClipboardOutcome }): boolean {
-  return opts.enabled && opts.outcome.kind === 'ok' && opts.stock.trim().length > 0
+// "주소만 붙이면 바로 등록"을 지금 실행해도 되는가. 종목은 서버가 알아서 정하므로 주소가 새 영상인지만 본다.
+export function shouldAutoSubmit(opts: { enabled: boolean; outcome: ClipboardOutcome }): boolean {
+  return opts.enabled && opts.outcome.kind === 'ok'
 }
 
 // ---- 되돌리기(등록 직후 10초) ---------------------------------------------------------------
@@ -218,17 +218,16 @@ export function whenLabel(createdAt: string, now: Date = new Date()): string {
   return `${a.m}/${a.day} 등록`
 }
 
-// 미리 알려 줄 문구와 가능한 행동을 정한다.
+// 미리 알려 줄 문구와 가능한 행동을 정한다. 종목을 직접 적지 않으므로 "같다/다르다"를 가릴 일이 없다 —
+// 내가 이미 등록한 영상이면 다시 등록해 정보만 새로 갱신하고, 다른 팀원 것이면 등록 시 담당이 나로 바뀐다.
 export type DupDecision =
   | { action: 'register' } // 새 영상 → 그대로 등록
-  | { action: 'already-same' } // 내가 이미 같은 종목으로 등록함 → 할 일 없음
-  | { action: 'update-stock' } // 내가 이미 등록함, 종목이 다름 → 종목만 바꾸기
+  | { action: 'refresh' } // 내가 이미 등록함 → 다시 등록해 정보만 새로 갱신(종목은 그대로 둠)
   | { action: 'takeover' } // 다른 팀원이 등록한 영상 → 등록하면 담당이 나로 바뀜
 
-export function decideDuplicate(state: DupState, stock: string): DupDecision {
+export function decideDuplicate(state: DupState): DupDecision {
   if (state.status !== 'found') return { action: 'register' }
-  if (!state.info.mine) return { action: 'takeover' }
-  return state.info.stock.trim() === stock.trim() ? { action: 'already-same' } : { action: 'update-stock' }
+  return state.info.mine ? { action: 'refresh' } : { action: 'takeover' }
 }
 
 export function dupNotice(info: DupInfo, now: Date = new Date()): string {

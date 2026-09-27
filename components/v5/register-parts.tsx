@@ -67,7 +67,19 @@ export const KeyboardHint = memo(function KeyboardHint() {
 // ---- 결과 자리(높이 고정) --------------------------------------------------------------------
 
 export type Feedback =
-  | { kind: 'ok'; key: string; id: string; headline: string; detail: string; stock: string }
+  | {
+      kind: 'ok'
+      key: string
+      id: string
+      headline: string
+      stock: string
+      // stockMuted: 종목을 못 찾아 자리표시자('종목 미지정')로 등록됐다는 뜻 — 눈에 띄게 옅게 보여 준다.
+      stockMuted: boolean
+      typeLabel: string
+      videoTitle: string | null
+      // note: 종목명을 어떻게 정했는지 알려 주는 한 줄(예: 제목에서 자동으로 가져왔다는 안내). 없으면 조용히 넘어간다.
+      note?: string
+    }
   | { kind: 'info'; key: string; message: string }
   | { kind: 'error'; key: string; error: RegisterErrorInfo; loginHref?: string }
 
@@ -236,7 +248,14 @@ export function FeedbackSlot({
           ) : (
             <>
               <span>{feedback.headline}</span>
-              <span className="v5-confirm-detail">{feedback.detail}</span>
+              <span className="v5-confirm-detail">
+                <span className={feedback.stockMuted ? 'v5-stock-muted' : undefined} title={feedback.stockMuted ? '제목에서 종목명을 찾지 못했어요. 목록에서 고쳐 주세요.' : undefined}>
+                  {feedback.stock}
+                </span>
+                {` · ${feedback.typeLabel}`}
+                {feedback.videoTitle ? ` · ${feedback.videoTitle}` : ''}
+              </span>
+              {feedback.note ? <span className="v5-confirm-note">{feedback.note}</span> : null}
             </>
           )}
         </div>

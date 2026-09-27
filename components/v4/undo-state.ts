@@ -10,6 +10,8 @@
 // - 등록을 또 하면 새 영상으로 바뀐다. 이전 영상에 대한 늦은 응답(succeeded/failed)은 무시한다.
 // - "지우기"가 진짜 새 영상만 지우는지는 서버가 다시 확인한다 (app/api/v4/my-videos/[id] 의 ?onlyNew=1).
 
+import type { ContentType, StockNameSource } from '@/components/v4/register-api'
+
 export const UNDO_WINDOW_MS = 10_000
 
 // delete : 새로 등록한 영상 → 되돌리기 = 지우기
@@ -24,6 +26,8 @@ export type Recent = {
   url: string
   ordinal: number | null
   prevStock: string | null // restore 일 때 이전 종목
+  contentType: ContentType | null // 서버가 실제 영상 길이로 정한 형식 (화면에서 고르지 않는다)
+  stockSource: StockNameSource | null // 종목명을 어떻게 정했는지 (제목에서 자동으로 읽었는지 등) — 안내 문구용
 }
 
 export type UndoState =

@@ -3,7 +3,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Badge } from '@/components/v5/widget'
 import { parseDupResponse } from '@/components/v5/register-logic'
-import { CONTENT_TYPE_LABEL, TIMEOUT_MS, authedFetchJsonTimeout, parseBulkText, registerVideo, type ContentType } from '@/components/v5/register-utils'
+import {
+  CONTENT_TYPE_LABEL,
+  TIMEOUT_MS,
+  authedFetchJsonTimeout,
+  parseBulkText,
+  registerVideo,
+  type ContentType,
+  type StockNameSource
+} from '@/components/v5/register-utils'
 
 type RowStatus = 'idle' | 'queued' | 'running' | 'done' | 'failed'
 
@@ -11,11 +19,12 @@ type Row = {
   key: string
   raw: string
   videoId: string | null
-  stock: string // 줄에 적힌 종목. 비어 있으면 공통 종목을 쓴다.
-  type: ContentType
   problem: string
   status: RowStatus
   error: string
+  resultType: ContentType | null // 등록 후 서버가 실제 영상 길이로 정한 형식(등록 전에는 알 수 없다)
+  resultStock: string | null // 등록 후 서버가 정한 종목명(제목에서 읽거나 자리표시자로 정한다)
+  resultStockSource: StockNameSource | null
 }
 
 const CONCURRENCY = 2 // 유튜브 조회 한도를 아끼려고 동시에 2개까지만 보낸다.
@@ -35,17 +44,13 @@ async function ownerOtherThanMe(videoId: string): Promise<string | null> {
 }
 
 export function BulkRegister({
-  recentStocks,
   registeredIds,
   onRegistered,
-  onStocksUsed,
   onBusyChange,
   initialText
 }: {
-  recentStocks: string[]
   registeredIds: Set<string>
   onRegistered: (videoId: string) => void
-  onStocksUsed: (stocks: string[]) => void
   onBusyChange: (busy: boolean) => void
   // "한 개씩" 화면에서 넘어온 글. 있으면 열자마자 미리보기로 정리한다.
   initialText?: string
@@ -55,7 +60,6 @@ export function BulkRegister({
   const runRef = useRef<HTMLButtonElement | null>(null)
 
   const [text, setText] = useState('')
-  const [commonStock, setCommonStock] = useState('')
   const [rows, setRows] = useState<Row[] | null>(null)
   const [dupes, setDupes] = useState(0)
   const [running, setRunning] = useState(false)
@@ -95,14 +99,11 @@ export function BulkRegister({
     onBusyChange(running)
   }, [running, onBusyChange])
 
-  const common = commonStock.trim()
-  const effectiveStock = (r: Row) => r.stock.trim() || common
-
   const build = (source: string) => {
     const { lines, duplicates } = parseBulkText(source)
     if (lines.length === 0) {
       setRows(null)
-      setEmptyNote('붙여 넣은 내용이 없어요. 한 줄에 영상 하나씩 적어 주세요.')
+      setEmptyNote('붙여 넣은 내용이 없어요. 한 줄에 영상 주소 하나씩 적어 주세요.')
       return
     }
     setEmptyNote('')
@@ -112,19 +113,15 @@ export function BulkRegister({
         key: `${i}-${l.videoId || 'x'}`,
         raw: l.raw,
         videoId: l.videoId,
-        stock: l.stock,
-        type: l.type,
         problem: l.problem,
         status: 'idle' as RowStatus,
-        error: ''
+        error: '',
+        resultType: null,
+        resultStock: null,
+        resultStockSource: null
       }))
     )
-    // 종목이 비어 있는 첫 줄로 바로 이동한다.
-    window.setTimeout(() => {
-      const missing = rootRef.current?.querySelector<HTMLInputElement>('input[data-stock][data-missing="1"]')
-      if (missing) missing.focus()
-      else runRef.current?.focus()
-    }, 0)
+    window.setTimeout(() => runRef.current?.focus(), 0)
   }
 
   const patchRow = (key: string, patch: Partial<Row>) => setRows((prev) => (prev ? prev.map((r) => (r.key === key ? { ...r, ...patch } : r)) : prev))
@@ -141,17 +138,14 @@ export function BulkRegister({
     const done = list.filter((r) => r.status === 'done').length
     const failed = list.filter((r) => r.status === 'failed').length
     const active = list.filter((r) => r.status === 'queued' || r.status === 'running').length
-    const waitingReady = list.filter((r) => r.status === 'idle' && (r.stock.trim() || common)).length
-    const waitingMissing = list.filter((r) => r.status === 'idle' && !(r.stock.trim() || common)).length
+    const waiting = list.filter((r) => r.status === 'idle').length
     const problems = (rows || []).filter((r) => r.problem).length
-    return { total: list.length, done, failed, active, waitingReady, waitingMissing, problems }
-  }, [rows, common])
+    return { total: list.length, done, failed, active, waiting, problems }
+  }, [rows])
 
   const run = async (only: 'idle' | 'failed') => {
     if (!rows || running) return
-    const jobs = rows
-      .filter((r) => !r.problem && r.videoId && r.status === only && (r.stock.trim() || common))
-      .map((r) => ({ key: r.key, videoId: r.videoId as string, type: r.type, stock: r.stock.trim() || common }))
+    const jobs = rows.filter((r) => !r.problem && r.videoId && r.status === only).map((r) => ({ key: r.key, videoId: r.videoId as string }))
     if (jobs.length === 0) return
 
     setRunning(true)
@@ -159,7 +153,6 @@ export function BulkRegister({
     setRows((prev) => (prev ? prev.map((r) => (keys.has(r.key) ? { ...r, status: 'queued', error: '' } : r)) : prev))
 
     let cursor = 0
-    const usedStocks: string[] = []
     const worker = async () => {
       while (cursor < jobs.length) {
         const job = jobs[cursor]
@@ -170,10 +163,10 @@ export function BulkRegister({
           patchRow(job.key, { status: 'failed', error: `${other}이 이미 올린 영상이라 건너뛰었어요. 그대로 올리면 내 영상으로 바뀌니, ‘한 개씩 등록’에서 확인하고 올려 주세요.` })
           continue
         }
-        const res = await registerVideo({ videoId: job.videoId, contentType: job.type, stockName: job.stock })
+        // 종목명·형식은 화면에서 정하지 않는다. 서버가 (이미 고쳐 둔 값을 지키거나) 제목에서 읽거나 자리표시자로 정한다.
+        const res = await registerVideo({ videoId: job.videoId })
         if (res.ok) {
-          patchRow(job.key, { status: 'done', error: '' })
-          usedStocks.push(job.stock)
+          patchRow(job.key, { status: 'done', error: '', resultType: res.contentType, resultStock: res.stockName, resultStockSource: res.stockNameSource })
           if (aliveRef.current) onRegistered(res.id)
         } else {
           // 한 개가 실패해도 나머지는 계속 등록한다.
@@ -183,7 +176,6 @@ export function BulkRegister({
     }
     await Promise.all(Array.from({ length: Math.min(CONCURRENCY, jobs.length) }, () => worker()))
 
-    if (usedStocks.length) onStocksUsed(usedStocks)
     setRunning(false)
   }
 
@@ -195,42 +187,13 @@ export function BulkRegister({
     window.setTimeout(() => textRef.current?.focus(), 0)
   }
 
-  const focusNextStock = (from: HTMLInputElement) => {
-    const inputs = Array.from(rootRef.current?.querySelectorAll<HTMLInputElement>('input[data-stock]') || [])
-    const next = inputs[inputs.indexOf(from) + 1]
-    if (next) next.focus()
-    else runRef.current?.focus()
-  }
-
   const allFinished = rows !== null && stats.total > 0 && stats.done === stats.total
   const started = stats.done + stats.failed + stats.active > 0
 
   return (
     <div ref={rootRef} className="v5-bulk">
-      <div className="field">
-        <label className="label" htmlFor="v5-bulk-common">
-          공통 종목 (선택)
-        </label>
-        <input
-          id="v5-bulk-common"
-          className="input"
-          list="v5-bulk-stocks"
-          autoComplete="off"
-          spellCheck={false}
-          placeholder="종목이 없는 줄에 이 종목을 씁니다"
-          value={commonStock}
-          disabled={running}
-          onChange={(e) => setCommonStock(e.target.value)}
-        />
-        <datalist id="v5-bulk-stocks">
-          {recentStocks.map((s) => (
-            <option key={s} value={s} />
-          ))}
-        </datalist>
-      </div>
-
       {rows === null ? (
-        <div className="field" style={{ marginTop: 12 }}>
+        <div className="field">
           <label className="label" htmlFor="v5-bulk-text">
             영상 목록 붙여넣기
           </label>
@@ -242,7 +205,7 @@ export function BulkRegister({
             autoComplete="off"
             autoCapitalize="none"
             rows={6}
-            placeholder={'한 줄에 영상 하나씩, 주소 뒤에 종목을 적으세요.\nhttps://youtu.be/abcdefghijk 삼성전자\nhttps://www.youtube.com/shorts/lmnopqrstuv SK하이닉스'}
+            placeholder={'한 줄에 영상 주소 하나씩 붙여 넣으세요.\nhttps://youtu.be/abcdefghijk\nhttps://www.youtube.com/shorts/lmnopqrstuv'}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onPaste={() => {
@@ -259,7 +222,7 @@ export function BulkRegister({
             }}
           />
           <div className={`v5-hint ${emptyNote ? 'warn' : ''}`}>
-            {emptyNote || '주소만 붙여 넣어도 돼요. 종목이 없는 줄은 미리보기에서 채우거나 위의 공통 종목을 써요.'}
+            {emptyNote || '한 줄에 영상 주소 하나씩이면 돼요. 종목명은 제목에서 자동으로 채워져요.'}
           </div>
           <div>
             <button className="button" type="button" disabled={!text.trim()} onClick={() => build(text)}>
@@ -268,7 +231,7 @@ export function BulkRegister({
           </div>
         </div>
       ) : (
-        <div style={{ marginTop: 12 }}>
+        <div>
           {dupes > 0 ? <div className="v5-hint warn">붙여 넣은 목록에서 같은 영상 {dupes}개는 한 번만 등록되도록 뺐어요.</div> : null}
           {stats.problems > 0 ? (
             <div className="v5-hint warn">주소를 알아볼 수 없는 {stats.problems}줄은 등록되지 않아요. 빼거나 다시 붙여 넣어 주세요.</div>
@@ -280,7 +243,7 @@ export function BulkRegister({
                 <tr role="row">
                   <th role="columnheader" style={{ width: 34 }}>#</th>
                   <th role="columnheader">영상</th>
-                  <th role="columnheader" style={{ width: '32%' }}>종목</th>
+                  <th role="columnheader" style={{ width: 130 }}>종목</th>
                   <th role="columnheader" style={{ width: 96 }}>형식</th>
                   <th role="columnheader" style={{ width: 150 }}>상태</th>
                   <th role="columnheader" style={{ width: 56 }}>
@@ -290,8 +253,6 @@ export function BulkRegister({
               </thead>
               <tbody role="rowgroup">
                 {rows.map((r, i) => {
-                  const stock = effectiveStock(r)
-                  const locked = running || r.status === 'done' || r.status === 'queued' || r.status === 'running'
                   const already = r.videoId ? registeredIds.has(r.videoId) : false
                   return (
                     <tr key={r.key} role="row" className={`v5-bulk-row ${r.status === 'done' ? 'v5-row-done' : ''}`}>
@@ -304,46 +265,27 @@ export function BulkRegister({
                         ) : (
                           <span className="v5-bulk-url">youtube.com/watch?v={r.videoId}</span>
                         )}
-                        {already && r.status === 'idle' ? <div className="v5-bulk-note">이미 등록된 영상 · 다시 등록하면 정보가 새로 바뀌어요</div> : null}
+                        {already && r.status === 'idle' ? <div className="v5-bulk-note">이미 등록된 영상 · 다시 등록하면 정보가 새로 바뀌어요(종목은 그대로 둬요)</div> : null}
                       </td>
                       <td className="b-stock" role="cell">
                         {r.problem ? (
                           <span className="small muted">-</span>
+                        ) : r.resultStock ? (
+                          <span
+                            className={r.resultStockSource === 'placeholder' ? 'v5-stock-muted' : undefined}
+                            title={r.resultStockSource === 'placeholder' ? '제목에서 종목명을 찾지 못했어요. 목록에서 고쳐 주세요.' : undefined}
+                          >
+                            {r.resultStock}
+                          </span>
                         ) : (
-                          <input
-                            className="input v5-cell-input"
-                            spellCheck={false}
-                            enterKeyHint="next"
-                            data-stock=""
-                            data-missing={stock ? '0' : '1'}
-                            autoComplete="off"
-                            placeholder={common || '종목 입력'}
-                            value={r.stock}
-                            disabled={locked}
-                            aria-label={`${i + 1}번 영상 종목`}
-                            aria-invalid={!stock}
-                            onChange={(e) => patchRow(r.key, { stock: e.target.value })}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
-                                e.preventDefault()
-                                focusNextStock(e.currentTarget)
-                              }
-                            }}
-                          />
+                          <span className="small muted">-</span>
                         )}
                       </td>
                       <td className="b-type" role="cell">
-                        {r.problem ? null : (
-                          <select
-                            className="select v5-cell-input"
-                            value={r.type}
-                            disabled={locked}
-                            aria-label={`${i + 1}번 영상 형식`}
-                            onChange={(e) => patchRow(r.key, { type: e.target.value as ContentType })}
-                          >
-                            <option value="longform">{CONTENT_TYPE_LABEL.longform}</option>
-                            <option value="shortform">{CONTENT_TYPE_LABEL.shortform}</option>
-                          </select>
+                        {r.problem ? null : r.resultType ? (
+                          <span className="small">{CONTENT_TYPE_LABEL[r.resultType]}</span>
+                        ) : (
+                          <span className="small muted">-</span>
                         )}
                       </td>
                       <td className="b-status" role="cell">
@@ -358,8 +300,6 @@ export function BulkRegister({
                             <Badge tone="red">실패</Badge>
                             <div className="v5-bulk-err">{r.error}</div>
                           </>
-                        ) : !stock ? (
-                          <span className="v5-bulk-need">종목 입력 필요</span>
                         ) : (
                           <Badge tone="plain">대기</Badge>
                         )}
@@ -384,7 +324,7 @@ export function BulkRegister({
                 ? `${stats.total}개 중 ${stats.done}개 완료 · 등록하고 있어요. 이 화면을 닫지 마세요.`
                 : allFinished
                   ? `${stats.total}개 모두 등록됨`
-                  : `${stats.total}개 중 ${stats.done}개 등록됨${stats.failed ? ` · ${stats.failed}개 실패` : ''}${stats.waitingMissing ? ` · ${stats.waitingMissing}개는 종목 입력 필요` : ''}`}
+                  : `${stats.total}개 중 ${stats.done}개 등록됨${stats.failed ? ` · ${stats.failed}개 실패` : ''}`}
             </div>
           ) : null}
 
@@ -394,9 +334,9 @@ export function BulkRegister({
                 실패한 {stats.failed}개 다시 시도
               </button>
             ) : null}
-            {stats.waitingReady > 0 || !started ? (
-              <button ref={runRef} className={`button ${stats.failed > 0 ? 'secondary' : ''}`} type="button" disabled={running || stats.waitingReady === 0} onClick={() => void run('idle')}>
-                {running ? '등록 중...' : `${stats.waitingReady}개 등록`}
+            {stats.waiting > 0 || !started ? (
+              <button ref={runRef} className={`button ${stats.failed > 0 ? 'secondary' : ''}`} type="button" disabled={running || stats.waiting === 0} onClick={() => void run('idle')}>
+                {running ? '등록 중...' : `${stats.waiting}개 등록`}
               </button>
             ) : null}
             {started ? (
@@ -409,7 +349,6 @@ export function BulkRegister({
               </button>
             )}
           </div>
-          {stats.waitingMissing > 0 && !running ? <div className="v5-hint warn">종목이 비어 있는 {stats.waitingMissing}줄은 종목을 채워야 등록돼요.</div> : null}
         </div>
       )}
     </div>

@@ -4,6 +4,8 @@ import { memo, useEffect, useRef, useState } from 'react'
 import { secondsLeft, type UndoState } from '@/components/v4/undo-state'
 import { loginHrefWithNext } from '@/components/v4/safe-next'
 import { needsRelogin, type RegisterErrorKind } from '@/components/v4/register-logic'
+import { FormatPill, StockLabel } from '@/components/v4/ui'
+import type { StockNameSource } from '@/components/v4/register-api'
 import { LOGIN_HREF } from '@/lib/v4/menu'
 
 // 되돌리기 카운트다운용 현재 시각. 이 작은 칸만 다시 그려서, 카운트다운 동안 등록 화면 전체가 다시 그려지지 않게 한다.
@@ -19,6 +21,13 @@ function useNowWhile(active: boolean, syncKey: number) {
 }
 
 export type FeedbackStatus = { tone: 'ok' | 'error'; text: string; kind?: RegisterErrorKind; retry?: boolean } | null
+
+// 종목명을 서버가 어떻게 정했는지에 따른 짧은 안내 (없으면 조용히 넘어간다).
+function stockSourceNote(source: StockNameSource | null): string {
+  if (source === 'title') return '종목명을 제목에서 자동으로 가져왔어요.'
+  if (source === 'placeholder') return '제목에서 종목명을 찾지 못했어요. 아래 목록에서 종목명을 입력해 주세요.'
+  return ''
+}
 
 // 로그인이 풀렸을 때: 새 창에서 로그인하면 이 화면에 적어 둔 내용이 사라지지 않는다.
 function ReloginLink() {
@@ -88,7 +97,19 @@ export const RegisterFeedback = memo(function RegisterFeedback({
         <div className="v4-fb-line">
           <strong>{recent.mode === 'restore' ? '✓ 종목을 바꿨어요' : '✓ 방금 등록한 영상'}</strong>
           <span className="v4-fb-detail">
-            {recent.mode === 'restore' && recent.prevStock ? `${recent.prevStock} → ${recent.stock}` : recent.stock}
+            {recent.mode === 'restore' && recent.prevStock ? (
+              <>
+                {recent.prevStock} → <StockLabel name={recent.stock} />
+              </>
+            ) : (
+              <StockLabel name={recent.stock} />
+            )}
+            {recent.contentType ? (
+              <>
+                {' · '}
+                <FormatPill contentType={recent.contentType} />
+              </>
+            ) : null}
             {recent.title ? ` · ${recent.title}` : ''}
             {recent.ordinal ? ` · 오늘 ${recent.ordinal}번째` : ''}
           </span>
@@ -103,6 +124,7 @@ export const RegisterFeedback = memo(function RegisterFeedback({
             <span className="v4-fb-quiet">되돌리기 시간이 지났어요</span>
           ) : null}
         </div>
+        {recent.mode === 'delete' && stockSourceNote(recent.stockSource) ? <div className="v4-fb-quiet">{stockSourceNote(recent.stockSource)}</div> : null}
         {undo.error ? (
           <div className="v4-fb-err" role="alert">
             {undo.error} {needsRelogin(undo.error) ? <ReloginLink /> : null}

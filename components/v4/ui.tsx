@@ -86,6 +86,20 @@ export function FormatPill({ contentType }: { contentType: string }) {
   return <span className={`v4-format ${short ? 'short' : 'long'}`}>{short ? '숏폼' : '롱폼'}</span>
 }
 
+// 서버가 제목에서 종목명을 못 찾았을 때 채워 넣는 자리표시자. 목록에서 언제든 고칠 수 있다.
+export const STOCK_PLACEHOLDER = '종목 미지정'
+
+// 종목명 읽기 전용 표시: 자리표시자면 옅게 보여 주고, 손봐야 한다는 안내를 title 로 붙인다.
+export function StockLabel({ name }: { name: string | null | undefined }) {
+  const value = (name || '').trim() || STOCK_PLACEHOLDER
+  if (value !== STOCK_PLACEHOLDER) return <span>{value}</span>
+  return (
+    <span className="muted" title="영상 제목에서 종목명을 찾지 못했어요. 목록에서 종목명을 입력해 주세요.">
+      {value}
+    </span>
+  )
+}
+
 // 롱폼/숏폼 고르기: 두 칸짜리 스위치. 화면 낭독기에는 "눌림 상태"가 있는 버튼 두 개로 읽힌다.
 export function FormatToggle({
   value,

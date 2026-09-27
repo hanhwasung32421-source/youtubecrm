@@ -1,7 +1,7 @@
 // "여러 개 붙여넣기" 전용 해석 도우미 (React 의존 없음).
-// 한 줄에 `주소 [종목명]` — 종목이 앞에 오든 뒤에 오든, 쉼표·탭으로 구분되든 알아서 나눈다.
+// 한 줄에 유튜브 주소 하나. 종목명은 더 이상 줄에 적지 않는다 — 등록할 때 서버가 제목에서 자동으로 읽어낸다.
 
-import { extractVideoId, isShortsUrl, isYoutubeUrl, normalizeStockName, normalizeYoutubeUrl } from '@/components/v4/register-utils'
+import { extractVideoId, isYoutubeUrl, normalizeYoutubeUrl } from '@/components/v4/register-utils'
 import { diagnoseYoutubeUrl } from '@/components/v4/register-logic'
 
 export type ParsedLine = {
@@ -11,8 +11,6 @@ export type ParsedLine = {
   videoId: string
   valid: boolean
   problem: string // valid 가 아닐 때 이유 한 줄
-  stock: string // 그 줄에 같이 적은 종목명 (없으면 '')
-  shorts: boolean
 }
 
 export type ParsedBulk = { rows: ParsedLine[]; duplicates: number; lineCount: number }
@@ -21,50 +19,38 @@ const URL_IN_LINE = /(https?:\/\/[^\s]+)|((?:www\.|m\.)?(?:youtube\.com|youtu\.b
 
 export const MAX_BULK_ROWS = 60
 
-function cleanStock(rest: string) {
-  const text = rest
-    .replace(/[\t,;|]+/g, ' ')
-    .replace(/^[\s\-–—:·/]+|[\s\-–—:·/]+$/g, '')
-  return normalizeStockName(text)
-}
-
 function parseLine(line: string, lineNo: number): ParsedLine {
   const match = line.match(URL_IN_LINE)
-  if (!match || match.index === undefined) {
-    return { key: `line-${lineNo}`, lineNo, url: line.trim(), videoId: '', valid: false, problem: '주소를 찾지 못했어요', stock: '', shorts: false }
+  if (!match) {
+    return { key: `line-${lineNo}`, lineNo, url: line.trim(), videoId: '', valid: false, problem: '주소를 찾지 못했어요' }
   }
-  const raw = match[0]
-  const rest = `${line.slice(0, match.index)} ${line.slice(match.index + raw.length)}`
-  const url = normalizeYoutubeUrl(raw)
-  const stock = cleanStock(rest)
+  const url = normalizeYoutubeUrl(match[0])
   if (!isYoutubeUrl(url)) {
-    return { key: `line-${lineNo}`, lineNo, url, videoId: '', valid: false, problem: '유튜브 주소가 아니에요', stock, shorts: false }
+    return { key: `line-${lineNo}`, lineNo, url, videoId: '', valid: false, problem: '유튜브 주소가 아니에요' }
   }
   const videoId = extractVideoId(url)
   if (!videoId) {
     const kind = diagnoseYoutubeUrl(url)
     const problem = !kind.ok && kind.kind === 'playlist' ? '재생목록 주소예요 (영상 주소를 넣어 주세요)' : !kind.ok && kind.kind === 'channel' ? '채널 주소예요 (영상 주소를 넣어 주세요)' : '영상 주소가 아니에요'
-    return { key: `line-${lineNo}`, lineNo, url, videoId: '', valid: false, problem, stock, shorts: false }
+    return { key: `line-${lineNo}`, lineNo, url, videoId: '', valid: false, problem }
   }
-  return { key: videoId, lineNo, url, videoId, valid: true, problem: '', stock, shorts: isShortsUrl(url) }
+  return { key: videoId, lineNo, url, videoId, valid: true, problem: '' }
 }
 
 export function parseBulkText(text: string): ParsedBulk {
   const lines = text.split(/\r?\n/)
   const rows: ParsedLine[] = []
-  const seen = new Map<string, ParsedLine>()
+  const seen = new Set<string>()
   let duplicates = 0
   lines.forEach((line, index) => {
     if (!line.trim()) return
     const parsed = parseLine(line, index)
     if (parsed.valid) {
-      const first = seen.get(parsed.videoId)
-      if (first) {
+      if (seen.has(parsed.videoId)) {
         duplicates += 1
-        if (!first.stock && parsed.stock) first.stock = parsed.stock // 뒤 줄에만 종목이 있으면 살려 둔다
         return
       }
-      seen.set(parsed.videoId, parsed)
+      seen.add(parsed.videoId)
     }
     rows.push(parsed)
   })

@@ -7,11 +7,18 @@ import { normalizeYoutubeUrl } from './youtube-url'
 
 export type ContentType = 'longform' | 'shortform'
 
+// 종목명이 어디서 왔는지: 직접 입력 / 다시 등록해도 전에 고쳐 둔 값을 지킴 / 제목에서 읽어냄 / 못 찾아서 자리표시자
+export type StockNameSource = 'input' | 'kept' | 'title' | 'placeholder'
+
 export const NETWORK_MESSAGE = '인터넷 연결을 확인해 주세요.'
 export const RETRY_MESSAGE = '잠시 후 다시 시도해 주세요.'
 
 // message = 화면 한가운데 안내(무슨 일 + 할 일), short = 여러 개 등록 표의 좁은 칸용 한 줄
-export type RegisterResult = { ok: true; id: string | null } | { ok: false; message: string; short: string; failure: Failure }
+// contentType = 서버가 실제 영상 길이로 정한 형식(요청에 보낸 값과 다를 수 있다)
+// stockName·stockNameSource = 서버가 실제로 저장한 종목명과, 그 값이 어디서 왔는지
+export type RegisterResult =
+  | { ok: true; id: string | null; contentType: ContentType; stockName: string; stockNameSource: StockNameSource }
+  | { ok: false; message: string; short: string; failure: Failure }
 
 const PROBE_CODES: ProbeCode[] = ['not-found', 'quota', 'key', 'no-key', 'unknown']
 
@@ -28,27 +35,45 @@ export async function probeVideo(url: string): Promise<ProbeCode | null> {
 
 export async function registerVideo(input: {
   url: string
-  contentType: ContentType
-  stockName: string
+  // 형식은 서버가 실제 영상 길이로 정한다. 여기 보내는 값은 길이를 알 수 없을 때만 쓰이는 예비값이라 생략해도 된다.
+  contentType?: ContentType
+  // 종목명도 이제 필수가 아니다. 비워 두면 서버가 제목에서 읽어내거나(안 되면 자리표시자로) 채운다.
+  stockName?: string
   contentCategory?: string
 }): Promise<RegisterResult> {
   const normalized = normalizeYoutubeUrl(input.url)
   const url = normalized.ok ? normalized.url : input.url
   const fail = (failure: Failure): RegisterResult => ({ ok: false, message: failure.message, short: failure.short, failure })
 
-  let response: AuthedJsonResult<{ error?: string; video?: { id?: string } }>
+  let response: AuthedJsonResult<{
+    error?: string
+    video?: { id?: string; content_type?: ContentType; stock_name?: string | null }
+    stockNameSource?: StockNameSource
+  }>
   try {
-    response = await authedPostJson<{ error?: string; video?: { id?: string } }>('/api/videos/create', {
+    response = await authedPostJson<{
+      error?: string
+      video?: { id?: string; content_type?: ContentType; stock_name?: string | null }
+      stockNameSource?: StockNameSource
+    }>('/api/videos/create', {
       youtubeUrl: url,
       contentType: input.contentType,
-      stockName: input.stockName,
+      stockName: input.stockName?.trim() || undefined,
       contentCategory: input.contentCategory?.trim() || undefined
     })
   } catch {
     return fail(classifyRegisterFailure({ status: 0, network: true }))
   }
 
-  if (response.ok) return { ok: true, id: response.data?.video?.id || null }
+  if (response.ok) {
+    return {
+      ok: true,
+      id: response.data?.video?.id || null,
+      contentType: response.data?.video?.content_type || 'longform',
+      stockName: response.data?.video?.stock_name || '',
+      stockNameSource: response.data?.stockNameSource || 'placeholder'
+    }
+  }
 
   const raw = response.data?.error
   const probe = isVagueServerFailure(response.status, raw) ? await probeVideo(url) : null

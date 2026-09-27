@@ -28,8 +28,11 @@ function toWatchUrl(url: string) {
   return id ? `https://www.youtube.com/watch?v=${id}` : url
 }
 
+// 종목명을 어떻게 정했는지: 직접 적어 보냄 / 이미 있던(고쳐 둔) 값을 지킴 / 제목에서 읽어냄 / 못 찾아서 자리표시자
+export type StockNameSource = 'input' | 'kept' | 'title' | 'placeholder'
+
 export type RegisterResult =
-  | { ok: true; video: { id?: string; title?: string | null } | null }
+  | { ok: true; video: { id?: string; title?: string | null; content_type?: ContentType | null; stock_name?: string | null } | null; stockNameSource: StockNameSource | null }
   | { ok: false; message: string; kind: RegisterErrorKind; retry: boolean }
 
 // 로그인이 풀렸는지 가볍게 확인한다 (V4 API 는 진짜 401 을 돌려준다).
@@ -43,12 +46,19 @@ async function isSessionExpired(): Promise<boolean> {
   }
 }
 
-export async function registerVideo(input: { youtubeUrl: string; contentType: ContentType; stockName: string; contentCategory?: string | null }): Promise<RegisterResult> {
+// contentType 은 이제 서버가 실제 영상 길이로 정한다. 화면에서는 보내지 않아도 되고(형식을 고르는 화면이 없다),
+// 보내더라도 서버는 길이를 알 때 항상 무시한다. 그래서 이 자리는 예비용으로만 남겨 둔다.
+// stockName 도 필수가 아니다: 비워 두면 서버가 제목에서 자동으로 읽어내거나(안 되면 자리표시자로) 채운다.
+export async function registerVideo(input: { youtubeUrl: string; contentType?: ContentType; stockName?: string; contentCategory?: string | null }): Promise<RegisterResult> {
   try {
-    const { ok, status, data } = await authedPostJson<{ error?: string; video?: { id?: string; title?: string | null } }>('/api/videos/create', {
+    const { ok, status, data } = await authedPostJson<{
+      error?: string
+      video?: { id?: string; title?: string | null; content_type?: ContentType | null; stock_name?: string | null }
+      stockNameSource?: StockNameSource
+    }>('/api/videos/create', {
       youtubeUrl: toWatchUrl(input.youtubeUrl),
       contentType: input.contentType,
-      stockName: input.stockName,
+      stockName: input.stockName || undefined,
       contentCategory: input.contentCategory ?? null
     })
     if (!ok) {
@@ -62,7 +72,7 @@ export async function registerVideo(input: { youtubeUrl: string; contentType: Co
       }
       return { ok: false, message: copy.message, kind: copy.kind, retry: copy.retry }
     }
-    return { ok: true, video: data?.video || null }
+    return { ok: true, video: data?.video || null, stockNameSource: data?.stockNameSource ?? null }
   } catch (e) {
     if (isNetworkError(e)) return { ok: false, message: NETWORK_COPY, kind: 'network', retry: true }
     const copy = registerErrorCopy(500)

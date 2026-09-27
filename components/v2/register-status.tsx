@@ -1,9 +1,7 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
 import { CONTENT_TYPE_LABELS } from '@/lib/v2/types'
 import { UNDO_WINDOW_MS, undoKindOf, undoSecondsLeft, type UndoState } from './register-flow'
-import { isImeKey } from './register-utils'
 
 export type RegisterErrorView = { text: string; retry: boolean; relogin: boolean }
 
@@ -14,65 +12,14 @@ type Props = {
   now: number
   saving: boolean
   loginHref: string
-  stockListId: string
   onRetry: () => void
   onUndo: () => void
-  onFixStock: (next: string) => Promise<string>
   onBeforeRelogin: () => void
-  onFocusUrl: () => void
 }
 
 // 등록 결과가 나오는 "고정 높이" 칸. 성공·오류·안내가 바뀌어도 아래 화면이 위아래로 출렁이지 않는다.
-export function RegisterStatus({ error, info, undo, now, saving, loginHref, stockListId, onRetry, onUndo, onFixStock, onBeforeRelogin, onFocusUrl }: Props) {
+export function RegisterStatus({ error, info, undo, now, saving, loginHref, onRetry, onUndo, onBeforeRelogin }: Props) {
   const entry = undo.entry
-  const [fixing, setFixing] = useState(false)
-  const [fixValue, setFixValue] = useState('')
-  const [fixBusy, setFixBusy] = useState(false)
-  const [fixError, setFixError] = useState('')
-  const fixRef = useRef<HTMLInputElement | null>(null)
-  const alive = useRef(true)
-
-  useEffect(() => {
-    alive.current = true
-    return () => {
-      alive.current = false
-    }
-  }, [])
-
-  // 다음 영상을 등록해 "방금 등록한 영상"이 바뀌면 열려 있던 종목 고치기 칸은 닫는다.
-  const entryId = entry?.videoId
-  useEffect(() => {
-    setFixing(false)
-    setFixError('')
-  }, [entryId])
-
-  useEffect(() => {
-    if (fixing) {
-      fixRef.current?.focus()
-      fixRef.current?.select()
-    }
-  }, [fixing])
-
-  const closeFix = (returnFocus: boolean) => {
-    setFixing(false)
-    setFixError('')
-    if (returnFocus) onFocusUrl()
-  }
-
-  const saveFix = async () => {
-    if (fixBusy) return
-    setFixBusy(true)
-    setFixError('')
-    const problem = await onFixStock(fixValue)
-    if (!alive.current) return
-    setFixBusy(false)
-    if (problem) {
-      setFixError(problem)
-      fixRef.current?.focus()
-      return
-    }
-    closeFix(true)
-  }
 
   const secondsLeft = undoSecondsLeft(undo.expiresAt, now)
   const kind = entry ? undoKindOf(entry) : 'none'
@@ -100,7 +47,15 @@ export function RegisterStatus({ error, info, undo, now, saving, loginHref, stoc
   } else if (info) {
     body = <div className="v2-hint quiet v2-slot-info">{info}</div>
   } else if (entry) {
-    const typeLabel = CONTENT_TYPE_LABELS[entry.type]
+    // 형식은 서버가 실제 영상 길이로 정한 값을 그대로 보여 준다(화면에서 고르지 않는다).
+    const typeLabel = `형식: ${CONTENT_TYPE_LABELS[entry.type]} (자동)`
+    // 종목명이 어디서 왔는지(서버가 알려 준 값)에 따라 안내 문구를 다르게 보여 준다.
+    const stockNote =
+      entry.stockSource === 'title'
+        ? `종목명을 제목에서 자동으로 가져왔어요: ${entry.stock}`
+        : entry.stockSource === 'placeholder'
+          ? '제목에서 종목명을 찾지 못했어요. 목록에서 나중에 입력해 주세요.'
+          : null
     body = (
       <div className="v2-last">
         <div className="v2-confirm v2-last-line">
@@ -132,89 +87,36 @@ export function RegisterStatus({ error, info, undo, now, saving, loginHref, stoc
           )}
         </div>
 
-        {fixing ? (
-          <div className="v2-slot-actions v2-fix-form" role="group" aria-label="종목 고치기">
-            <label className="v2-sr-only" htmlFor="v2-fix-stock">
-              방금 등록한 영상의 종목명
-            </label>
-            <input
-              id="v2-fix-stock"
-              ref={fixRef}
-              className="input compact v2-fix-input"
-              autoComplete="off"
-              spellCheck={false}
-              list={stockListId}
-              value={fixValue}
-              disabled={fixBusy}
-              onChange={(e) => {
-                setFixValue(e.target.value)
-                setFixError('')
-              }}
-              onKeyDown={(e) => {
-                if (isImeKey(e)) return
-                // 이 칸은 등록 폼 안에 있으므로 Enter가 등록 폼으로 번지지 않게 여기서 멈춘다
-                if (e.key === 'Enter') {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  void saveFix()
-                } else if (e.key === 'Escape') {
-                  e.preventDefault()
-                  e.nativeEvent.stopPropagation()
-                  closeFix(true)
-                }
-              }}
-            />
-            <button type="button" className="button xs" disabled={fixBusy} onClick={() => void saveFix()}>
-              {fixBusy ? '저장 중…' : '종목 저장'}
-            </button>
-            <button type="button" className="button secondary xs" disabled={fixBusy} onClick={() => closeFix(true)}>
-              취소
-            </button>
-            {fixError ? (
-              <span className="v2-hint" role="alert">
-                {fixError}
-              </span>
-            ) : null}
+        {stockNote ? (
+          <div className="v2-hint quiet" role="status">
+            {stockNote}
           </div>
-        ) : (
-          <div className="v2-slot-actions">
-            {undo.phase === 'open' || undo.phase === 'busy' ? (
-              <button type="button" className="button secondary xs v2-undo-btn" disabled={undo.phase === 'busy'} onClick={onUndo}>
-                <span className="v2-undo-fill" key={entry.videoId + ':' + undo.expiresAt} style={{ animationDuration: `${UNDO_WINDOW_MS}ms` }} aria-hidden="true" />
-                <span className="v2-undo-text">
-                  {undo.phase === 'busy' ? '되돌리는 중…' : undoLabel}
-                  {undo.phase === 'open' ? <span aria-hidden="true"> · {secondsLeft}초</span> : null}
-                </span>
-              </button>
-            ) : (
-              <span className="v2-hint quiet v2-undo-gone">
-                {kind === 'none'
-                  ? entry.origin === 'existing'
-                    ? '이미 등록돼 있던 영상이라 새로 만들어진 것은 없어요. 그래서 되돌리기는 없고, 종목만 「종목 고치기」로 바꿀 수 있어요.'
-                    : '새 영상인지 확인하지 못해서 되돌리기는 열지 않았어요. 종목은 「종목 고치기」로 바꿀 수 있어요.'
-                  : '되돌리기 시간이 지났어요. 잘못 등록했다면 아래 목록에서 「삭제」를 눌러 주세요.'}
+        ) : null}
+
+        <div className="v2-slot-actions">
+          {undo.phase === 'open' || undo.phase === 'busy' ? (
+            <button type="button" className="button secondary xs v2-undo-btn" disabled={undo.phase === 'busy'} onClick={onUndo}>
+              <span className="v2-undo-fill" key={entry.videoId + ':' + undo.expiresAt} style={{ animationDuration: `${UNDO_WINDOW_MS}ms` }} aria-hidden="true" />
+              <span className="v2-undo-text">
+                {undo.phase === 'busy' ? '되돌리는 중…' : undoLabel}
+                {undo.phase === 'open' ? <span aria-hidden="true"> · {secondsLeft}초</span> : null}
               </span>
-            )}
-            {undo.phase !== 'busy' ? (
-              <button
-                type="button"
-                className="v2-text-btn"
-                onClick={() => {
-                  setFixValue(entry.stock)
-                  setFixError('')
-                  setFixing(true)
-                }}
-              >
-                종목 고치기
-              </button>
-            ) : null}
-            {undo.error ? (
-              <span className="v2-hint" role="alert">
-                {undo.error}
-              </span>
-            ) : null}
-          </div>
-        )}
+            </button>
+          ) : (
+            <span className="v2-hint quiet v2-undo-gone">
+              {kind === 'none'
+                ? entry.origin === 'existing'
+                  ? '이미 등록돼 있던 영상이라 새로 만들어진 것은 없어요. 종목을 고치려면 아래 목록에서 「수정」을 눌러 주세요.'
+                  : '새 영상인지 확인하지 못해서 되돌리기는 열지 않았어요. 종목을 고치려면 아래 목록에서 「수정」을 눌러 주세요.'
+                : '되돌리기 시간이 지났어요. 잘못 등록했다면 아래 목록에서 「삭제」를 눌러 주세요.'}
+            </span>
+          )}
+          {undo.error ? (
+            <span className="v2-hint" role="alert">
+              {undo.error}
+            </span>
+          ) : null}
+        </div>
       </div>
     )
   } else {

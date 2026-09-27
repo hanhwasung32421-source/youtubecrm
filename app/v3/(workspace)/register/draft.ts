@@ -1,8 +1,9 @@
-// 쓰던 내용(주소·종목·메모)을 이 탭에 잠깐 남겨 둔다. 로그인이 끊겨 로그인 화면에 다녀오거나,
+// 쓰던 내용(주소·메모)을 이 탭에 잠깐 남겨 둔다. 로그인이 끊겨 로그인 화면에 다녀오거나,
 // 실수로 새로고침해도 입력하던 것이 사라지지 않게 하려는 것. 탭을 닫으면 사라지고(sessionStorage),
 // 6시간이 지난 것은 쓰지 않는다. 비밀번호 같은 민감한 값은 여기에 넣지 않는다.
+// (종목명은 이제 입력 칸이 없다 — 서버가 제목에서 읽어내므로 여기에 남겨 둘 값이 없다.)
 
-export type Draft = { url: string; stock: string; memo: string; at: number }
+export type Draft = { url: string; memo: string; at: number }
 
 export const DRAFT_KEY = 'v3.register.draft'
 export const DRAFT_MAX_AGE_MS = 6 * 60 * 60 * 1000
@@ -22,8 +23,8 @@ export function parseDraft(raw: string | null | undefined, now: number): Draft |
   const obj = value as Record<string, unknown>
   const at = typeof obj.at === 'number' ? obj.at : NaN
   if (!Number.isFinite(at) || now - at > DRAFT_MAX_AGE_MS || at > now + 60_000) return null
-  const draft: Draft = { url: asText(obj.url, 500), stock: asText(obj.stock, 60), memo: asText(obj.memo, 100), at }
-  return draft.url || draft.stock || draft.memo ? draft : null
+  const draft: Draft = { url: asText(obj.url, 500), memo: asText(obj.memo, 100), at }
+  return draft.url || draft.memo ? draft : null
 }
 
 export function readDraft(now: number = Date.now()): Draft | null {
@@ -34,9 +35,9 @@ export function readDraft(now: number = Date.now()): Draft | null {
   }
 }
 
-export function writeDraft(input: { url: string; stock: string; memo: string }, now: number = Date.now()) {
+export function writeDraft(input: { url: string; memo: string }, now: number = Date.now()) {
   try {
-    if (!input.url && !input.stock && !input.memo) {
+    if (!input.url && !input.memo) {
       window.sessionStorage.removeItem(DRAFT_KEY)
       return
     }

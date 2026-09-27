@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { PageHeader } from '@/components/app-shell'
 import { Toast, useToast } from '@/components/toast'
-import { authedFetchJson, authedPostJson } from '@/lib/session/authed-fetch'
+import { authedFetchJson, authedPatchJson, authedPostJson } from '@/lib/session/authed-fetch'
 
 type VideoItem = {
   id: string
@@ -19,13 +19,14 @@ type VideoItem = {
 export default function CreatorVideosPage() {
   const [items, setItems] = useState<VideoItem[]>([])
   const [youtubeUrl, setYoutubeUrl] = useState('')
-  const [contentType, setContentType] = useState<'longform' | 'shortform'>('longform')
-  const [stockName, setStockName] = useState('')
   const [contentCategory, setContentCategory] = useState('')
   const { toast, showSuccess, showError } = useToast()
   const [loading, setLoading] = useState(false)
   const [page, setPage] = useState(1)
   const [pagination, setPagination] = useState({ pageSize: 20, totalCount: 0 })
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editStock, setEditStock] = useState('')
+  const [savingEdit, setSavingEdit] = useState(false)
 
   const loadMyVideos = async (targetPage = page) => {
     const { ok, data } = await authedFetchJson<{
@@ -73,17 +74,11 @@ export default function CreatorVideosPage() {
       showError('유튜브 영상 주소 형식이 아닙니다. (youtube.com 또는 youtu.be 링크)')
       return
     }
-    if (!stockName.trim()) {
-      showError('주요 종목명을 입력해 주세요.')
-      return
-    }
 
     setLoading(true)
     try {
-      const { ok, data } = await authedPostJson<{ error?: string }>('/api/videos/create', {
+      const { ok, data } = await authedPostJson<{ error?: string; video?: VideoItem; stockNameSource?: string }>('/api/videos/create', {
         youtubeUrl,
-        contentType,
-        stockName,
         contentCategory: contentCategory || null
       })
       if (!ok) {
@@ -91,14 +86,63 @@ export default function CreatorVideosPage() {
         return
       }
 
-      showSuccess('영상이 CRM에 저장되었습니다. 업로드 날짜와 기본 통계도 자동 반영되었습니다.')
+      const savedType = data.video?.content_type
+      const savedStock = data.video?.stock_name
+      const typeText = savedType ? (savedType === 'longform' ? '롱폼' : '숏폼') : null
+      const stockText =
+        data.stockNameSource === 'placeholder'
+          ? '제목에서 종목명을 찾지 못해 "종목 미지정"으로 저장했습니다. 목록에서 고쳐 주세요.'
+          : savedStock
+            ? `종목명은 "${savedStock}"으로 자동 저장했습니다.`
+            : null
+
+      showSuccess(
+        [
+          '영상이 CRM에 저장되었습니다.',
+          typeText ? `형식은 영상 길이를 보고 "${typeText}"으로 정했습니다.` : null,
+          stockText
+        ]
+          .filter(Boolean)
+          .join(' ')
+      )
       setYoutubeUrl('')
-      setContentType('longform')
-      setStockName('')
       setContentCategory('')
       await loadMyVideos()
     } finally {
       setLoading(false)
+    }
+  }
+
+  const startEdit = (item: VideoItem) => {
+    setEditingId(item.id)
+    setEditStock(item.stock_name)
+  }
+
+  const cancelEdit = () => {
+    setEditingId(null)
+    setEditStock('')
+  }
+
+  const saveEdit = async (id: string) => {
+    const next = editStock.trim()
+    if (!next) {
+      showError('종목명을 입력해 주세요.')
+      return
+    }
+    setSavingEdit(true)
+    try {
+      const { ok, data } = await authedPatchJson<{ error?: string; video?: VideoItem }>(`/api/videos/${id}`, {
+        stock_name: next
+      })
+      if (!ok) {
+        showError(data?.error || '종목명 수정 실패')
+        return
+      }
+      setItems((prev) => prev.map((it) => (it.id === id ? { ...it, stock_name: data.video?.stock_name ?? next } : it)))
+      showSuccess('종목명을 저장했습니다.')
+      cancelEdit()
+    } finally {
+      setSavingEdit(false)
     }
   }
 
@@ -124,17 +168,10 @@ export default function CreatorVideosPage() {
               <label className="label">유튜브 영상 주소 *</label>
               <input className="input" value={youtubeUrl} onChange={(e) => setYoutubeUrl(e.target.value)} />
             </div>
-            <div className="field">
-              <label className="label">콘텐츠 형식 *</label>
-              <select className="select" value={contentType} onChange={(e) => setContentType(e.target.value as 'longform' | 'shortform')}>
-                <option value="longform">롱폼</option>
-                <option value="shortform">숏폼</option>
-              </select>
-            </div>
-            <div className="field">
-              <label className="label">주요 종목명 *</label>
-              <input className="input" value={stockName} onChange={(e) => setStockName(e.target.value)} />
-            </div>
+            <p className="small muted">콘텐츠 형식(롱폼/숏폼)은 영상 길이를 보고 자동으로 정해집니다. 10분 미만이면 숏폼, 10분 이상이면 롱폼입니다.</p>
+            <p className="small muted">
+              주요 종목명은 영상 제목(예: "[삼성전자 주가전망]")에서 자동으로 읽어옵니다. 제목이 이 형식이 아니면 일단 등록되고, 아래 목록에서 나중에 종목명을 입력할 수 있습니다.
+            </p>
             <div className="field">
               <label className="label">비고</label>
               <input className="input" value={contentCategory} onChange={(e) => setContentCategory(e.target.value)} />
@@ -156,9 +193,44 @@ export default function CreatorVideosPage() {
                 items.map((item) => (
                   <div className="list-item" key={item.id}>
                     <div>{item.title || '제목 없음'}</div>
-                    <div className="small muted">
-                      {item.stock_name} · {item.content_type === 'longform' ? '롱폼' : '숏폼'}
-                    </div>
+                    {editingId === item.id ? (
+                      <div className="toolbar" style={{ marginTop: 4 }}>
+                        <input
+                          className="input"
+                          style={{ maxWidth: 200 }}
+                          value={editStock}
+                          onChange={(e) => setEditStock(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') void saveEdit(item.id)
+                            if (e.key === 'Escape') cancelEdit()
+                          }}
+                          autoFocus
+                        />
+                        <button className="button" disabled={savingEdit} onClick={() => void saveEdit(item.id)}>
+                          저장
+                        </button>
+                        <button className="button secondary" disabled={savingEdit} onClick={cancelEdit}>
+                          취소
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="small muted">
+                        {item.stock_name === '종목 미지정' ? (
+                          <span title="영상 제목에서 종목명을 찾지 못했습니다.">종목 미지정</span>
+                        ) : (
+                          item.stock_name
+                        )}{' '}
+                        · {item.content_type === 'longform' ? '롱폼' : '숏폼'} ·{' '}
+                        <button
+                          type="button"
+                          className="small"
+                          style={{ textDecoration: 'underline', background: 'none', border: 0, padding: 0, cursor: 'pointer' }}
+                          onClick={() => startEdit(item)}
+                        >
+                          종목명 수정
+                        </button>
+                      </div>
+                    )}
                     <div className="small muted">
                       조회수 {item.view_count ?? 0} · 좋아요 {item.like_count ?? 0} · 댓글 {item.comment_count ?? 0}
                     </div>

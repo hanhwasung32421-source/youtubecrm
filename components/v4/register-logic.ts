@@ -90,17 +90,6 @@ export function duplicateMessage(known: KnownVideo, isAdmin: boolean): string {
   return when ? `${head} (${when} 등록)` : head
 }
 
-// 이미 등록된 영상에 지금 적은 종목/형식을 어떻게 할지
-//  same    : 종목이 같다 → 할 일 없음 (주소만 지우면 된다)
-//  change  : 종목이 다르다 → "종목만 바꾸기"를 권한다
-//  no-stock: 아직 종목을 안 적었다
-export function duplicateChoice(known: KnownVideo, typedStock: string): { kind: 'same' | 'change' | 'no-stock'; stock: string } {
-  const typed = (typedStock || '').replace(/\s+/g, ' ').trim()
-  if (!typed) return { kind: 'no-stock', stock: '' }
-  if (typed === (known.stock_name || '').replace(/\s+/g, ' ').trim()) return { kind: 'same', stock: typed }
-  return { kind: 'change', stock: typed }
-}
-
 // ---------------------------------------------------------------- 오늘 등록한 종목별 개수
 
 export type StockCount = { stock: string; count: number }
@@ -163,7 +152,7 @@ export function progressCopy(count: number | null, target: number): ProgressCopy
 
 // ---------------------------------------------------------------- 등록 실패 → 쉬운 한 문장
 
-export type RegisterErrorKind = 'auth' | 'network' | 'invalid' | 'notfound' | 'quota' | 'config' | 'stock' | 'server' | 'other'
+export type RegisterErrorKind = 'auth' | 'network' | 'invalid' | 'notfound' | 'quota' | 'config' | 'server' | 'other'
 export type RegisterErrorCopy = { kind: RegisterErrorKind; message: string; retry: boolean }
 
 export const NETWORK_COPY = '인터넷 연결이 끊긴 것 같아요. 입력한 내용은 그대로 두었어요. 연결을 확인하고 "다시 시도"를 눌러 주세요.'
@@ -191,9 +180,6 @@ export function registerErrorCopy(status: number, raw?: string | null): Register
   }
   if (/quota|한도|rate limit|too many|exceeded/i.test(text) || status === 429 || status === 403) {
     return { kind: 'quota', message: '유튜브 조회 한도에 걸린 것 같아요. 몇 분 뒤에 "다시 시도"를 눌러 주세요. 계속되면 관리자에게 알려 주세요.', retry: true }
-  }
-  if (/too small|종목|required/i.test(text)) {
-    return { kind: 'stock', message: '종목명이 비어 있어요. 종목명을 적고 다시 등록해 주세요.', retry: false }
   }
   if (status >= 500) {
     return {

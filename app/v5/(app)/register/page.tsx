@@ -28,7 +28,6 @@ import {
   type UndoEntry,
   type UndoState
 } from '@/components/v5/register-logic'
-import { SegmentedChoice } from '@/components/v5/segmented'
 import {
   CONTENT_TYPE_LABEL,
   DAILY_GOAL,
@@ -40,8 +39,8 @@ import {
   kstYmd,
   normalizeUrl,
   registerVideo,
-  type ContentType,
-  type RegisterErrorInfo
+  type RegisterErrorInfo,
+  type StockNameSource
 } from '@/components/v5/register-utils'
 import { Badge, EmptyState, Skeleton, SkeletonRegion } from '@/components/v5/widget'
 import { authedFetchJson, authedPostJson } from '@/lib/session/authed-fetch'
@@ -60,15 +59,19 @@ const BulkRegister = dynamic(() => import('@/components/v5/bulk-register').then(
 type PlaybookOption = { id: string; title: string; usage_count: number }
 
 // 붙여넣은 글에 대한 안내(여러 개를 붙였거나, 주소 말고 다른 글이 함께 붙었을 때).
-type PasteNote = { kind: 'multi'; text: string; count: number } | { kind: 'extra'; text: string; leftover: string; multiLine: boolean }
+type PasteNote = { kind: 'multi'; text: string; count: number } | { kind: 'extra'; text: string; multiLine: boolean }
 
-const LS_TYPE = 'v5.register.contentType'
-const LS_STOCKS = 'v5.register.recentStocks'
 const LS_AUTO = 'v5.register.autoSubmit'
 const SS_DRAFT = 'v5.register.draft'
-const MAX_RECENT_STOCKS = 8
 const DUP_CACHE_MS = 60_000
 const REGISTER_PATH = '/v5/register'
+
+// 등록 결과의 종목명을 어떻게 정했는지 알려 주는 한 줄. 'kept'(이미 고쳐 둔 값을 지킴)일 때는 조용히 넘어간다.
+function stockSourceNote(source: StockNameSource, stockName: string): string | undefined {
+  if (source === 'title') return `종목명을 제목에서 자동으로 가져왔어요: ${stockName}`
+  if (source === 'placeholder') return '제목에서 종목명을 찾지 못했어요. 목록에서 나중에 입력해 주세요.'
+  return undefined
+}
 
 // ---- 작은 도우미들 --------------------------------------------------------
 
@@ -106,7 +109,6 @@ function writeSession(key: string, value: string | null) {
 export default function RegisterPage() {
   const me = useV5Me()
   const urlRef = useRef<HTMLInputElement | null>(null)
-  const stockRef = useRef<HTMLInputElement | null>(null)
   const submitRef = useRef<HTMLButtonElement | null>(null)
 
   const [mode, setMode] = useState<'single' | 'bulk'>('single')
@@ -118,10 +120,6 @@ export default function RegisterPage() {
   const [autoSubmit, setAutoSubmit] = useState(false)
 
   const [youtubeUrl, setYoutubeUrl] = useState('')
-  const [contentType, setContentType] = useState<ContentType>('longform')
-  const [autoTypeNote, setAutoTypeNote] = useState(false) // 주소가 숏폼이라서 형식을 자동으로 바꾼 상태
-  const [stockName, setStockName] = useState('')
-  const [recentStocks, setRecentStocks] = useState<string[]>([])
   const [contentCategory, setContentCategory] = useState('')
   const [playbookOptions, setPlaybookOptions] = useState<PlaybookOption[]>([])
   const [usedPlaybookId, setUsedPlaybookId] = useState('')
@@ -145,13 +143,11 @@ export default function RegisterPage() {
   const pageRef = useRef(1)
   const refreshTimer = useRef<number | null>(null)
   const highlightTimers = useRef(new Set<number>())
-  const manualTypeRef = useRef<ContentType>('longform') // 사용자가 직접 고른 형식(주소가 숏폼이면 잠깐 바뀌었다가 돌아온다)
   const dupCache = useRef(new Map<string, { state: DupState; at: number }>())
   const feedbackSeq = useRef(0)
   const undoRef = useRef<UndoState>(UNDO_IDLE) // 콜백 안에서 "지금" 되돌리기 상태를 읽기 위한 사본
   const undoBusyRef = useRef(false) // 되돌리기 요청을 두 번 보내지 않는다
   const urlValueRef = useRef('') // 주소칸의 지금 내용(요청을 기다리는 사이 바뀔 수 있다)
-  const recentRef = useRef<string[]>([])
   const loadSeq = useRef(0) // 목록 요청이 뒤섞여 돌아와도 가장 최근 것만 화면에 반영한다
   const todaySeq = useRef(0)
 
@@ -162,22 +158,9 @@ export default function RegisterPage() {
     return `f${feedbackSeq.current}`
   }
 
-  // 마지막으로 쓴 형식·최근 종목·자동 등록 설정을 기억해 둔 값으로 채운다(저장소를 못 쓰면 조용히 건너뜀).
-  // 로그인이 풀려 잠깐 나갔다 온 경우에는 입력하던 주소·종목도 되살린다.
+  // 자동 등록 설정을 기억해 둔 값으로 채운다(저장소를 못 쓰면 조용히 건너뜀).
+  // 로그인이 풀려 잠깐 나갔다 온 경우에는 입력하던 주소도 되살린다.
   useEffect(() => {
-    const savedType = readStorage(LS_TYPE)
-    if (savedType === 'longform' || savedType === 'shortform') {
-      setContentType(savedType)
-      manualTypeRef.current = savedType
-    }
-    try {
-      const parsed = JSON.parse(readStorage(LS_STOCKS) || '[]')
-      if (Array.isArray(parsed)) {
-        const saved = Array.from(new Set(parsed.filter((s): s is string => typeof s === 'string' && s.trim() !== ''))).slice(0, MAX_RECENT_STOCKS)
-        recentRef.current = saved
-        setRecentStocks(saved)
-      }
-    } catch {}
     setAutoSubmit(readStorage(LS_AUTO) === '1')
     setCanReadClipboard(typeof navigator !== 'undefined' && typeof navigator.clipboard?.readText === 'function')
 
@@ -185,10 +168,8 @@ export default function RegisterPage() {
     writeSession(SS_DRAFT, null)
     if (draft) {
       setYoutubeUrl(draft.url)
-      setStockName(draft.stock)
-      setContentType(draft.type)
-      setFeedback({ kind: 'info', key: 'restored', message: '다시 로그인됐어요. 입력하던 주소와 종목을 그대로 채워 두었으니 이어서 등록하세요.' })
-      window.setTimeout(() => (draft.url && draft.stock ? submitRef.current : draft.url ? stockRef.current : urlRef.current)?.focus(), 0)
+      setFeedback({ kind: 'info', key: 'restored', message: '다시 로그인됐어요. 입력하던 주소를 그대로 채워 두었으니 이어서 등록하세요.' })
+      window.setTimeout(() => submitRef.current?.focus(), 0)
     } else {
       urlRef.current?.focus()
     }
@@ -343,7 +324,6 @@ export default function RegisterPage() {
   const cleanUrl = normalizeUrl(youtubeUrl)
   const urlProblem = !cleanUrl ? (touched ? '유튜브 주소를 붙여 넣어 주세요.' : '') : describeUrlProblem(cleanUrl)
   const videoId = cleanUrl && !urlProblem ? extractVideoId(cleanUrl) : null
-  const stockProblem = touched && !stockName.trim() ? '종목명을 적어 주세요.' : ''
 
   // ---- 이미 등록한 영상인지 미리 확인 ----
   // fresh=true: 저장해 둔 답을 쓰지 않고 지금 서버에 다시 묻는다. "새 영상"이라고 믿고 등록·되돌리기를 하기 직전에는
@@ -381,37 +361,7 @@ export default function RegisterPage() {
   }, [videoId, lookupDup])
 
   const dupFound = dup.status === 'found' && dup.videoId === videoId ? dup : null
-  // 종목이 비어 있으면 아직 정할 수 없으므로 그냥 '등록'으로 본다(Enter 는 종목 칸으로 보낸다).
-  const decision = decideDuplicate(stockName.trim() ? (dupFound ?? { status: 'idle' }) : { status: 'idle' }, stockName)
-  const dupHelp = !dupFound || !dupFound.info.mine
-    ? ''
-    : !stockName.trim()
-      ? ' 종목을 바꾸려면 종목 칸에 새 이름을 적고 Enter를 누르세요.'
-      : decision.action === 'update-stock'
-        ? ` Enter를 누르면 종목만 ‘${stockName.trim()}’(으)로 바꿔요.`
-        : ' 종목이 같아서 바꿀 것이 없어요.'
-
-  const chooseType = (t: ContentType) => {
-    setContentType(t)
-    manualTypeRef.current = t
-    setAutoTypeNote(false)
-    writeStorage(LS_TYPE, t)
-  }
-
-  const rememberStocks = (stocks: string[]) => {
-    const fresh = Array.from(new Set(stocks.map((s) => s.trim()).filter(Boolean))).reverse()
-    if (fresh.length === 0) return
-    const next = [...fresh, ...recentRef.current.filter((s) => !fresh.includes(s))].slice(0, MAX_RECENT_STOCKS)
-    recentRef.current = next
-    setRecentStocks(next)
-    writeStorage(LS_STOCKS, JSON.stringify(next))
-  }
-
-  const pickChip = (stock: string) => {
-    setStockName(stock)
-    if (cleanUrl && !urlProblem) submitRef.current?.focus()
-    else urlRef.current?.focus()
-  }
+  const decision = decideDuplicate(dupFound ?? { status: 'idle' })
 
   const toggleAutoSubmit = (on: boolean) => {
     setAutoSubmit(on)
@@ -430,16 +380,16 @@ export default function RegisterPage() {
   }
 
   // 로그인이 풀렸을 때: 입력하던 값을 잠깐 보관했다가 로그인 뒤 다시 채운다.
-  const stashDraft = (url: string, stock: string, type: ContentType) => {
-    writeSession(SS_DRAFT, serializeDraft({ url, stock, type, savedAt: Date.now() }))
+  const stashDraft = (url: string) => {
+    writeSession(SS_DRAFT, serializeDraft({ url, savedAt: Date.now() }))
   }
 
-  const failWith = (error: RegisterErrorInfo, url: string, stock: string, type: ContentType) => {
-    if (error.kind === 'auth') stashDraft(url, stock, type)
+  const failWith = (error: RegisterErrorInfo, url: string) => {
+    if (error.kind === 'auth') stashDraft(url)
     setFeedback({ kind: 'error', key: nextKey(), error, loginHref: error.kind === 'auth' ? loginHref(REGISTER_PATH) : undefined })
   }
 
-  // 다음 영상을 바로 붙여 넣을 수 있게: 주소만 비우고 종목·형식은 그대로 둔 채 주소칸으로 돌아간다.
+  // 다음 영상을 바로 붙여 넣을 수 있게: 주소칸을 비우고 다시 주소칸으로 돌아간다.
   const resetForNext = () => {
     setYoutubeUrl('')
     setContentCategory('')
@@ -447,10 +397,6 @@ export default function RegisterPage() {
     setTouched(false)
     setPasteNote(null)
     setClipHint('')
-    if (autoTypeNote) {
-      setContentType(manualTypeRef.current)
-      setAutoTypeNote(false)
-    }
     urlRef.current?.focus()
   }
 
@@ -472,23 +418,17 @@ export default function RegisterPage() {
   }
 
   // ---- 등록 ----
-  // opts.url / opts.type: 붙여넣은 직후처럼 아직 화면 상태에 반영되지 않은 값을 바로 쓸 때.
-  // opts.refresh: 이미 등록한 영상의 정보를 새로 가져와 다시 등록(종목·형식·메모가 이 화면의 값으로 덮어써진다).
+  // opts.url: 붙여넣은 직후처럼 아직 화면 상태에 반영되지 않은 값을 바로 쓸 때.
   // opts.auto: "주소만 붙이면 바로 등록" — 새 영상이 확실할 때만 진행한다.
-  const submit = async (opts: { url?: string; type?: ContentType; refresh?: boolean; auto?: boolean } = {}) => {
+  // 종목명·형식은 이 화면에서 정하지 않는다. 서버가 (이미 고쳐 둔 값을 지키거나) 제목에서 읽거나 자리표시자로 정한다.
+  const submit = async (opts: { url?: string; auto?: boolean } = {}) => {
     if (saving || savingRef.current) return
     setTouched(true)
     const url = opts.url ?? cleanUrl
-    const type = opts.type ?? contentType
     const problem = url ? describeUrlProblem(url) : 'empty'
     const id = url && !problem ? extractVideoId(url) : null
     if (!id) {
       urlRef.current?.focus()
-      return
-    }
-    const stock = stockName.trim()
-    if (!stock) {
-      stockRef.current?.focus()
       return
     }
 
@@ -499,71 +439,20 @@ export default function RegisterPage() {
       setDup(known)
 
       if (opts.auto && known.status !== 'none') {
-        // 자동 등록은 "새 영상"이 확실할 때만. 아니면 주소만 넣어 두고 사람이 확인하게 한다.
+        // 자동 등록은 "새 영상"이 확실할 때만. 아니면 사람이 확인하고 등록 버튼을 누르게 한다.
         if (known.status === 'unknown') {
-          setFeedback({ kind: 'info', key: nextKey(), message: '이미 등록한 영상인지 확인하지 못해서 자동 등록은 멈췄어요. 종목을 확인하고 Enter를 눌러 주세요.' })
+          setFeedback({ kind: 'info', key: nextKey(), message: '이미 등록한 영상인지 확인하지 못해서 자동 등록은 멈췄어요. 확인하고 등록 버튼을 눌러 주세요.' })
         }
-        stockRef.current?.focus()
-        stockRef.current?.select()
+        submitRef.current?.focus()
         return
       }
 
       const found = known.status === 'found' ? known.info : null
-      const action = opts.refresh ? (found && !found.mine ? 'takeover' : 'register') : decideDuplicate(known, stock).action
 
-      if (action === 'already-same' && found) {
-        setFeedback({ kind: 'info', key: nextKey(), message: `이미 ‘${found.stock}’ 종목으로 등록돼 있어요. 바꿀 것이 없으니 다음 영상 주소를 붙여 넣어 주세요.` })
-        resetForNext()
-        return
-      }
-
-      if (action === 'update-stock' && found) {
-        type PatchRes = { ok?: boolean; error?: string }
-        let res: Awaited<ReturnType<typeof authedFetchJson<PatchRes>>>
-        try {
-          res = await authedFetchJsonTimeout<PatchRes>(
-            `/api/v5/my-videos/${found.id}`,
-            { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stock_name: stock }) },
-            TIMEOUT_MS.save
-          )
-        } catch (e) {
-          failWith(classifyError(e), url, stock, type)
-          return
-        }
-        if (!res.ok) {
-          failWith(classifyError(res.data?.error || '', res.status), url, stock, type)
-          return
-        }
-        rememberStocks([stock])
-        const entry: UndoEntry = {
-          id: found.id,
-          kind: 'restore',
-          videoId: id,
-          url,
-          stock,
-          type: found.type,
-          prev: { stock: found.stock, type: found.type, category: found.category },
-          expiresAt: Date.now() + UNDO_WINDOW_MS
-        }
-        dispatchUndo({ type: 'offer', entry })
-        setItems((prev) => prev.map((v) => (v.id === found.id ? { ...v, stock_name: stock } : v)))
-        setFeedback({
-          kind: 'ok',
-          key: nextKey(),
-          id: found.id,
-          stock,
-          headline: `✓ 종목을 ‘${stock}’로 바꿨어요 (이전: ${found.stock})`,
-          detail: '영상 정보는 그대로 두고 종목만 고쳤어요.'
-        })
-        resetForNext()
-        afterChange(id, found.id)
-        return
-      }
-
-      // 새로 등록(또는 이미 있는 영상을 다시 등록해 정보를 갱신)
-      const res = await registerVideo({ videoId: id, contentType: type, stockName: stock, contentCategory: contentCategory.trim() }, { diagnose: true })
+      // 등록(또는 이미 있는 영상을 다시 등록해 정보를 갱신). 형식(롱폼/숏폼)과 종목명은 서버가 정한다.
+      const res = await registerVideo({ videoId: id, contentCategory: contentCategory.trim() }, { diagnose: true })
       if (!res.ok) {
-        failWith(res.error, url, stock, type)
+        failWith(res.error, url)
         return
       }
 
@@ -572,11 +461,9 @@ export default function RegisterPage() {
         void authedPostJson(`/api/v5/playbook/${usedPlaybookId}/use`, {})
       }
 
-      rememberStocks([stock])
-
       // 되돌리기: 새로 만든 영상이 확실하면 삭제, 내가 이미 등록했던 영상이면 이전 값 복원.
       // 다른 팀원 것이었거나(담당이 바뀜) 새 영상인지 확인하지 못했다면 위험하므로 제공하지 않는다.
-      const base = { id: res.id, videoId: id, url, stock, type, expiresAt: Date.now() + UNDO_WINDOW_MS }
+      const base = { id: res.id, videoId: id, url, stock: res.stockName, type: res.contentType, expiresAt: Date.now() + UNDO_WINDOW_MS }
       if (known.status === 'none') dispatchUndo({ type: 'offer', entry: { ...base, kind: 'delete' } })
       else if (found && found.mine) dispatchUndo({ type: 'offer', entry: { ...base, kind: 'restore', prev: { stock: found.stock, type: found.type, category: found.category } } })
       else dispatchUndo({ type: 'dismiss' })
@@ -587,9 +474,12 @@ export default function RegisterPage() {
         kind: 'ok',
         key: nextKey(),
         id: res.id,
-        stock,
+        stock: res.stockName,
+        stockMuted: res.stockNameSource === 'placeholder',
+        typeLabel: CONTENT_TYPE_LABEL[res.contentType],
+        videoTitle: res.title,
         headline: refreshed ? '✓ 다시 등록됨 · 정보를 새로 갱신했어요' : `✓ 등록됨 · 오늘 ${(todayCount + 1).toLocaleString('ko-KR')}번째`,
-        detail: `${stock} · ${CONTENT_TYPE_LABEL[type]}${res.title ? ` · ${res.title}` : ''}`
+        note: stockSourceNote(res.stockNameSource, res.stockName)
       })
       resetForNext()
       afterChange(id, res.id)
@@ -647,16 +537,15 @@ export default function RegisterPage() {
     dispatchUndo({ type: 'done' })
 
     if (entry.kind === 'delete') {
-      // 지운 영상의 주소·종목을 입력칸에 되돌려 놓아, 고쳐서 바로 다시 등록할 수 있게 한다.
+      // 지운 영상의 주소를 입력칸에 되돌려 놓아, 바로 다시 등록할 수 있게 한다.
       setItems((prev) => prev.filter((v) => v.id !== entry.id))
       setTotalCount((n) => Math.max(n - 1, 0))
       setTodayCount((n) => Math.max(n - 1, 0))
       // 기다리는 사이 다음 영상 주소를 이미 붙여 넣었다면 그 내용은 건드리지 않는다.
       if (!urlValueRef.current.trim()) {
         setYoutubeUrl(entry.url)
-        setStockName(entry.stock)
-        setFeedback({ kind: 'info', key: nextKey(), message: `되돌렸어요. ‘${entry.stock}’ 영상을 목록에서 뺐고, 주소와 종목은 입력칸에 다시 채워 뒀어요.` })
-        window.setTimeout(() => stockRef.current?.focus(), 0)
+        setFeedback({ kind: 'info', key: nextKey(), message: `되돌렸어요. ‘${entry.stock}’ 영상을 목록에서 뺐고, 주소는 입력칸에 다시 채워 뒀어요.` })
+        window.setTimeout(() => submitRef.current?.focus(), 0)
       } else {
         setFeedback({ kind: 'info', key: nextKey(), message: `되돌렸어요. ‘${entry.stock}’ 영상을 목록에서 뺐어요.` })
       }
@@ -679,15 +568,8 @@ export default function RegisterPage() {
     } catch (e) {
       return classifyError(e).message
     }
-    const before = feedback && feedback.kind === 'ok' ? feedback.stock : ''
     setItems((prev) => prev.map((v) => (v.id === id ? { ...v, stock_name: next } : v)))
-    setFeedback((prev) =>
-      prev && prev.kind === 'ok' && prev.id === id
-        ? { ...prev, stock: next, detail: prev.detail.replace(prev.stock, next) }
-        : prev
-    )
-    if (before && stockName.trim() === before) setStockName(next)
-    rememberStocks([next])
+    setFeedback((prev) => (prev && prev.kind === 'ok' && prev.id === id ? { ...prev, stock: next, stockMuted: false, note: undefined } : prev))
     highlight(id)
     void refreshToday()
     return null
@@ -718,27 +600,14 @@ export default function RegisterPage() {
       return true
     }
 
-    // 주소 하나: 칸에 넣고, 형식을 맞추고, 종목으로 넘어가거나(자동 등록을 켰다면) 바로 등록한다.
+    // 주소 하나: 칸에 넣고, (자동 등록을 켰다면) 바로 등록하거나 등록 버튼으로 넘어간다. 종목·형식은 등록할 때 서버가 정한다.
     setYoutubeUrl(outcome.url)
-    setPasteNote(outcome.info.kind === 'text-with-url' ? { kind: 'extra', text, leftover: outcome.info.leftover, multiLine: outcome.info.lineCount >= 2 } : null)
-    let type = contentType
-    if (outcome.shorts && contentType !== 'shortform') {
-      type = 'shortform'
-      setContentType('shortform')
-      setAutoTypeNote(true)
-    } else if (!outcome.shorts && autoTypeNote) {
-      type = manualTypeRef.current
-      setContentType(type)
-      setAutoTypeNote(false)
-    }
+    setPasteNote(outcome.info.kind === 'text-with-url' ? { kind: 'extra', text, multiLine: outcome.info.lineCount >= 2 } : null)
 
-    if (shouldAutoSubmit({ enabled: autoSubmit, stock: stockName, outcome })) {
-      void submit({ url: outcome.url, type, auto: true })
+    if (shouldAutoSubmit({ enabled: autoSubmit, outcome })) {
+      void submit({ url: outcome.url, auto: true })
     } else {
-      window.setTimeout(() => {
-        stockRef.current?.focus()
-        stockRef.current?.select() // 종목이 미리 채워져 있어도 바로 타이핑하면 덮어쓴다. 그대로면 Enter.
-      }, 0)
+      window.setTimeout(() => submitRef.current?.focus(), 0)
     }
     return true
   }
@@ -797,7 +666,7 @@ export default function RegisterPage() {
     <>
       <PageHeader
         title="영상 등록"
-        subtitle="유튜브 주소를 붙여 넣고 종목을 적은 뒤 Enter. 제목·조회수·좋아요·댓글은 자동으로 가져와요."
+        subtitle="유튜브 주소를 붙여 넣고 Enter. 제목·종목·조회수·좋아요·댓글은 자동으로 가져와요."
         actions={
           isAdmin ? (
             <Badge tone="indigo">
@@ -838,10 +707,8 @@ export default function RegisterPage() {
           <BulkRegister
             key={bulkSeed?.key ?? 0}
             initialText={bulkSeed?.text}
-            recentStocks={recentStocks}
             registeredIds={registeredIds}
             onBusyChange={setBulkBusy}
-            onStocksUsed={rememberStocks}
             onRegistered={onBulkRegistered}
           />
           </>
@@ -883,7 +750,7 @@ export default function RegisterPage() {
                   }}
                   onPaste={(e) => {
                     // 붙여넣기: 여러 개면 넣지 않고 "여러 개 붙여넣기"를 권한다.
-                    // 하나면 앞뒤 공백을 지우고 종목 칸으로 넘어간다(자동 등록을 켰고 종목이 있으면 바로 등록).
+                    // 하나면 앞뒤 공백을 지우고 넣는다(자동 등록을 켰으면 바로 등록).
                     if (applyClipboard(e.clipboardData.getData('text'), 'paste')) e.preventDefault()
                   }}
                   onBlur={() => {
@@ -896,14 +763,11 @@ export default function RegisterPage() {
                       setYoutubeUrl('')
                       setPasteNote(null)
                       setClipHint('')
-                      setAutoTypeNote(false)
-                      if (autoTypeNote) setContentType(manualTypeRef.current)
                       return
                     }
                     if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && !e.nativeEvent.isComposing) {
                       e.preventDefault()
-                      if (!stockName.trim() && cleanUrl && !urlProblem) stockRef.current?.focus()
-                      else void submit()
+                      void submit()
                     }
                   }}
                   aria-invalid={Boolean(urlProblem)}
@@ -921,17 +785,8 @@ export default function RegisterPage() {
                 ) : dupFound ? (
                   <>
                     {dupNotice(dupFound.info)}
-                    {dupFound.info.mine ? (
-                      <>
-                        {dupHelp}
-                        <button className="v5-linkbtn" type="button" disabled={saving} onClick={() => void submit({ refresh: true })}>
-                          정보도 새로 가져오기
-                        </button>
-                      </>
-                    ) : null}
+                    {dupFound.info.mine ? ' 등록 버튼을 누르면 정보만 새로 가져와요(종목은 그대로 둬요).' : ''}
                   </>
-                ) : autoTypeNote ? (
-                  '숏폼 주소라서 형식을 숏폼으로 맞췄어요.'
                 ) : (
                   ''
                 )}
@@ -957,19 +812,6 @@ export default function RegisterPage() {
                           : '주소 옆에 다른 글자가 붙어 있어서 주소만 넣었어요.'}
                     </span>
                     <span className="v5-paste-note-actions">
-                      {pasteNote.kind === 'extra' && pasteNote.leftover && !stockName.trim() ? (
-                        <button
-                          className="button secondary sm"
-                          type="button"
-                          onClick={() => {
-                            setStockName(pasteNote.leftover)
-                            setPasteNote(null)
-                            submitRef.current?.focus()
-                          }}
-                        >
-                          종목을 “{pasteNote.leftover}”로 쓰기
-                        </button>
-                      ) : null}
                       {pasteNote.kind === 'multi' || pasteNote.multiLine ? (
                         <button className="button sm" type="button" onClick={() => switchToBulk(pasteNote.text)}>
                           여러 개 붙여넣기로 바꾸기
@@ -985,64 +827,10 @@ export default function RegisterPage() {
             </div>
 
             <div className="v5-quick-row">
-              <div className="field">
-                <label className="label" htmlFor="v5-reg-stock">
-                  종목
-                </label>
-                <input
-                  id="v5-reg-stock"
-                  ref={stockRef}
-                  className="input"
-                  list="v5-recent-stocks"
-                  autoComplete="off"
-                  spellCheck={false}
-                  enterKeyHint="done"
-                  readOnly={saving}
-                  placeholder="예: 삼성전자"
-                  value={stockName}
-                  onChange={(e) => setStockName(e.target.value)}
-                  onFocus={(e) => e.currentTarget.select()}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && !e.nativeEvent.isComposing) {
-                      e.preventDefault()
-                      void submit()
-                    }
-                  }}
-                  aria-invalid={Boolean(stockProblem)}
-                  aria-describedby="v5-reg-stock-hint"
-                />
-                <datalist id="v5-recent-stocks">
-                  {recentStocks.map((s) => (
-                    <option key={s} value={s} />
-                  ))}
-                </datalist>
-              </div>
-              <div className="field">
-                <span className="label" aria-hidden="true">형식</span>
-                <SegmentedChoice
-                  label="영상 형식"
-                  value={contentType}
-                  disabled={saving}
-                  onChange={chooseType}
-                  options={[
-                    { value: 'longform', label: CONTENT_TYPE_LABEL.longform },
-                    { value: 'shortform', label: CONTENT_TYPE_LABEL.shortform }
-                  ]}
-                />
-              </div>
               <button ref={submitRef} className="button v5-submit" type="submit" disabled={saving} aria-busy={saving}>
-                {saving
-                  ? '등록 중...'
-                  : decision.action === 'update-stock'
-                    ? '종목만 바꾸기'
-                    : decision.action === 'already-same'
-                      ? '이미 등록됨'
-                      : decision.action === 'takeover'
-                        ? '내 영상으로 등록'
-                        : '등록'}
+                {saving ? '등록 중...' : decision.action === 'takeover' ? '내 영상으로 등록' : decision.action === 'refresh' ? '정보 새로 가져오기' : '등록'}
               </button>
             </div>
-            <div id="v5-reg-stock-hint" className={`v5-hint ${stockProblem ? 'warn' : ''}`}>{stockProblem}</div>
 
             <FeedbackSlot
               feedback={feedback}
@@ -1055,19 +843,8 @@ export default function RegisterPage() {
 
             <label className="v5-check v5-auto-row">
               <input type="checkbox" checked={autoSubmit} onChange={(e) => toggleAutoSubmit(e.target.checked)} />
-              <span>주소만 붙이면 바로 등록 (종목이 채워져 있고 새 영상일 때만)</span>
+              <span>주소만 붙이면 바로 등록 (새 영상일 때만)</span>
             </label>
-
-            {recentStocks.length > 0 ? (
-              <div className="v5-chip-row" role="group" aria-label="최근 종목">
-                <span className="v5-chip-label">최근 종목</span>
-                {recentStocks.map((s) => (
-                  <button key={s} type="button" className={`v5-chip ${stockName.trim() === s ? 'on' : ''}`} disabled={saving} aria-pressed={stockName.trim() === s} onClick={() => pickChip(s)}>
-                    {s}
-                  </button>
-                ))}
-              </div>
-            ) : null}
 
             <details className="v5-more">
               <summary>추가 정보 입력 (선택)</summary>
@@ -1175,9 +952,9 @@ export default function RegisterPage() {
               </button>
             }
           >
-            위 칸에 유튜브 주소를 붙여 넣고 종목을 적은 뒤 Enter를 눌러요.
+            위 칸에 유튜브 주소를 붙여 넣고 Enter를 눌러요.
             <br />
-            등록한 영상은 여기에 쌓이고, 조회수 같은 숫자는 자동으로 채워져요.
+            등록한 영상은 여기에 쌓이고, 종목·조회수 같은 정보는 자동으로 채워져요.
           </EmptyState>
         ) : (
           <MyVideosTable

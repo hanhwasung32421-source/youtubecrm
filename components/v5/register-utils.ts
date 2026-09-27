@@ -12,7 +12,7 @@ export const DAILY_GOAL = 12
 
 // ---- 주소 정리 ------------------------------------------------------------
 // 순수 함수는 youtube-url.ts 로 옮겼다(단독으로 시험 가능). 예전 import 경로가 그대로 동작하도록 다시 내보낸다.
-import { canonicalWatchUrl, describeUrlProblem, extractVideoId, findYoutubeUrl, isShortsUrl, normalizeUrl } from './youtube-url'
+import { canonicalWatchUrl, describeUrlProblem, extractVideoId, findYoutubeUrl, normalizeUrl } from './youtube-url'
 export { canonicalWatchUrl, describeUrlProblem, extractVideoId, isShortsUrl, isYoutubeUrl, normalizeUrl } from './youtube-url'
 
 // ---- 여러 줄 붙여넣기 해석 ----------------------------------------------------
@@ -22,11 +22,11 @@ export type ParsedLine = {
   videoId: string | null
   canonicalUrl: string
   stock: string
-  type: ContentType
   problem: string
 }
 
 // 한 줄 = `주소 [종목명]` (종목이 주소 앞에 와도 된다).
+// 형식(롱폼/숏폼)은 더 이상 여기서 정하지 않는다. 등록할 때 서버가 실제 영상 길이로 정확히 정한다.
 export function parseBulkText(text: string): { lines: ParsedLine[]; duplicates: number } {
   const seen = new Map<string, number>()
   const lines: ParsedLine[] = []
@@ -38,7 +38,7 @@ export function parseBulkText(text: string): { lines: ParsedLine[]; duplicates: 
 
     const found = findYoutubeUrl(raw)
     if (!found) {
-      lines.push({ raw, videoId: null, canonicalUrl: '', stock: '', type: 'longform', problem: '유튜브 주소를 찾지 못했어요.' })
+      lines.push({ raw, videoId: null, canonicalUrl: '', stock: '', problem: '유튜브 주소를 찾지 못했어요.' })
       continue
     }
 
@@ -51,7 +51,7 @@ export function parseBulkText(text: string): { lines: ParsedLine[]; duplicates: 
       .trim()
 
     if (!videoId) {
-      lines.push({ raw, videoId: null, canonicalUrl: '', stock, type: 'longform', problem: describeUrlProblem(url) || '올바른 영상 주소가 아니에요.' })
+      lines.push({ raw, videoId: null, canonicalUrl: '', stock, problem: describeUrlProblem(url) || '올바른 영상 주소가 아니에요.' })
       continue
     }
 
@@ -69,7 +69,6 @@ export function parseBulkText(text: string): { lines: ParsedLine[]; duplicates: 
       videoId,
       canonicalUrl: canonicalWatchUrl(videoId),
       stock,
-      type: isShortsUrl(url) ? 'shortform' : 'longform',
       problem: ''
     })
   }
@@ -121,9 +120,19 @@ export async function authedFetchJsonTimeout<T = any>(path: string, init: Reques
 
 // ---- 등록 호출 -----------------------------------------------------------------
 
-export type RegisterInput = { videoId: string; contentType: ContentType; stockName: string; contentCategory?: string }
+// 종목명은 직접 적지 않는다. 서버가 (1) 이미 고쳐 둔 값을 지키거나 (2) 제목에서 읽거나 (3) 자리표시자로 정한다.
+export type RegisterInput = { videoId: string; stockName?: string; contentCategory?: string }
+
+// input: 화면에서 직접 보냄(지금은 v5 화면 어디서도 보내지 않는다) / kept: 이미 고쳐 둔 값을 지킴 /
+// title: 제목에서 자동으로 읽음 / placeholder: 못 읽어서 '종목 미지정'으로 등록함.
+export type StockNameSource = 'input' | 'kept' | 'title' | 'placeholder'
+
+// 서버가 종목명을 못 읽었을 때 쓰는 자리표시자(app/api/videos/create/route.ts 와 같은 문구).
+export const STOCK_NAME_PLACEHOLDER = '종목 미지정'
+
 export type RegisterResult =
-  | { ok: true; id: string; title: string | null }
+  // contentType: 서버가 실제 영상 길이로 정한 형식. stockName/stockNameSource: 서버가 정한 종목명과 그 출처.
+  | { ok: true; id: string; title: string | null; contentType: ContentType; stockName: string; stockNameSource: StockNameSource }
   | { ok: false; message: string; error: RegisterErrorInfo }
 
 // 로그인이 유지되는지 가볍게 확인한다(등록 API 는 로그인이 풀려도 401 대신 500 을 주기 때문).
@@ -159,21 +168,39 @@ async function probeOembed(videoId: string): Promise<{ status: number | null }> 
 export async function registerVideo(input: RegisterInput, options: { diagnose?: boolean } = {}): Promise<RegisterResult> {
   let error: RegisterErrorInfo
   try {
-    const res = await authedFetchJsonTimeout<{ ok?: boolean; video?: { id: string; title: string | null }; error?: string }>(
+    const res = await authedFetchJsonTimeout<{
+      ok?: boolean
+      video?: { id: string; title: string | null; content_type?: string | null; stock_name?: string | null }
+      stockNameSource?: string
+      error?: string
+    }>(
       '/api/videos/create',
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           youtubeUrl: canonicalWatchUrl(input.videoId),
-          contentType: input.contentType,
-          stockName: input.stockName,
+          // 형식(롱폼/숏폼)은 보내지 않는다. 서버가 실제 영상 길이로 정확히 정해 준다.
+          // 종목명도 보내지 않는다(비워 두면 서버가 알아서 정한다). 값이 있을 때만 보낸다.
+          stockName: input.stockName?.trim() || undefined,
           contentCategory: input.contentCategory || undefined
         })
       },
       TIMEOUT_MS.save
     )
-    if (res.ok && res.data.video) return { ok: true, id: res.data.video.id, title: res.data.video.title || null }
+    if (res.ok && res.data.video) {
+      const contentType: ContentType = res.data.video.content_type === 'shortform' ? 'shortform' : 'longform'
+      const src = res.data.stockNameSource
+      const stockNameSource: StockNameSource = src === 'input' || src === 'kept' || src === 'title' ? src : 'placeholder'
+      return {
+        ok: true,
+        id: res.data.video.id,
+        title: res.data.video.title || null,
+        contentType,
+        stockName: res.data.video.stock_name || STOCK_NAME_PLACEHOLDER,
+        stockNameSource
+      }
+    }
     error = classifyError(res.data?.error || '', res.status)
   } catch (e) {
     error = classifyError(e)

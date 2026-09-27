@@ -42,3 +42,11 @@ export async function authedPostJson<T = any>(path: string, body: unknown): Prom
     body: JSON.stringify(body)
   })
 }
+
+export async function authedPatchJson<T = any>(path: string, body: unknown): Promise<AuthedJsonResult<T>> {
+  return authedFetchJson<T>(path, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  })
+}

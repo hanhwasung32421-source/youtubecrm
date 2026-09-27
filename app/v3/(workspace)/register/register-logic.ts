@@ -3,8 +3,20 @@
 //  - 등록 실패를 "무슨 일이었고 무엇을 하면 되는지" 한 문장으로 바꾸기
 //  - 되돌리기(undo) 상태 기계
 
-import type { ContentType } from './register-api'
+import type { ContentType, StockNameSource } from './register-api'
 import { videoIdFromStoredUrl } from './youtube-url'
+
+// 서버가 제목에서 종목명을 읽어내지 못했을 때 쓰는 자리표시자(app/api/videos/create/route.ts와 같은 문구).
+// 목록에서는 이 값이 보이면 "아직 확인이 필요하다"는 뜻이라 옅은 스타일을 준다.
+export const STOCK_PLACEHOLDER = '종목 미지정'
+
+// 방금 등록한 영상의 종목명이 어디서 왔는지 한 줄로 설명한다. 직접 입력했거나(input) 전에 고쳐 둔 값을
+// 그대로 지켰다면(kept) 따로 알릴 내용이 없어 빈 문자열을 돌려준다.
+export function stockNameSourceNote(source: StockNameSource, stockName: string): string {
+  if (source === 'title') return `종목명을 제목에서 자동으로 가져왔어요: ${stockName}`
+  if (source === 'placeholder') return '제목에서 종목명을 찾지 못했어요. 목록에서 나중에 입력해 주세요.'
+  return ''
+}
 
 // ─────────────────────────────────────────────────────────────
 // 한글 입력 중인 키
@@ -104,14 +116,6 @@ export function registeredAtLabel(iso: string | null | undefined, now: number = 
 }
 
 const norm = (value: string | null | undefined) => (value || '').replace(/\s+/g, ' ').trim()
-
-// 이미 등록한 영상에 지금 입력한 종목을 어떻게 할지
-//  need-stock: 종목 칸이 비어 있음 / same: 종목이 이미 같음 / change: 종목만 바꿀 수 있음
-export function duplicateAction(existingStock: string | null | undefined, typedStock: string): 'need-stock' | 'same' | 'change' {
-  const typed = norm(typedStock)
-  if (!typed) return 'need-stock'
-  return typed === norm(existingStock) ? 'same' : 'change'
-}
 
 // ─────────────────────────────────────────────────────────────
 // 오늘 등록 현황
@@ -281,7 +285,7 @@ export const UNDO_DONE_MS = 4_000
 
 export type UndoPlan =
   | { kind: 'delete' } // 새로 등록한 영상: 지운다
-  | { kind: 'restore'; stock: string | null; type: ContentType } // 이미 있던 영상을 덮어쓴 경우: 이전 종목·형식으로 돌린다
+  | { kind: 'restore'; stock: string | null } // 이미 있던 영상을 덮어쓴 경우: 이전 종목으로 돌린다(형식은 영상 길이로 자동 정해지므로 그대로 둔다)
   | { kind: 'none' } // 남의 영상 등 되돌릴 수 없는 경우
 
 export type UndoEntry = { id: string; stock: string; plan: UndoPlan }
@@ -292,10 +296,10 @@ export type UndoEntry = { id: string; stock: string; plan: UndoPlan }
 export type PriorState = 'new' | 'mine' | 'other' | 'unknown'
 
 // 되돌리기 계획. 이전에 있던 영상은 절대 지우지 않는다: 지우기(delete)는 "없었다"고 확인된 경우에만 준다.
-export function planUndo(input: { hasId: boolean; prior: PriorState; before?: { stock: string | null; type: ContentType } | null }): UndoPlan {
+export function planUndo(input: { hasId: boolean; prior: PriorState; before?: { stock: string | null } | null }): UndoPlan {
   if (!input.hasId) return { kind: 'none' }
   if (input.prior === 'new') return { kind: 'delete' }
-  if (input.prior === 'mine' && input.before) return { kind: 'restore', stock: input.before.stock, type: input.before.type }
+  if (input.prior === 'mine' && input.before) return { kind: 'restore', stock: input.before.stock }
   return { kind: 'none' }
 }
 
