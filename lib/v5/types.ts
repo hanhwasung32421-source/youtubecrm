@@ -86,9 +86,9 @@ export const SCORE_TIER_LABEL: Record<ScoreTier, string> = {
 
 export type ScoreboardRow = {
   video: VideoRef
-  viewVelocityScore: number // 0-45: 팀 내 조회 속도(일평균 조회수) 백분위
-  engagementScore: number // 0-35: 참여율((좋아요+댓글)/조회수) 백분위
-  earlyGrowthScore: number // 0-20: 게시 후 초기 48시간 성장 여부(스냅샷 있으면 계산, 없으면 중립 10)
+  viewVelocityScore: number // 0-75: 팀 내 조회 속도(일평균 조회수) 백분위 (조회수가 가장 중요해서 비중이 가장 크다)
+  engagementScore: number // 0-15: 참여율((좋아요+댓글)/조회수) 백분위
+  earlyGrowthScore: number // 0-10: 게시 후 초기 48시간 성장 여부(스냅샷 있으면 계산, 없으면 중립 5)
   totalScore: number // 0-100
   tier: ScoreTier
   hasSnapshotData: boolean

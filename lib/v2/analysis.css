@@ -270,7 +270,7 @@
 
 .v2-theme .v2a-rank {
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) 88px 84px 60px 170px;
+  grid-template-columns: 40px minmax(0, 1fr) 90px 88px 84px 60px 170px;
   gap: 12px;
   align-items: center;
   padding: 10px 12px;
@@ -313,7 +313,8 @@
     grid-template-areas:
       'rk title title title'
       'rk score score score'
-      'rk views likes check';
+      'rk total views likes'
+      'rk check . .';
     gap: 6px 10px;
     padding: 12px 10px;
   }
@@ -321,6 +322,7 @@
   .v2-theme .v2a-rank-title { grid-area: title; }
   .v2-theme .v2a-rank-title .t { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
   .v2-theme .v2a-rank .v2a-score { grid-area: score; justify-content: flex-start; }
+  .v2-theme .v2a-rank .c-total-views { grid-area: total; }
   .v2-theme .v2a-rank .c-views { grid-area: views; }
   .v2-theme .v2a-rank .c-likes { grid-area: likes; }
   .v2-theme .v2a-rank .c-check { grid-area: check; }

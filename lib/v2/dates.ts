@@ -94,6 +94,16 @@ export function daysSince(iso: string | null | undefined, now = Date.now()): num
   return Number.isFinite(diff) ? Math.max(diff, 1) : 1
 }
 
+// 발행 이후 경과 시간(시간 단위, 0 이상). daysSince 와 달리 최소 1시간으로 올려 두지 않는다 —
+// "시간당 조회수" 처럼 나누는 쪽에서 Math.max(hoursSince(...), 1) 로 0 나누기를 직접 막게 한다.
+export function hoursSince(iso: string | null | undefined, now = Date.now()): number {
+  if (!iso) return 0
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return 0
+  const diff = (now - d.getTime()) / (60 * 60 * 1000)
+  return Number.isFinite(diff) ? Math.max(diff, 0) : 0
+}
+
 // '2026-02-30' 같은 존재하지 않는 날짜를 걸러낸다. (형식은 정확히 YYYY-MM-DD)
 export function isRealYmd(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false

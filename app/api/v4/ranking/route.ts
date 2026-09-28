@@ -4,6 +4,9 @@ import { loadPeriodRows, loadUsersShared } from '@/lib/v4/period-rows'
 import { filterRanked, pageOf, parseRankQuery, sortRanked, summarizeRanked } from '@/lib/v4/ranking-query'
 import { requireV4User, v4ErrorResponse } from '@/lib/v4/server'
 
+// 조회수 관련 지표를 우선하기 위한 "시간당 조회수". analytics.ts 의 RankedVideo 는 아직 이 필드를 모르므로 여기서 계산해 붙인다.
+type RankedRow = RankedVideo & { hourly: number }
+
 // GET /api/v4/ranking?period=&sort=&dir=&limit=&offset=&staffId=&format=&q=&dow=&hour=
 // - dow(0=일~6=토)·hour(0~23) 는 "그 요일·시각(한국 시간)에 올린 영상만" 이다. 타이밍 화면의 칸에서 넘어올 때 쓴다.
 // - 새 파라미터를 하나도 안 주면 예전처럼 items 를 돌려주되 최대 500개까지만 (전체 개수는 total).
@@ -21,7 +24,14 @@ export async function GET(request: Request) {
       loadUsersShared(supabaseAdmin)
     ])
 
-    const all = rankVideos(videos, userMap)
+    // 같은 now 기준으로 "게시 후 경과 시간" 을 계산해 시간당 조회수(hourly)를 붙인다. 최소 1시간으로 나눠 방금 올린 영상이 폭주하지 않게 한다.
+    const now = Date.now()
+    const all: RankedRow[] = rankVideos(videos, userMap, now).map((v) => {
+      const publishedIso = v.publishedAt || v.createdAt
+      const publishedMs = new Date(publishedIso).getTime()
+      const hoursSincePublished = Number.isNaN(publishedMs) ? 1 : Math.max(1, (now - publishedMs) / 3600000)
+      return { ...v, hourly: Math.round(v.viewCount / hoursSincePublished) }
+    })
 
     // 필터용 담당자 목록: 관리자는 활동 직원 전체 + 기간 내 영상 소유자, 직원은 본인만
     const ownerIds = new Set<string>()
@@ -41,7 +51,7 @@ export async function GET(request: Request) {
     const filteredSummary = filtered === all ? summary : summarizeRanked(filtered)
     const sorted = sortRanked(filtered, query.sort, query.dir)
     // 90일이면 6,000개 이상이라 화면에 안 쓰는 썸네일 주소는 빼고 내려준다 (응답 크기 절감).
-    const strip = ({ thumbnailUrl: _thumbnail, ...rest }: RankedVideo) => rest
+    const strip = ({ thumbnailUrl: _thumbnail, ...rest }: RankedRow) => rest
     const items = pageOf(sorted, query.offset, query.limit).map(strip)
 
     return cachedJson({

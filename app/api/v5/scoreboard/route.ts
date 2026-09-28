@@ -1,7 +1,7 @@
 import { addDaysToYmd, getKstDayStartIso, getKstYmd } from '@/lib/attendance/time'
 import { SCORE_SORTS, type ScoreSort } from '@/lib/v5/filters'
 import { computeScoreboard, EARLY_WINDOW_HOURS, isEarlyGrowthCandidate, type SnapshotRow } from '@/lib/v5/scoring'
-import { sortScoreRows } from '@/lib/v5/score-view'
+import { hourlyViewsOf, sortScoreRows } from '@/lib/v5/score-view'
 import { V5_TABLES } from '@/lib/v5/tables'
 import { SCORE_TIERS, type VideoRef } from '@/lib/v5/types'
 import { badRequest, chunk, fetchAllPages, getSession, handleRouteError, IN_CHUNK, jsonCached, loadUserMap } from '@/lib/v5/api'
@@ -38,8 +38,9 @@ export async function GET(request: Request) {
     const ownerParam = url.searchParams.get('owner') || ''
     if (ownerParam && !UUID_RE.test(ownerParam)) return badRequest('담당자를 찾을 수 없어요.')
     // 정렬은 서버에서 한다: 순위 200개만 내려주므로, 화면에서 정렬하면 "점수 낮은 순"이 전체의 꼴찌가 아니라 상위 200개의 꼴찌가 된다.
-    const sortParam = url.searchParams.get('sort') || 'score'
-    const sort: ScoreSort = (SCORE_SORTS as readonly string[]).includes(sortParam) ? (sortParam as ScoreSort) : 'score'
+    // 조회수가 가장 중요한 신호라서 기본 정렬은 'views'(조회수 많은 순)다.
+    const sortParam = url.searchParams.get('sort') || 'views'
+    const sort: ScoreSort = (SCORE_SORTS as readonly string[]).includes(sortParam) ? (sortParam as ScoreSort) : 'views'
 
     // 오늘 포함 N일(한국 시간 0시 기준)
     const sinceYmd = addDaysToYmd(getKstYmd(), -(days - 1))
@@ -150,7 +151,9 @@ export async function GET(request: Request) {
 
     const visible = ownerParam ? scored.filter((r) => r.video.primary_owner_user_id === ownerParam) : scored
     // 점수 순위(1등부터). 정렬을 바꿔도 이 순위는 그대로 따라간다.
-    const ranked = visible.map((row, i) => ({ ...row, rank: i + 1 }))
+    // hourlyViews: 시간당 조회수(= view_count / max(경과시간(시), 1)). 기존 응답에 더해지는 값이라 다른 화면은 영향받지 않는다.
+    const nowMs = Date.now()
+    const ranked = visible.map((row, i) => ({ ...row, rank: i + 1, hourlyViews: hourlyViewsOf(row.video, nowMs) }))
     const total = visible.length
     const scoreSum = visible.reduce((s, r) => s + r.totalScore, 0)
     const distribution = SCORE_TIERS.map((tier) => ({ tier, count: visible.filter((r) => r.tier === tier).length }))

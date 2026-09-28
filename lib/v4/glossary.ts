@@ -2,6 +2,7 @@
 
 export type GlossaryKey =
   | 'velocity'
+  | 'hourlyViews'
   | 'reactionScore'
   | 'avgViews'
   | 'likeRate'
@@ -19,6 +20,11 @@ export const GLOSSARY: Record<GlossaryKey, GlossaryEntry> = {
     term: '조회 속도',
     short: '하루에 평균 몇 번 봤는지',
     long: '조회수 ÷ 올린 뒤 지난 날짜(최소 1일)예요. 어제 올린 영상과 한 달 전에 올린 영상을 공평하게 비교할 수 있어요.'
+  },
+  hourlyViews: {
+    term: '시간당 조회수',
+    short: '올린 뒤 한 시간에 평균 몇 번 봤는지',
+    long: '조회수 ÷ 올린 뒤 지난 시간(최소 1시간)이에요. 방금 올린 영상이 초반에 얼마나 빠르게 반응을 받는지 볼 때 써요.'
   },
   reactionScore: {
     term: '반응 점수',

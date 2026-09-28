@@ -12,6 +12,7 @@ import { useV3Data } from '@/lib/v3/use-v3-data'
 import { useUrlFilters } from '@/lib/v3/use-filters'
 import { ENGAGEMENT_FILTERS, chipLabel, defaultFilters, optionsFor } from '@/lib/v3/filters'
 import { formatCompactNumber, formatNumber, formatPct } from '@/lib/v3/format'
+import { daysSince } from '@/lib/v3/engagement'
 import { pctChange } from '@/lib/v3/engagement'
 import { lifecycleHref } from '@/lib/v3/links'
 import { sortEngagementRows, type EngagementRow } from '@/lib/v3/sorting'
@@ -102,6 +103,10 @@ function rowValue(row: EngagementRow, sort: string) {
   const withViews = (text: string) => (views ? `${views} · ${text}` : text)
   if (sort === 'engagement') return { main: formatPct(row.engagementPct, 2), small: withViews(`100명 중 약 ${per100(row.engagementPct)}이 반응`) }
   if (sort === 'views') return { main: `${formatNumber(row.viewCount)}회`, small: `참여율 ${formatPct(row.engagementPct, 2)}` }
+  if (sort === 'daily') {
+    const days = Math.max(daysSince(row.publishedAt), 1)
+    return { main: `하루 ${formatNumber(Math.round(row.viewCount / days))}회`, small: withViews('일간 조회수') }
+  }
   if (sort === 'recent') return { main: formatPct(row.engagementPct, 2), small: withViews('참여율') }
   return { main: formatPct(row.commentRatePct, 2), small: withViews(`100명 중 약 ${per100(row.commentRatePct)}이 댓글`) }
 }
@@ -351,7 +356,7 @@ function EngagementView() {
             {data.truncated ? ` · 영상이 많아서 가장 최근에 등록한 ${formatNumber(data.loadedCount ?? 0)}개까지만 계산했어요.` : ''}
           </p>
 
-          <GlossaryHelp page="engagement" keys={['engagement', 'commentRate']} />
+          <GlossaryHelp page="engagement" keys={['engagement', 'commentRate', 'dailyViews']} />
 
           <span id="v3a-top-comment" />
           <Section
@@ -389,6 +394,7 @@ function EngagementView() {
           <HowTo>
             <p>참여율 = (좋아요 + 댓글) ÷ 조회수 × 100</p>
             <p>댓글 참여율 = 댓글 ÷ 조회수 × 100</p>
+            <p>일간 조회수 = 조회수 ÷ 올린 뒤 지난 날짜 (최소 1일)</p>
             <p>이번 주 = 최근 7일 안에 등록한 영상, 지난주 = 그 이전 7일 안에 등록한 영상이에요. (위의 ‘등록 시기’ 조건과 상관없이 늘 최근 2주를 봐요.)</p>
             <p>구간별 개수는 영상마다 구한 참여율을 0~1%, 1~2%, 2~4%, 4~8%, 8% 이상으로 나눠 센 값이에요.</p>
           </HowTo>

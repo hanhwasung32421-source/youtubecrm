@@ -10,7 +10,7 @@ export type GlossaryEntry = { label: string; aliases?: string[]; meaning: string
 export const GLOSSARY: Record<GlossaryKey, GlossaryEntry> = {
   score: {
     label: '반응 점수',
-    meaning: `영상이 얼마나 잘 되고 있는지 100점 만점으로 나타낸 점수예요. 하루 조회 40% + 좋아요 비율 30% + 검색 점검 30%를 합쳐요. ${SCORE_GOOD_MIN}점 이상이면 좋음, ${SCORE_LOW_MAX}점 미만이면 낮음이에요.`
+    meaning: `영상이 얼마나 잘 되고 있는지 100점 만점으로 나타낸 점수예요. 조회수가 가장 중요해서 하루 조회 75% + 좋아요 비율 15% + 검색 점검 10%를 합쳐요. ${SCORE_GOOD_MIN}점 이상이면 좋음, ${SCORE_LOW_MAX}점 미만이면 낮음이에요.`
   },
   views: {
     label: '하루 조회',

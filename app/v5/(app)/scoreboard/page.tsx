@@ -13,6 +13,7 @@ import { AnswerBanner, EmptyBlock, LoadError, RelTime, fmtNum } from '@/lib/v5/p
 import { ScoreboardSkeleton } from '@/lib/v5/skeleton'
 import { ScoreBar, TierChip, TierDonut } from '@/lib/v5/score-viz'
 import { SCORE_FACTORS, scoreParts, strongestWeakest, totalOf } from '@/lib/v5/score-view'
+import { EARLY_NEUTRAL_SCORE } from '@/lib/v5/scoring'
 import { experimentLink, nextStepFor, playbookLink } from '@/lib/v5/suggest'
 import { useV5Query } from '@/lib/v5/swr'
 import { useUrlFilters } from '@/lib/v5/use-filters'
@@ -26,7 +27,8 @@ const PERIOD_OPTIONS: Array<{ value: `${ScorePeriod}`; label: string }> = [
 
 type OwnerOption = { id: string; name: string; count: number }
 // rank: 점수 순위(1등부터). 정렬을 바꿔도 그대로다.
-type RankedRow = ScoreboardRow & { rank: number }
+// hourlyViews: 시간당 조회수(= 조회수 / max(경과시간(시), 1)). 오래된 응답에는 없을 수 있다.
+type RankedRow = ScoreboardRow & { rank: number; hourlyViews?: number }
 type ScoreboardData = {
   // 서버가 고른 정렬 순서대로 최대 200개
   items: RankedRow[]
@@ -111,6 +113,14 @@ const ScoreRow = memo(function ScoreRow({ row }: { row: RankedRow }) {
             <span className="v5p-num" title={typeof views === 'number' && Number.isFinite(views) ? `조회수 ${fmtNum(views)}회` : undefined}>
               조회수 {formatCount(views ?? 0)}
             </span>
+            {typeof row.hourlyViews === 'number' && Number.isFinite(row.hourlyViews) ? (
+              <>
+                <span aria-hidden>·</span>
+                <span className="v5p-num" title={`시간당 조회수 ${fmtNum(Math.round(row.hourlyViews))}회`}>
+                  시간당 {formatCount(Math.round(row.hourlyViews))}
+                </span>
+              </>
+            ) : null}
             {row.video.published_at ? (
               <>
                 <span aria-hidden>·</span>
@@ -189,7 +199,7 @@ function ScoreboardView() {
   const [limit, setLimit] = useState(PAGE_STEP)
   const syncInFlight = useRef(false)
 
-  const url = ready ? `/api/v5/scoreboard?days=${days}${owner ? `&owner=${encodeURIComponent(owner)}` : ''}${sort !== 'score' ? `&sort=${sort}` : ''}` : null
+  const url = ready ? `/api/v5/scoreboard?days=${days}${owner ? `&owner=${encodeURIComponent(owner)}` : ''}${sort !== 'views' ? `&sort=${sort}` : ''}` : null
   const q = useV5Query<ScoreboardData>(url, { errorFallback: '점수판을 불러오지 못했어요.' })
   const data = q.data
 
@@ -257,7 +267,7 @@ function ScoreboardView() {
   const chips: FilterChip[] = []
   if (days !== SCORE_SPEC.defaults.days) chips.push({ key: 'days', label: `기간: 최근 ${days}일`, onClear: () => changeDays('30') })
   if (owner) chips.push({ key: 'owner', label: `담당자: ${ownerName || '선택한 담당자'}`, onClear: () => changeOwner('') })
-  if (sort !== 'score') chips.push({ key: 'sort', label: `정렬: ${SCORE_SORT_LABEL[sort]}`, onClear: () => changeSort('score') })
+  if (sort !== 'views') chips.push({ key: 'sort', label: `정렬: ${SCORE_SORT_LABEL[sort]}`, onClear: () => changeSort('views') })
 
   // 파일 저장 도구는 버튼을 눌렀을 때 처음 불러온다(화면을 처음 여는 속도에 영향이 없게).
   const exportCsv = async () => {
@@ -518,7 +528,7 @@ function ScoreboardView() {
                     · 조회수 마지막 갱신 <RelTime value={data.lastSyncedAt} />
                   </>
                 ) : null}
-                {typeof data.earlyKnown === 'number' && summary && summary.total > 0 ? ` · 초기 성장 기록이 있는 영상 ${fmtNum(data.earlyKnown)}개 (나머지는 기본 10점)` : ''}
+                {typeof data.earlyKnown === 'number' && summary && summary.total > 0 ? ` · 초기 성장 기록이 있는 영상 ${fmtNum(data.earlyKnown)}개 (나머지는 기본 ${EARLY_NEUTRAL_SCORE}점)` : ''}
                 {data.snapshotsTruncated ? ' · 초기 성장 기록이 많아 일부만 반영했어요' : ''}
               </div>
 
@@ -538,7 +548,7 @@ function ScoreboardView() {
                       </li>
                     ))}
                   </ul>
-                  <p className="small muted">초기 성장은 올린 뒤 48시간 안의 조회수 기록이 2번 이상 있어야 계산돼요. 기록이 부족하면 절반(10점)을 기본으로 줘요.</p>
+                  <p className="small muted">초기 성장은 올린 뒤 48시간 안의 조회수 기록이 2번 이상 있어야 계산돼요. 기록이 부족하면 절반({EARLY_NEUTRAL_SCORE}점)을 기본으로 줘요.</p>
                   <p className="small muted">
                     {SCORE_TIER_LABEL.excellent} 80점 이상 · {SCORE_TIER_LABEL.good} 60점 이상 · {SCORE_TIER_LABEL.fair} 40점 이상 · {SCORE_TIER_LABEL.poor} 40점 미만
                   </p>

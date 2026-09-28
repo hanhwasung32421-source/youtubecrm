@@ -1,11 +1,14 @@
 // 알고리즘 친화도 점수(0~100) 계산(순수 함수). 실데이터/샘플데이터 모두 같은 함수로 계산한다.
 //
+// 조회수가 모든 항목 중 가장 중요하다는 원칙에 따라, 조회수와 직접 연결된 "조회 속도"에 압도적인 가중치를 준다.
+// 참여율(좋아요·댓글 비율)은 조회수와 무관하게 따로 계산되는 값이라 낮게, 초기 성장도 보조 신호로 낮게 둔다.
+//
 // 공식(가중치 합계 100점):
-//  1) 조회 속도 점수  (0~45점) = 팀 내 "게시 후 일평균 조회수(view_count / max(경과일수,1))" 백분위 순위 × 45
-//  2) 참여율 점수     (0~35점) = 팀 내 "참여율 (좋아요+댓글) / 조회수" 백분위 순위 × 35
-//  3) 초기 성장 점수  (0~20점) = 게시 후 48시간 이내 스냅샷이 2개 이상 있으면
-//                              "48시간 내 조회수 성장률" 백분위 순위 × 20,
-//                              스냅샷이 부족해 판단할 수 없으면 중립값 10점(절반)을 준다.
+//  1) 조회 속도 점수  (0~75점) = 팀 내 "게시 후 일평균 조회수(view_count / max(경과일수,1))" 백분위 순위 × 75
+//  2) 참여율 점수     (0~15점) = 팀 내 "참여율 (좋아요+댓글) / 조회수" 백분위 순위 × 15
+//  3) 초기 성장 점수  (0~10점) = 게시 후 48시간 이내 스냅샷이 2개 이상 있으면
+//                              "48시간 내 조회수 성장률" 백분위 순위 × 10,
+//                              스냅샷이 부족해 판단할 수 없으면 중립값 5점(절반)을 준다.
 // 총점 = 1)+2)+3), 구간: 80점 이상 우수 / 60점 이상 양호 / 40점 이상 보통 / 그 미만 저조.
 // 숫자가 아닌 값(NaN/Infinity)이 섞여 있어도 점수가 NaN 이 되지 않는다(해당 항목은 중립 처리).
 
@@ -22,7 +25,7 @@ export type SnapshotRow = {
 export const EARLY_WINDOW_HOURS = 48
 const HOUR_MS = 3_600_000
 // 초기 성장 항목을 기록이 없을 때의 중립 점수
-export const EARLY_NEUTRAL_SCORE = 10
+export const EARLY_NEUTRAL_SCORE = 5
 
 // 초기 성장 점수를 낼 수 있는 영상인가? 스냅샷은 영상을 등록한 뒤에야 쌓이므로,
 // 올린 지 48시간이 훨씬 지나서 등록한 영상은 48시간 안 스냅샷이 있을 수 없다(항상 중립 10점).
@@ -122,11 +125,11 @@ export function computeScoreboard(videos: VideoRef[], snapshotsByVideoId: Map<st
   const rankGrowth = makeRanker(knownGrowthRates)
 
   return videos.map((video, i) => {
-    const viewVelocityScore = Math.round(rankVelocity(viewsPerDay[i]) * 45)
-    const engagementScore = Math.round(rankEngagement(engagementRates[i]) * 35)
+    const viewVelocityScore = Math.round(rankVelocity(viewsPerDay[i]) * 75)
+    const engagementScore = Math.round(rankEngagement(engagementRates[i]) * 15)
     const growth = earlyGrowthRates[i]
     const hasSnapshotData = growth !== null
-    const earlyGrowthScore = hasSnapshotData ? Math.round(rankGrowth(growth as number) * 20) : EARLY_NEUTRAL_SCORE
+    const earlyGrowthScore = hasSnapshotData ? Math.round(rankGrowth(growth as number) * 10) : EARLY_NEUTRAL_SCORE
     const totalScore = Math.min(viewVelocityScore + engagementScore + earlyGrowthScore, 100)
     return {
       video,

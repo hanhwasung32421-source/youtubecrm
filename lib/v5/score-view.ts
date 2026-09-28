@@ -6,9 +6,9 @@ import { SCORE_TIERS, SCORE_TIER_LABEL, type ScoreTier, type ScoreboardRow } fro
 export type FactorKey = 'velocity' | 'engagement' | 'early'
 
 export const SCORE_FACTORS: ReadonlyArray<{ key: FactorKey; label: string; short: string; max: number; meaning: string }> = [
-  { key: 'velocity', label: '조회 속도', short: '조회', max: 45, meaning: '올라온 뒤 하루 평균 조회수가 다른 영상보다 얼마나 높은지' },
-  { key: 'engagement', label: '참여율', short: '참여', max: 35, meaning: '본 사람 중 좋아요·댓글을 남긴 비율이 다른 영상보다 얼마나 높은지' },
-  { key: 'early', label: '초기 성장', short: '초기', max: 20, meaning: '올린 뒤 48시간 안에 조회수가 얼마나 빨리 늘었는지' }
+  { key: 'velocity', label: '조회 속도', short: '조회', max: 75, meaning: '올라온 뒤 하루 평균 조회수가 다른 영상보다 얼마나 높은지 (조회수가 가장 중요해서 비중이 가장 커요)' },
+  { key: 'engagement', label: '참여율', short: '참여', max: 15, meaning: '본 사람 중 좋아요·댓글을 남긴 비율이 다른 영상보다 얼마나 높은지' },
+  { key: 'early', label: '초기 성장', short: '초기', max: 10, meaning: '올린 뒤 48시간 안에 조회수가 얼마나 빨리 늘었는지' }
 ]
 
 export const TIER_MIN: Record<ScoreTier, string> = {
@@ -36,6 +36,17 @@ export type ScorePart = {
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(Math.max(n, lo), hi)
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+const HOUR_MS = 3_600_000
+
+// 올린 뒤 시간당 평균 조회수. 올린 지 1시간이 안 됐거나 올린 시각을 모르면 1시간으로 쳐서 나눈다(0으로 나누기 방지).
+// NaN/Infinity 가 섞여도 항상 유한한 숫자를 낸다.
+export function hourlyViewsOf(video: { view_count?: number | null; published_at?: string | null }, now: number = Date.now()): number {
+  const views = isNum(video.view_count) ? (video.view_count as number) : 0
+  const publishedMs = video.published_at ? Date.parse(video.published_at) : NaN
+  const hours = Number.isFinite(publishedMs) ? (now - publishedMs) / HOUR_MS : 1
+  const safeHours = Number.isFinite(hours) ? Math.max(hours, 1) : 1
+  return views / safeHours
+}
 
 export function scoreParts(row: Pick<ScoreboardRow, 'viewVelocityScore' | 'engagementScore' | 'earlyGrowthScore' | 'hasSnapshotData'>): ScorePart[] {
   return SCORE_FACTORS.map((f) => {
@@ -53,7 +64,7 @@ export function totalOf(row: Pick<ScoreboardRow, 'totalScore' | 'viewVelocitySco
   return clamp(scoreParts(row).reduce((s, p) => s + p.value, 0), 0, 100)
 }
 
-// 스크린리더용 한 문장: "총 72점. 조회 속도 30/45점, 참여율 20/35점, 초기 성장 10/20점 · 기록 부족 (기본 10점)"
+// 스크린리더용 한 문장: "총 72점. 조회 속도 55/75점, 참여율 8/15점, 초기 성장 5/10점 · 기록 부족 (기본 5점)"
 export function scoreAriaLabel(row: Parameters<typeof scoreParts>[0] & { totalScore: number }): string {
   return `총 ${totalOf(row)}점. ${scoreParts(row)
     .map((p) => p.tip)
@@ -89,8 +100,9 @@ export function tierSummaryText(slices: TierSlice[]): string {
 }
 
 // 순위 표 정렬. rows 는 서버가 점수 높은 순으로 내려준 목록이다(그 순서가 "점수 순위").
-// score: 점수 높은 순(그대로) · weak: 점수 낮은 순 · views: 조회수 많은 순 · recent: 최근 올린 순. 동률은 점수 순위를 따른다(안정 정렬).
-export type ScoreSortMode = 'score' | 'views' | 'recent' | 'weak'
+// score: 점수 높은 순(그대로) · weak: 점수 낮은 순 · views: 조회수 많은 순 · hourly: 시간당 조회수 많은 순 · recent: 최근 올린 순.
+// 동률은 점수 순위를 따른다(안정 정렬).
+export type ScoreSortMode = 'score' | 'views' | 'hourly' | 'recent' | 'weak'
 
 export function sortScoreRows<T extends ScoreboardRow>(rows: readonly T[], sort: ScoreSortMode): T[] {
   const indexed = rows.map((row, i) => ({ row, i }))
@@ -99,8 +111,10 @@ export function sortScoreRows<T extends ScoreboardRow>(rows: readonly T[], sort:
     return Number.isFinite(t) ? t : 0
   }
   const views = (r: T) => (isNum(r.video.view_count) ? r.video.view_count : 0)
+  const hourly = (r: T) => hourlyViewsOf(r.video)
   if (sort === 'weak') return indexed.sort((a, b) => b.i - a.i).map((x) => x.row)
   if (sort === 'views') return indexed.sort((a, b) => views(b.row) - views(a.row) || a.i - b.i).map((x) => x.row)
+  if (sort === 'hourly') return indexed.sort((a, b) => hourly(b.row) - hourly(a.row) || a.i - b.i).map((x) => x.row)
   if (sort === 'recent') return indexed.sort((a, b) => time(b.row) - time(a.row) || a.i - b.i).map((x) => x.row)
   return indexed.map((x) => x.row)
 }

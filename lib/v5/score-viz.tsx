@@ -1,6 +1,7 @@
 import { Badge } from '@/components/v5/widget'
 import { SCORE_TIER_LABEL, type ScoreTier, type ScoreboardRow } from '@/lib/v5/types'
 import { scoreAriaLabel, scoreParts, tierSlices, tierSummaryText, totalOf, TIER_MIN } from '@/lib/v5/score-view'
+import { EARLY_NEUTRAL_SCORE } from '@/lib/v5/scoring'
 import './pages.css'
 import './pages-r3.css'
 
@@ -45,7 +46,7 @@ export function ScoreBar({ row }: { row: ScoreboardRow }) {
             <i className={`v5p-dot ${p.key} ${p.pending ? 'pending' : ''}`} />
             {p.label} <b>{p.value}</b>
             <span className="v5p-sbar-max">/{p.max}</span>
-            {p.pending ? <em>기록 부족 (기본 10점)</em> : null}
+            {p.pending ? <em>기록 부족 (기본 {EARLY_NEUTRAL_SCORE}점)</em> : null}
           </li>
         ))}
       </ul>

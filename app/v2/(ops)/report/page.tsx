@@ -9,7 +9,7 @@ import { Toast, useToast } from '@/components/toast'
 import { NextSteps } from '@/lib/v2/actions-ui'
 import { Answer, EmptyGuide, HowTo, Kpi, KpiRow, LoadError, MoreButton, RefreshNote, SkeletonSummary, SkeletonTable, Stamp } from '@/lib/v2/analysis-ui'
 import type { CsvValue } from '@/lib/v2/csv'
-import { formatKstDate } from '@/lib/v2/dates'
+import { formatKstDate, hoursSince } from '@/lib/v2/dates'
 import { ActiveFilters, type FilterChip } from '@/lib/v2/filters-ui'
 import { withQuery, type FilterSpec } from '@/lib/v2/filters'
 import { clampScore, formatCountOrDash, formatExact, formatPercent, isNum, safeAverage, safeRatio, shortText } from '@/lib/v2/format'
@@ -25,9 +25,16 @@ import { CONTENT_TYPE_LABELS, LIKE_RATE_TARGET, VIEW_VELOCITY_TARGET_PER_DAY, ty
 const EMPTY: ReportPayload = { items: [] }
 const isPayload = (data: unknown) => Array.isArray((data as { items?: unknown } | null)?.items)
 const PAGE_STEP = 20
-const SORTS = ['score', 'views', 'likes'] as const
+// 조회수가 가장 중요하므로 총 조회수를 맨 앞(기본값)에 둔다.
+const SORTS = ['totalViews', 'hourly', 'views', 'score', 'likes'] as const
 type SortKey = (typeof SORTS)[number]
-const SORT_LABELS: Record<SortKey, string> = { score: '반응 점수', views: '하루 조회', likes: '좋아요 비율' }
+const SORT_LABELS: Record<SortKey, string> = {
+  totalViews: '총 조회수',
+  hourly: '시간당 조회수',
+  views: '하루 조회',
+  score: '반응 점수',
+  likes: '좋아요 비율'
+}
 const PERIOD_LABELS = { '7': '최근 7일', '30': '최근 30일', all: '전체' } as const
 type Period = keyof typeof PERIOD_LABELS
 const LOAD_ERROR = '성과 요약을 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.'
@@ -37,7 +44,7 @@ const DAY_MS = 24 * 60 * 60 * 1000
 const FILTER_SPEC = {
   period: { default: '7', allowed: ['7', '30', 'all'] },
   order: { default: 'best', allowed: ['best', 'worst'] },
-  sort: { default: 'score', allowed: SORTS },
+  sort: { default: 'totalViews', allowed: SORTS },
   staff: { default: '' },
   format: { default: '', allowed: ['', 'longform', 'shortform'] }
 } as const satisfies FilterSpec
@@ -53,7 +60,20 @@ function timeOf(row: DiscoverabilityRow): number {
   return Number.isNaN(t) ? 0 : t
 }
 
+// 시간당 조회수 = 총 조회수 ÷ 발행 후 경과 시간(최소 1시간). 방금 올린 영상이 0으로 나뉘어 무한대가 되지 않게 막는다.
+function hourlyViews(row: DiscoverabilityRow): number {
+  const hours = hoursSince(row.video.published_at || row.video.created_at)
+  const views = isNum(row.video.view_count) ? row.video.view_count : 0
+  return views / Math.max(hours, 1)
+}
+
+function totalViewsOf(row: DiscoverabilityRow): number {
+  return isNum(row.video.view_count) ? row.video.view_count : -1
+}
+
 function sortValue(row: DiscoverabilityRow, key: SortKey): number {
+  if (key === 'totalViews') return totalViewsOf(row)
+  if (key === 'hourly') return hourlyViews(row)
   if (key === 'views') return isNum(row.viewsPerDay) ? row.viewsPerDay : -1
   if (key === 'likes') return likePercent(row) ?? -1
   return isNum(row.score) ? row.score : -1
@@ -93,12 +113,9 @@ function ReportBody() {
     () => pool.filter((row) => (!filters.staff || row.ownerName === filters.staff) && (!filters.format || row.video.content_type === filters.format)),
     [pool, filters.staff, filters.format]
   )
-  // 정렬은 화면 안에서만 다시 하므로 서버에 다시 묻지 않는다. (기본은 서버가 준 반응 점수 순서)
+  // 정렬은 화면 안에서만 다시 하므로 서버에 다시 묻지 않는다. (기본 기준은 총 조회수 — 조회수가 가장 중요하다는 방침)
   const list = useMemo(() => {
-    const sorted =
-      sortKey === 'score'
-        ? [...scoped]
-        : [...scoped].sort((a, b) => sortValue(b, sortKey) - sortValue(a, sortKey) || sortValue(b, 'score') - sortValue(a, 'score'))
+    const sorted = [...scoped].sort((a, b) => sortValue(b, sortKey) - sortValue(a, sortKey) || sortValue(b, 'score') - sortValue(a, 'score'))
     return order === 'best' ? sorted : sorted.reverse()
   }, [scoped, sortKey, order])
   const shown = list.slice(0, visible)
@@ -137,12 +154,12 @@ function ReportBody() {
   if (period !== '7' && !autoAll) chips.push({ key: 'period', label: `기간: ${periodName}`, onClear: () => pick({ period: '7' }) })
   if (filters.staff) chips.push({ key: 'staff', label: `담당자: ${filters.staff}`, onClear: () => pick({ staff: '' }) })
   if (filters.format) chips.push({ key: 'format', label: `형식: ${CONTENT_TYPE_LABELS[filters.format as 'longform' | 'shortform'] ?? filters.format}`, onClear: () => pick({ format: '' }) })
-  if (sortKey !== 'score') chips.push({ key: 'sort', label: `기준: ${SORT_LABELS[sortKey]}`, onClear: () => pick({ sort: 'score' }) })
+  if (sortKey !== 'totalViews') chips.push({ key: 'sort', label: `기준: ${SORT_LABELS[sortKey]}`, onClear: () => pick({ sort: 'totalViews' }) })
   if (order !== 'best') chips.push({ key: 'order', label: '손볼 순', onClear: () => pick({ order: 'best' }) })
 
   const csvTable = () => ({
     name: `성과 요약 ${periodName}`,
-    headers: ['순위', '제목', '종목', '형식', '담당자', '발행일', '조회수', '하루 조회', '좋아요 비율(%)', '검색 점검(4칸 중)', '반응 점수', '유튜브 주소'],
+    headers: ['순위', '제목', '종목', '형식', '담당자', '발행일', '조회수', '하루 조회', '시간당 조회수', '좋아요 비율(%)', '검색 점검(4칸 중)', '반응 점수', '유튜브 주소'],
     rows: list.map((row, index): CsvValue[] => [
       order === 'best' ? index + 1 : list.length - index,
       row.video.title || '',
@@ -152,6 +169,7 @@ function ReportBody() {
       formatKstDate(row.video.published_at),
       row.video.view_count,
       isNum(row.viewsPerDay) ? Math.round(row.viewsPerDay) : null,
+      Math.round(hourlyViews(row) * 10) / 10,
       likePercent(row) === null ? null : Math.round((likePercent(row) as number) * 10) / 10,
       row.checklistDone,
       isNum(row.score) ? row.score : null,
@@ -314,6 +332,9 @@ function ReportBody() {
                     </div>
                     <div role="columnheader">영상</div>
                     <div role="columnheader" className="num">
+                      총 조회수
+                    </div>
+                    <div role="columnheader" className="num">
                       <Term k="views" />
                     </div>
                     <div role="columnheader" className="num">
@@ -356,7 +377,20 @@ function ReportBody() {
                             </div>
                           ) : null}
                         </div>
-                        <div role="cell" className="num c-views" data-label="하루 조회" title={isNum(views) ? `${formatExact(views)}회/일` : undefined}>
+                        <div
+                          role="cell"
+                          className="num c-total-views"
+                          data-label="총 조회수"
+                          title={isNum(row.video.view_count) ? `${formatExact(row.video.view_count)}회` : undefined}
+                        >
+                          {isNum(row.video.view_count) ? `${formatCountOrDash(row.video.view_count)}회` : '-'}
+                        </div>
+                        <div
+                          role="cell"
+                          className="num c-views"
+                          data-label="하루 조회"
+                          title={isNum(views) ? `${formatExact(views)}회/일 · 시간당 ${formatExact(hourlyViews(row))}회` : undefined}
+                        >
                           {isNum(views) ? `${formatCountOrDash(views)}회` : '-'}
                         </div>
                         <div role="cell" className="num c-likes" data-label="좋아요 비율" title={likes === null ? '조회수가 없어 계산할 수 없어요' : undefined}>
@@ -385,7 +419,7 @@ function ReportBody() {
 
             <GlossaryDetails keys={['score', 'views', 'likes', 'check']} />
             <HowTo>
-              <p>반응 점수(0~100점) = 하루 조회 점수 × 40% + 좋아요 비율 점수 × 30% + 검색 점검 점수 × 30%</p>
+              <p>반응 점수(0~100점) = 하루 조회 점수 × 75% + 좋아요 비율 점수 × 15% + 검색 점검 점수 × 10% (조회수가 가장 중요해요)</p>
               <p>· 하루 조회 점수: 발행 후 하루 평균 조회수 ÷ {VIEW_VELOCITY_TARGET_PER_DAY.toLocaleString('ko-KR')}회 × 100 (최대 100점)</p>
               <p>· 좋아요 비율 점수: 좋아요 수 ÷ 조회수 ÷ {(LIKE_RATE_TARGET * 100).toFixed(0)}% × 100 (최대 100점)</p>
               <p>· 검색 점검 점수: 4칸 중 완료한 칸 수 ÷ 4 × 100</p>

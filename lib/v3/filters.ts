@@ -148,7 +148,8 @@ export const ENGAGEMENT_FILTERS = {
   staff: STAFF,
   period: { def: 'all', values: ['all', '7', '30', '90'] },
   format: FORMAT,
-  sort: { def: 'comment', values: ['comment', 'engagement', 'views', 'recent'] }
+  // 조회수가 가장 중요한 성과 지표라서 기본 정렬은 '조회수 많은 순'. 댓글 수만으로는 순위를 정하지 않는다.
+  sort: { def: 'views', values: ['views', 'daily', 'engagement', 'comment', 'recent'] }
 } satisfies FilterSpec
 
 export const VIRAL_FILTERS = {
@@ -188,7 +189,7 @@ export const FILTER_VALUE_LABELS: Record<string, Record<string, Record<string, s
   engagement: {
     period: PERIOD_LABELS,
     format: FORMAT_LABELS,
-    sort: { comment: '댓글 반응이 높은 순', engagement: '전체 반응이 높은 순', views: '조회수 많은 순', recent: '최근 등록 순' }
+    sort: { views: '조회수 많은 순', daily: '일간 조회수 많은 순', engagement: '전체 반응이 높은 순', comment: '댓글 반응이 높은 순', recent: '최근 등록 순' }
   },
   viral: {
     period: PERIOD_LABELS,

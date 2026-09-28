@@ -18,7 +18,7 @@ const REPORT_LIMIT = 3000
 // 점수 계산과 순위 표에 쓰는 칸만 읽는다 (설명·썸네일 주소 등 긴 값은 읽지 않는다).
 const COLUMNS = 'id, title, stock_name, content_type, youtube_url, published_at, view_count, like_count, primary_owner_user_id, created_at'
 
-// 검색 성과 리포트: 영상별 발견성 점수(조회 속도 40% + 좋아요율 30% + SEO 체크리스트 완료율 30%) 리더보드
+// 검색 성과 리포트: 영상별 발견성 점수(조회 속도 75% + 좋아요율 15% + SEO 체크리스트 완료율 10%) 리더보드
 export async function GET(request: Request) {
   try {
     const { profile, supabaseAdmin } = await requireV2Admin(request)

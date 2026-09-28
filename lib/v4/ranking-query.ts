@@ -1,7 +1,7 @@
 // 콘텐츠 성과 랭킹의 서버 쪽 정렬·필터·페이지 나누기 (순수 함수, React/DB 의존 없음).
 // 라우트(app/api/v4/ranking)가 한 번만 읽은 영상 목록을 여기 함수로 걸러 "요청한 만큼만" 내려준다.
 
-export const RANK_SORT_KEYS = ['viewCount', 'likeCount', 'commentCount', 'daysSincePublished', 'velocity', 'likeRate'] as const
+export const RANK_SORT_KEYS = ['viewCount', 'likeCount', 'commentCount', 'daysSincePublished', 'velocity', 'likeRate', 'hourly'] as const
 export type RankSortKey = (typeof RANK_SORT_KEYS)[number]
 export type RankDir = 'asc' | 'desc'
 export type RankFormat = '' | 'longform' | 'shortform'
@@ -80,6 +80,8 @@ export type RankLike = {
   daysSincePublished: number
   velocity: number
   likeRate: number
+  // 조회수 ÷ 올린 뒤 지난 시간(최소 1시간). route 에서 계산해 붙여 준다.
+  hourly: number
   createdAt: string
   // 타이밍 화면과 같은 기준(게시 시각, 없으면 등록 시각)으로 요일·시각을 계산하려고 필요하다.
   publishedAt?: string | null

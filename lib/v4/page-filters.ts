@@ -7,7 +7,7 @@ import { enumField, idField, intField, numberChoiceField, textField, type Filter
 export const PERIODS = [7, 30, 90] as const
 const periodField = numberChoiceField<PeriodDays>(30, PERIODS)
 
-export const RANKING_SORTS = ['viewCount', 'likeCount', 'commentCount', 'daysSincePublished', 'velocity', 'likeRate'] as const
+export const RANKING_SORTS = ['viewCount', 'likeCount', 'commentCount', 'daysSincePublished', 'velocity', 'likeRate', 'hourly'] as const
 export type RankingSort = (typeof RANKING_SORTS)[number]
 
 export type RankingFilters = {

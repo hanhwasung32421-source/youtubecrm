@@ -6,7 +6,7 @@ import type { GlossaryKey } from '@/lib/v5/glossary'
 export const GLOSSARY_TEXT: Record<GlossaryKey, { short: string; detail: string }> = {
   score: {
     short: '영상 하나가 유튜브에서 얼마나 반응을 얻고 있는지 0~100점으로 나타낸 값이에요.',
-    detail: '같은 기간에 올린 다른 영상들과 비교한 순위로 계산해요. 조회 속도 45점 + 참여율 35점 + 초기 성장 20점을 더해요. 60점 이상이면 잘 되는 영상, 40점 미만이면 손봐야 할 영상이에요.'
+    detail: '같은 기간에 올린 다른 영상들과 비교한 순위로 계산해요. 조회수가 가장 중요해서 조회 속도 75점 + 참여율 15점 + 초기 성장 10점을 더해요. 60점 이상이면 잘 되는 영상, 40점 미만이면 손봐야 할 영상이에요.'
   },
   velocity: {
     short: '올라온 뒤 하루에 평균 몇 번 봤는지예요.',

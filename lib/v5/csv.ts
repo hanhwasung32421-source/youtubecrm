@@ -44,7 +44,7 @@ export function csvFileName(prefix: string, ymd: string): string {
 // ---------------------------------------------------------------------------
 // 영상 점수판
 // ---------------------------------------------------------------------------
-export const SCOREBOARD_CSV_HEADERS = ['순위', '영상 제목', '종목', '담당자', '조회수', '올린 날', '반응 점수(0~100)', '구간', '조회 속도(45점 만점)', '참여율(35점 만점)', '초기 성장(20점 만점)', '가장 약한 요소', '유튜브 주소'] as const
+export const SCOREBOARD_CSV_HEADERS = ['순위', '영상 제목', '종목', '담당자', '조회수', '올린 날', '반응 점수(0~100)', '구간', '조회 속도(75점 만점)', '참여율(15점 만점)', '초기 성장(10점 만점)', '가장 약한 요소', '유튜브 주소'] as const
 
 // rankOf: 점수 순위(1등부터). 정렬을 바꿔도 순위는 점수 기준이라 따로 받는다.
 export function scoreboardCsv<T extends ScoreboardRow>(rows: readonly T[], rankOf: (row: T) => number): string {

@@ -43,9 +43,19 @@ export type EngagementRow = {
   publishedAt: string | null
   youtubeUrl: string | null
 }
+// 일간 조회수(하루 평균 조회수) = 조회수 ÷ max(올린 뒤 지난 날짜, 1일). 시간당 조회수는 이 값을 24로 나눈 것뿐이라
+// 두 영상을 비교한 순서가 완전히 같아서(상수 배율 차이) 따로 만들지 않는다.
+function dailyViews(viewCount: number, publishedAt: string | null | undefined): number | null {
+  const publishedMs = timeOf(publishedAt)
+  if (publishedMs === null) return null
+  const days = Math.max((Date.now() - publishedMs) / (1000 * 60 * 60 * 24), 1)
+  return viewCount / days
+}
+
 export function sortEngagementRows<T extends Pick<EngagementRow, 'viewCount' | 'commentRatePct' | 'engagementPct' | 'publishedAt'>>(rows: T[], sort: string): T[] {
   if (sort === 'engagement') return byNumberDesc(rows, (r) => r.engagementPct)
   if (sort === 'views') return byNumberDesc(rows, (r) => r.viewCount)
+  if (sort === 'daily') return byNumberDesc(rows, (r) => dailyViews(r.viewCount, r.publishedAt))
   if (sort === 'recent') return byNumberDesc(rows, (r) => timeOf(r.publishedAt))
   return byNumberDesc(rows, (r) => r.commentRatePct)
 }

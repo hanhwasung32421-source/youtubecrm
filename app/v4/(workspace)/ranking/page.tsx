@@ -20,7 +20,8 @@ import { Card, EmptyPanel, ErrorPanel, FormatBadge, Formula, Hero, Kpi, KpiRow, 
 import { WEEKDAY_LABELS, fmtHourRangeKo, fmtKstMonthDay, fmtKstStamp, fmtNumber, fmtNumberOr, fmtPercentOr, fmtShortOr, fmtYmdKo } from '@/lib/v4/format'
 import '../pages.css'
 
-type RankedItem = Omit<RankedVideo, 'thumbnailUrl'>
+// analytics.ts 의 RankedVideo 는 hourly 를 모르므로(서버 route 에서 계산해 붙임) 여기서 더해 준다.
+type RankedItem = Omit<RankedVideo, 'thumbnailUrl'> & { hourly: number }
 
 type Summary = { videoCount: number; totalViews: number; avgViews: number; top: RankedItem | null; rising: RankedItem | null }
 
@@ -98,6 +99,7 @@ const RankRow = memo(function RankRow({ row, index, rowStyle, showOwner, detail,
           <div className="v4p-td-r" data-label="댓글" role="cell">{fmtNumberOr(row.commentCount)}</div>
           <div className="v4p-td-r" data-label="올린 지" title={fmtKstStamp(publishedIso)} role="cell">{fmtNumberOr(row.daysSincePublished)}일</div>
           <div className="v4p-td-r" data-label="좋아요 비율" role="cell">{fmtPercentOr(row.viewCount > 0 ? row.likeRate : null, 1)}</div>
+          <div className="v4p-td-r" data-label="시간당" title={`${fmtNumberOr(row.hourly)}회/시간`} role="cell">{fmtNumberOr(row.hourly)}회/시</div>
         </>
       ) : null}
     </div>
@@ -107,6 +109,7 @@ const RankRow = memo(function RankRow({ row, index, rowStyle, showOwner, detail,
 const SORT_LABEL: Record<RankSortKey, string> = {
   viewCount: '조회수',
   velocity: '조회 속도(하루 평균)',
+  hourly: '시간당 조회수',
   likeCount: '좋아요 수',
   commentCount: '댓글 수',
   daysSincePublished: '올린 지 오래된 정도',
@@ -274,7 +277,7 @@ function RankingScreen() {
         showError('저장할 영상이 없어요.')
       } else {
         const [{ buildCsv, csvFilename, csvKstDateTime }, { downloadCsvFile }] = await Promise.all([import('@/lib/v4/csv'), import('@/lib/v4/download')])
-        const headers = ['순위', '제목', '종목', ...(isAdmin ? ['담당자'] : []), '형식', '조회수', '조회 속도(회/일)', '좋아요', '댓글', '올린 지(일)', '좋아요 비율(%)', '게시 시각(한국 시간)', '유튜브 주소']
+        const headers = ['순위', '제목', '종목', ...(isAdmin ? ['담당자'] : []), '형식', '조회수', '조회 속도(회/일)', '시간당 조회수(회/시간)', '좋아요', '댓글', '올린 지(일)', '좋아요 비율(%)', '게시 시각(한국 시간)', '유튜브 주소']
         const rows = result.rows.map((v, i) => [
           i + 1,
           v.title,
@@ -283,6 +286,7 @@ function RankingScreen() {
           v.contentType === 'shortform' ? '숏폼' : '롱폼',
           v.viewCount,
           v.velocity,
+          v.hourly,
           v.likeCount,
           v.commentCount,
           v.daysSincePublished,
@@ -342,7 +346,8 @@ function RankingScreen() {
           { id: 'like', width: '62px' },
           { id: 'comment', width: '54px' },
           { id: 'days', width: '58px' },
-          { id: 'rate', width: '70px' }
+          { id: 'rate', width: '70px' },
+          { id: 'hourly', width: '84px' }
         ]
       : [])
   ]
@@ -533,6 +538,7 @@ function RankingScreen() {
                     {has('comment') ? sortHead('commentCount', '댓글') : null}
                     {has('days') ? sortHead('daysSincePublished', '올린 지') : null}
                     {has('rate') ? sortHead('likeRate', '좋아요 비율', '조회수 대비 좋아요 수예요') : null}
+                    {has('hourly') ? sortHead('hourly', '시간당', '올린 뒤 시간당 평균 조회수예요') : null}
                   </div>
                   {shown.map((row, index) => (
                     <RankRow
@@ -574,11 +580,12 @@ function RankingScreen() {
 
               <Formula>
                 <p>조회 속도 = 조회수 ÷ 올린 뒤 지난 날짜(최소 1일). 하루에 평균 몇 번 봤는지를 뜻해요. 최근에 올린 영상도 공정하게 비교할 수 있어요.</p>
+                <p>시간당 조회수 = 조회수 ÷ 올린 뒤 지난 시간(최소 1시간). 방금 올린 영상이 초반에 얼마나 빠르게 반응을 받는지 볼 때 써요.</p>
                 <p>좋아요 비율 = 좋아요 수 ÷ 조회수. 영상을 본 사람 중 얼마나 좋아요를 눌렀는지 보여줘요.</p>
                 <p>올린 날짜는 유튜브 게시일 기준이고, 없으면 CRM에 등록한 시각을 써요. 날짜와 시각에 마우스를 올리면 정확한 한국 시간이 나와요.</p>
                 <p>“표를 엑셀 파일로 저장”은 화면에 보이는 10~20개가 아니라, 지금 조건에 맞는 영상 전부를 저장해요.</p>
               </Formula>
-              <GlossaryList terms={['velocity', 'avgViews', 'likeRate']} />
+              <GlossaryList terms={['velocity', 'hourlyViews', 'avgViews', 'likeRate']} />
             </Card>
           </>
         )}

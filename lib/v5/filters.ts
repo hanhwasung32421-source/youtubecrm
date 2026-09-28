@@ -66,11 +66,13 @@ const pickOwner = (v: string | null) => (v && UUID_RE.test(v) ? v.toLowerCase() 
 // 영상 점수판: 기간 · 담당자 · 정렬
 // ---------------------------------------------------------------------------
 export type ScorePeriod = 7 | 30 | 90
-export const SCORE_SORTS = ['score', 'views', 'recent', 'weak'] as const
+// 조회수가 가장 중요한 신호라서 기본 정렬은 'views'(조회수 많은 순)다. 'score'(반응 점수)는 계속 고를 수 있게 남겨 둔다.
+export const SCORE_SORTS = ['score', 'views', 'hourly', 'recent', 'weak'] as const
 export type ScoreSort = (typeof SCORE_SORTS)[number]
 export const SCORE_SORT_LABEL: Record<ScoreSort, string> = {
   score: '점수 높은 순',
   views: '조회수 많은 순',
+  hourly: '시간당 조회수 많은 순',
   recent: '최근 올린 순',
   weak: '점수 낮은 순'
 }
@@ -78,21 +80,21 @@ export type ScoreFilters = { days: ScorePeriod; owner: string; sort: ScoreSort }
 
 export const SCORE_SPEC: FilterSpec<ScoreFilters> = {
   keys: ['days', 'owner', 'sort'],
-  defaults: { days: 30, owner: '', sort: 'score' },
+  defaults: { days: 30, owner: '', sort: 'views' },
   parse(q) {
     const days = Number(q.get('days'))
     const sort = q.get('sort')
     return {
       days: days === 7 || days === 90 ? days : 30,
       owner: pickOwner(q.get('owner')),
-      sort: (SCORE_SORTS as readonly string[]).includes(sort || '') ? (sort as ScoreSort) : 'score'
+      sort: (SCORE_SORTS as readonly string[]).includes(sort || '') ? (sort as ScoreSort) : 'views'
     }
   },
   serialize(f) {
     const out: QueryRecord = {}
     if (f.days !== 30) out.days = String(f.days)
     if (f.owner) out.owner = f.owner
-    if (f.sort !== 'score') out.sort = f.sort
+    if (f.sort !== 'views') out.sort = f.sort
     return out
   }
 }

@@ -311,6 +311,8 @@ export function checklistFor(videoId: string, map: Map<string, SeoChecklist>): S
 
 // ---- 발견성 점수(Discoverability Score) ----
 // 가중치/기준값은 lib/v2/types.ts 에 정의(클라이언트에서도 import 가능하도록).
+// 조회수가 압도적으로 중요하다는 방침에 따라 하루 조회 점수(조회수 기반)를 75%, 좋아요 비율을 15%, 검색 점검을 10%로 섞는다.
+// (조회수가 낮은 영상이 체크리스트만 채워서 조회수 높은 영상보다 위로 올라가지 않도록 하는 것이 목적.)
 export function computeDiscoverability(video: VideoLite, checklist: SeoChecklist | null | undefined): Omit<DiscoverabilityRow, 'video' | 'ownerName'> {
   const views = video.view_count || 0
   const likes = video.like_count || 0
@@ -321,7 +323,7 @@ export function computeDiscoverability(video: VideoLite, checklist: SeoChecklist
   const likeRateScore = Math.min(100, Math.round((likeRate / LIKE_RATE_TARGET) * 100))
   const done = checklistDoneCount(checklist)
   const checklistScore = Math.round((done / 4) * 100)
-  const score = Math.round(0.4 * viewVelocityScore + 0.3 * likeRateScore + 0.3 * checklistScore)
+  const score = Math.round(0.75 * viewVelocityScore + 0.15 * likeRateScore + 0.1 * checklistScore)
   return { viewsPerDay, viewVelocityScore, likeRateScore, checklistScore, score, checklistDone: done }
 }
 

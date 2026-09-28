@@ -36,7 +36,7 @@ export type WeakSuggestion = {
   pct: number
   // "조회 속도가 낮아요 → 제목·썸네일 실험을 만들어 보세요"
   headline: string
-  // "조회 속도 12/45점(만점의 27%) — 이 영상의 세 요소 중 가장 낮아요"
+  // "조회 속도 20/75점(만점의 27%) — 이 영상의 세 요소 중 가장 낮아요"
   reason: string
 }
 
